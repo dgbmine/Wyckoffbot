@@ -55,7 +55,7 @@ AUTO_TRAINER_STOP_FILE = os.path.join(MODEL_DIR, "auto_trainer.stop")
 AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
 
 # לוג רציף יכתב לכאן ישירות על ידי ה-Trainer
-AUTO_TRAINER_LOG_FILE = os.path.join(BASE_DIR, "auto_trainer_error.log")
+AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")  # תוקן
 
 # ============================================================
 # Optional imports from scout_core
