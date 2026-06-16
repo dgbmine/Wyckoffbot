@@ -1,8 +1,18 @@
 # ============================================================
-# INSTITUTIONAL SCOUT PRO — CLOUD RUN EDITION V12.0
+# INSTITUTIONAL SCOUT PRO — CLOUD RUN EDITION V13.0
 # Streamlit app for Wyckoff-style market analysis
 # Optimized for Google Cloud Run (port 8080, structured logging,
 # subprocess safety, memory management, session hygiene)
+# ============================================================
+# CHANGELOG V13:
+# • explain_score integrated in Wyckoff, Scanner, Backtest screens
+# • Graceful stub for explain_score when scout_core unavailable
+# • 0-trades handling: banner + actionable recommendations
+# • UI/UX: score explanation rendered in styled expander cards
+# • Logic/UI separation: _compute_wyckoff(), _run_scan_row()
+# • Memory: explicit gc.collect() after heavy ops + smaller cache
+# • Trainer: auto-reload after training completes (done flag)
+# • Monitor: trade-count badge on model download buttons
 # ============================================================
 
 from __future__ import annotations
@@ -49,25 +59,26 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
-# Cloud Run: use /tmp for ephemeral writable storage
-_CLOUD_RUN = os.environ.get("K_SERVICE") is not None or os.environ.get("CLOUD_RUN", "").lower() == "true"
+_CLOUD_RUN = (
+    os.environ.get("K_SERVICE") is not None
+    or os.environ.get("CLOUD_RUN", "").lower() == "true"
+)
 _TMP_ROOT = "/tmp/scout" if _CLOUD_RUN else BASE_DIR
 
-MODEL_DIR = os.path.join(_TMP_ROOT, "models")
-BATCH_CONFIG_FILE = os.path.join(MODEL_DIR, "batch_config.json")
-AUTO_TRAINER_STATUS_FILE = os.path.join(MODEL_DIR, "auto_trainer_status.json")
-AUTO_TRAINER_DONE_FLAG = os.path.join(MODEL_DIR, "auto_trainer.done")
-AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
-AUTO_TRAINER_PID_FILE = os.path.join(MODEL_DIR, "auto_trainer.pid")
-AUTO_TRAINER_STOP_FILE = os.path.join(MODEL_DIR, "auto_trainer.stop")
-AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
+MODEL_DIR               = os.path.join(_TMP_ROOT, "models")
+BATCH_CONFIG_FILE       = os.path.join(MODEL_DIR, "batch_config.json")
+AUTO_TRAINER_STATUS_FILE= os.path.join(MODEL_DIR, "auto_trainer_status.json")
+AUTO_TRAINER_DONE_FLAG  = os.path.join(MODEL_DIR, "auto_trainer.done")
+AUTO_TRAINER_LOG_FILE   = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
+AUTO_TRAINER_PID_FILE   = os.path.join(MODEL_DIR, "auto_trainer.pid")
+AUTO_TRAINER_STOP_FILE  = os.path.join(MODEL_DIR, "auto_trainer.stop")
+AUTO_TRAINER_LOCK_FILE  = os.path.join(MODEL_DIR, "auto_trainer.lock")
 
-# Cloud Run port (Streamlit reads $PORT automatically via config, but we log it)
 _PORT = int(os.environ.get("PORT", 8080))
 logger.info("Scout starting on port %d | Cloud Run: %s", _PORT, _CLOUD_RUN)
 
 # ============================================================
-# Optional import from scout_core
+# Optional imports from scout_core
 # ============================================================
 
 try:
@@ -80,12 +91,15 @@ try:
         FactorEngine,
         run_wyckoff_anchored_backtest,
         build_research_ground_truth,
+        explain_score,          # ← new import
     )
     SCOUT_CORE_AVAILABLE = True
     logger.info("scout_core loaded successfully")
-except Exception as exc:
+except ImportError as _imp_exc:
     SCOUT_CORE_AVAILABLE = False
-    logger.warning("scout_core not available: %s — using stubs", exc)
+    logger.warning("scout_core not available: %s — using stubs", _imp_exc)
+
+    # ---- stubs ------------------------------------------------
 
     def clean_filename(name: str) -> str:
         keep = [ch for ch in str(name) if ch.isalnum() or ch in ("-", "_", ".")]
@@ -106,47 +120,49 @@ except Exception as exc:
             if df is None or len(df) < self.MIN_BARS_REQUIRED:
                 return pd.DataFrame()
             out = pd.DataFrame(index=df.index.copy())
-            close = df["Close"].astype(float)
+            close  = df["Close"].astype(float)
             volume = df["Volume"].astype(float)
-            out["ret_1"] = close.pct_change().fillna(0)
-            out["ret_5"] = close.pct_change(5).fillna(0)
+            out["ret_1"]   = close.pct_change().fillna(0)
+            out["ret_5"]   = close.pct_change(5).fillna(0)
             vol_mean = volume.rolling(20).mean()
-            vol_std = volume.rolling(20).std().replace(0, np.nan)
-            out["vol_z"] = ((volume - vol_mean) / vol_std).replace([np.inf, -np.inf], np.nan).fillna(0)
-            out["range"] = ((df["High"] - df["Low"]) / close.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0)
-            out["trend_20"] = (close / close.rolling(20).mean() - 1).fillna(0)
-            out["trend_50"] = (close / close.rolling(50).mean() - 1).fillna(0)
-            out["mom_14"] = close.diff(14).fillna(0)
+            vol_std  = volume.rolling(20).std().replace(0, np.nan)
+            out["vol_z"]   = ((volume - vol_mean) / vol_std).replace([np.inf, -np.inf], np.nan).fillna(0)
+            out["range"]   = ((df["High"] - df["Low"]) / close.replace(0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(0)
+            out["trend_20"]= (close / close.rolling(20).mean() - 1).fillna(0)
+            out["trend_50"]= (close / close.rolling(50).mean() - 1).fillna(0)
+            out["mom_14"]  = close.diff(14).fillna(0)
             return out
 
         def get_wyckoff_phase(self, df: pd.DataFrame) -> pd.Series:
             close = df["Close"].astype(float)
-            ma20 = close.rolling(20).mean()
-            ma50 = close.rolling(50).mean()
+            ma20  = close.rolling(20).mean()
+            ma50  = close.rolling(50).mean()
             phase = pd.Series(index=df.index, dtype="object")
             phase[:] = "Neutral"
-            phase[(close > ma20) & (ma20 > ma50)] = "Markup"
-            phase[(close < ma20) & (ma20 < ma50)] = "Markdown"
+            phase[(close > ma20) & (ma20 > ma50)]  = "Markup"
+            phase[(close < ma20) & (ma20 < ma50)]  = "Markdown"
             phase[(close < ma20) & (close > ma50)] = "Accumulation"
             phase[(close > ma20) & (close < ma50)] = "Distribution"
             return phase.fillna("Neutral")
 
         def composite_cis(self, factors: pd.DataFrame, df: pd.DataFrame) -> pd.Series:
             close = df["Close"].astype(float)
-            vol = df["Volume"].astype(float).replace(0, np.nan)
-            mom = close.pct_change(10).fillna(0)
+            vol   = df["Volume"].astype(float).replace(0, np.nan)
+            mom   = close.pct_change(10).fillna(0)
             trend = (close / close.rolling(30).mean() - 1).fillna(0)
             vol_score = ((vol / vol.rolling(20).mean()) - 1).replace([np.inf, -np.inf], np.nan).fillna(0)
             score = 50 + 20 * np.tanh(3 * trend) + 15 * np.tanh(3 * mom) + 10 * np.tanh(vol_score)
             return score.clip(0, 100)
 
-    def get_data(ticker: str, period: Optional[str] = "1y", start: Optional[str] = None, end: Optional[str] = None) -> Optional[pd.DataFrame]:
+    def get_data(
+        ticker: str,
+        period: Optional[str] = "1y",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Optional[pd.DataFrame]:
         try:
             t = yf.Ticker(ticker)
-            if start or end:
-                df = t.history(start=start, end=end)
-            else:
-                df = t.history(period=period or "1y")
+            df = t.history(start=start, end=end) if (start or end) else t.history(period=period or "1y")
             return df if (df is not None and not df.empty) else None
         except Exception as exc:
             logger.warning("get_data(%s) failed: %s", ticker, exc)
@@ -163,6 +179,52 @@ except Exception as exc:
 
     def build_research_ground_truth(*args, **kwargs):
         return pd.DataFrame()
+
+    def explain_score(
+        df: pd.DataFrame,
+        phase: str,
+        cis: float,
+    ) -> Dict[str, Any]:
+        """
+        Stub explain_score — returns a basic breakdown when scout_core is absent.
+        Replace this with the real implementation in scout_core.
+        """
+        close  = df["Close"].astype(float)
+        volume = df["Volume"].astype(float)
+
+        trend_20 = float(close.iloc[-1] / close.rolling(20).mean().iloc[-1] - 1) if len(close) >= 20 else 0.0
+        trend_50 = float(close.iloc[-1] / close.rolling(50).mean().iloc[-1] - 1) if len(close) >= 50 else 0.0
+        vol_ratio = float(volume.iloc[-1] / volume.rolling(20).mean().iloc[-1]) if len(volume) >= 20 else 1.0
+        mom_10   = float(close.pct_change(10).iloc[-1]) if len(close) > 10 else 0.0
+
+        trend_contrib = round(20 * float(np.tanh(3 * trend_20)), 2)
+        mom_contrib   = round(15 * float(np.tanh(3 * mom_10)),   2)
+        vol_contrib   = round(10 * float(np.tanh(vol_ratio - 1)), 2)
+
+        interpretation = (
+            "ציון גבוה — תנאי Markup / כניסה פוטנציאלית" if cis >= 65
+            else "ציון ניטראלי — צפה ממתין" if cis >= 40
+            else "ציון נמוך — שלב Markdown / הימנע"
+        )
+
+        return {
+            "score": round(cis, 1),
+            "phase": phase,
+            "interpretation": interpretation,
+            "components": {
+                "trend_contribution": trend_contrib,
+                "momentum_contribution": mom_contrib,
+                "volume_contribution": vol_contrib,
+                "base": 50,
+            },
+            "details": {
+                "trend_20d": f"{trend_20:.1%}",
+                "trend_50d": f"{trend_50:.1%}",
+                "volume_ratio_20d": f"{vol_ratio:.2f}x",
+                "momentum_10d": f"{mom_10:.1%}",
+            },
+            "stub": True,
+        }
 
 # ============================================================
 # App config — must be first Streamlit call
@@ -217,14 +279,14 @@ SECTOR_MAP: Dict[str, List[str]] = {
 }
 
 # ============================================================
-# Minimum trades constants
+# Constants
 # ============================================================
 
-MIN_TRADES_FOR_VALID_MODEL = 10  # below this → warn user
-TRADES_FALLBACK_THRESHOLD = 35   # if config threshold yields 0 trades, retry here
+MIN_TRADES_FOR_VALID_MODEL = 10
+TRADES_FALLBACK_THRESHOLD  = 35
 
 # ============================================================
-# Utilities
+# Utilities — pure logic, no Streamlit
 # ============================================================
 
 def ensure_dirs() -> None:
@@ -232,6 +294,9 @@ def ensure_dirs() -> None:
 
 def safe_now() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+def _gc_collect() -> None:
+    gc.collect()
 
 def _is_pid_running(pid: Optional[int]) -> bool:
     if pid is None:
@@ -254,7 +319,7 @@ def _is_pid_running(pid: Optional[int]) -> bool:
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True  # process exists but we can't signal it
+        return True
     except Exception:
         return False
 
@@ -264,16 +329,34 @@ def chunk_list(lst: List[str], num_chunks: int = 10) -> List[List[str]]:
     chunk_size = max(1, math.ceil(len(lst) / max(1, num_chunks)))
     return [lst[i:i + chunk_size] for i in range(0, len(lst), chunk_size)]
 
+def validate_trade_count(num_trades: int, slot_name: str) -> Tuple[bool, str]:
+    if num_trades == 0:
+        return False, (
+            f"❌ [{slot_name}] האימון הניב 0 עסקאות — "
+            "ייתכן שרף ה-CIS גבוה מדי, תקופת הנתונים קצרה מדי, "
+            "או שאין נתוני מחיר תקינים. "
+            f"מומלץ: הנמך את ה-threshold ל-{TRADES_FALLBACK_THRESHOLD} ונסה שוב."
+        )
+    if num_trades < MIN_TRADES_FOR_VALID_MODEL:
+        return True, (
+            f"⚠️ [{slot_name}] נמצאו רק {num_trades} עסקאות — "
+            f"המינימום המומלץ הוא {MIN_TRADES_FOR_VALID_MODEL}. "
+            "המודל נשמר אך האמינות נמוכה. שקול להרחיב תקופה או להוסיף מניות."
+        )
+    return True, f"✅ [{slot_name}] נמצאו {num_trades} עסקאות — אימון תקין."
+
+# ---- Model persistence ----------------------------------------
+
 def save_model_to_disk(slot_name: str, model: Any, metadata: Dict[str, Any], encoder: Any) -> str:
     ensure_dirs()
     safe_name = clean_filename(str(slot_name))
     file_path = os.path.join(MODEL_DIR, f"model_{safe_name}.pkl")
-    payload = {"model": model, "metadata": metadata, "phase_encoder": encoder}
-    tmp_path = file_path + ".tmp"
+    payload   = {"model": model, "metadata": metadata, "phase_encoder": encoder}
+    tmp_path  = file_path + ".tmp"
     try:
         with open(tmp_path, "wb") as f:
             pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
-        os.replace(tmp_path, file_path)  # atomic write
+        os.replace(tmp_path, file_path)
     except Exception:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -300,16 +383,13 @@ def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
         logger.error("load_all_models_from_disk failed: %s", exc)
     return loaded
 
+# ---- Trainer process management -------------------------------
+
 def read_auto_trainer_status() -> Dict[str, Any]:
     default: Dict[str, Any] = {
-        "state": "idle",
-        "message": "לא רץ כרגע",
-        "progress": 0,
-        "current_slot": "N/A",
-        "updated_at": "N/A",
-        "started_at": "N/A",
-        "finished_at": "N/A",
-        "pid": "N/A",
+        "state": "idle", "message": "לא רץ כרגע", "progress": 0,
+        "current_slot": "N/A", "updated_at": "N/A",
+        "started_at": "N/A", "finished_at": "N/A", "pid": "N/A",
     }
     try:
         if os.path.exists(AUTO_TRAINER_STATUS_FILE):
@@ -363,7 +443,7 @@ def cleanup_stale_trainer_artifacts() -> None:
 def is_trainer_running() -> bool:
     cleanup_stale_trainer_artifacts()
     status = read_auto_trainer_status()
-    pid = read_trainer_pid()
+    pid    = read_trainer_pid()
     return status.get("state") in {"running", "locked", "stopping"} or pid is not None
 
 def _hunt_for_trainer() -> str:
@@ -381,7 +461,7 @@ def _hunt_for_trainer() -> str:
             return os.path.join(root, target_name)
     return primary
 
-TRAINER_SCRIPT = _hunt_for_trainer()
+TRAINER_SCRIPT    = _hunt_for_trainer()
 TRAINER_AVAILABLE = os.path.isfile(TRAINER_SCRIPT)
 
 def start_trainer_process() -> int:
@@ -399,13 +479,11 @@ def start_trainer_process() -> int:
 
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    # Pass Cloud Run context to child
-    env["SCOUT_MODEL_DIR"] = MODEL_DIR
+    env["SCOUT_MODEL_DIR"]  = MODEL_DIR
     env["SCOUT_MIN_TRADES"] = str(MIN_TRADES_FOR_VALID_MODEL)
     env["SCOUT_FALLBACK_THRESHOLD"] = str(TRADES_FALLBACK_THRESHOLD)
 
     log_handle = open(AUTO_TRAINER_LOG_FILE, "a", encoding="utf-8")
-
     kwargs: Dict[str, Any] = {
         "cwd": os.path.dirname(TRAINER_SCRIPT),
         "stdout": log_handle,
@@ -416,7 +494,7 @@ def start_trainer_process() -> int:
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
-        kwargs["start_new_session"] = True  # detach from Streamlit's process group
+        kwargs["start_new_session"] = True
 
     try:
         proc = subprocess.Popen([sys.executable, TRAINER_SCRIPT], **kwargs)
@@ -436,7 +514,6 @@ def stop_trainer_process(grace_seconds: int = 8) -> bool:
         cleanup_stale_trainer_artifacts()
         return True
 
-    # Soft signal first
     try:
         sig = signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM
         os.kill(int(pid), sig)
@@ -449,14 +526,11 @@ def stop_trainer_process(grace_seconds: int = 8) -> bool:
             break
         time.sleep(0.3)
 
-    # Hard kill if still alive
     if _is_pid_running(pid):
         try:
             if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/PID", str(pid), "/T", "/F"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
-                )
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             else:
                 os.kill(int(pid), signal.SIGKILL)
         except Exception as exc:
@@ -473,12 +547,8 @@ def stop_trainer_process(grace_seconds: int = 8) -> bool:
 
 def clear_trainer_artifacts() -> None:
     for path in [
-        AUTO_TRAINER_STATUS_FILE,
-        AUTO_TRAINER_DONE_FLAG,
-        AUTO_TRAINER_LOG_FILE,
-        AUTO_TRAINER_PID_FILE,
-        AUTO_TRAINER_STOP_FILE,
-        AUTO_TRAINER_LOCK_FILE,
+        AUTO_TRAINER_STATUS_FILE, AUTO_TRAINER_DONE_FLAG, AUTO_TRAINER_LOG_FILE,
+        AUTO_TRAINER_PID_FILE,    AUTO_TRAINER_STOP_FILE, AUTO_TRAINER_LOCK_FILE,
     ]:
         try:
             if os.path.exists(path):
@@ -486,60 +556,129 @@ def clear_trainer_artifacts() -> None:
         except Exception:
             pass
 
-def validate_trade_count(num_trades: int, slot_name: str) -> Tuple[bool, str]:
-    """
-    Returns (is_valid, message).
-    Catches the '0 trades' training failure early with actionable guidance.
-    """
-    if num_trades == 0:
-        return False, (
-            f"❌ [{slot_name}] האימון הניב 0 עסקאות — "
-            "ייתכן שרף ה-CIS גבוה מדי, תקופת הנתונים קצרה מדי, "
-            f"או שאין נתוני מחיר תקינים. "
-            f"מומלץ: הנמך את ה-threshold ל-{TRADES_FALLBACK_THRESHOLD} ונסה שוב."
-        )
-    if num_trades < MIN_TRADES_FOR_VALID_MODEL:
-        return True, (
-            f"⚠️ [{slot_name}] נמצאו רק {num_trades} עסקאות — "
-            f"המינימום המומלץ הוא {MIN_TRADES_FOR_VALID_MODEL}. "
-            "המודל נשמר אך האמינות נמוכה. שקול להרחיב את תקופת הנתונים או להוסיף מניות."
-        )
-    return True, f"✅ [{slot_name}] נמצאו {num_trades} עסקאות — אימון תקין."
+# ============================================================
+# Business logic helpers (no Streamlit)
+# ============================================================
+
+@dataclass
+class WyckoffResult:
+    df:            pd.DataFrame
+    factors:       pd.DataFrame
+    cis:           pd.Series
+    phases:        pd.Series
+    current_phase: str
+    current_cis:   float
+    allowed:       bool
+    last_close:    float
+    last_volume:   float
+    num_bars:      int
+
+def _compute_wyckoff(ticker: str) -> Optional[WyckoffResult]:
+    """Pure computation — no Streamlit calls."""
+    df = get_cached_data(ticker)
+    if df is None or df.empty:
+        return None
+
+    engine  = FactorEngine(BacktestConfig())
+    factors = engine.compute(df)
+    if factors is None or factors.empty:
+        return None
+
+    phases  = engine.get_wyckoff_phase(df)
+    cis     = engine.composite_cis(factors, df)
+    if cis is None or len(cis) == 0:
+        return None
+
+    current_phase = str(phases.iloc[-1])
+    current_cis   = float(cis.iloc[-1])
+    allowed       = check_phase_entry_allowed(current_phase, current_cis) if callable(check_phase_entry_allowed) else True
+
+    return WyckoffResult(
+        df=df, factors=factors, cis=cis, phases=phases,
+        current_phase=current_phase, current_cis=current_cis,
+        allowed=allowed,
+        last_close=float(df["Close"].iloc[-1]),
+        last_volume=float(df["Volume"].iloc[-1]),
+        num_bars=len(df),
+    )
+
+def _run_scan_row(engine: "FactorEngine", ticker: str, scan_th: float) -> Optional[Dict[str, Any]]:
+    """Returns scan result dict or None. No Streamlit calls."""
+    df = get_cached_data(ticker, period="6mo")
+    if df is None or len(df) <= 30:
+        return None
+    factors = engine.compute(df)
+    if factors is None or factors.empty:
+        return None
+    cis   = engine.composite_cis(factors, df)
+    phase = engine.get_wyckoff_phase(df)
+    score = float(cis.iloc[-1]) if hasattr(cis, "iloc") else float(cis)
+    if score < scan_th:
+        return None
+    return {
+        "Ticker": ticker,
+        "Score":  round(score, 1),
+        "Phase":  str(phase.iloc[-1]) if hasattr(phase, "iloc") else str(phase),
+        "Close":  float(df["Close"].iloc[-1]),
+        "_df":    df,      # kept for explain_score; dropped before display
+    }
 
 # ============================================================
 # Session state
 # ============================================================
 
 _SESSION_DEFAULTS: Dict[str, Any] = {
-    "mode": "wyckoff",
-    "ml_model": None,
-    "ml_metadata": None,
-    "use_ml": False,
-    "phase_encoder": None,
-    "model_archive": None,  # lazy-loaded
+    "mode":              "wyckoff",
+    "ml_model":          None,
+    "ml_metadata":       None,
+    "use_ml":            False,
+    "phase_encoder":     None,
+    "model_archive":     None,
     "selected_universe": "הכול (כל השוק האמריקאי)",
-    "wyckoff_ticker": "NVDA",
-    "backtest_ticker": "COST",
-    "scanner_limit": 20,
-    "scanner_sector": "צמיחה וטכנולוגיה (Growth)",
-    "risk_profile": "Balanced",
-    "bt_threshold": 65,
-    "scan_threshold": 65,
-    "threshold_sync": True,
-    "threshold_value": 65,
+    "wyckoff_ticker":    "NVDA",
+    "backtest_ticker":   "COST",
+    "scanner_limit":     20,
+    "scanner_sector":    "צמיחה וטכנולוגיה (Growth)",
+    "risk_profile":      "Balanced",
+    "bt_threshold":      65,
+    "scan_threshold":    65,
+    "threshold_sync":    True,
+    "threshold_value":   65,
 }
 
 def init_session_state() -> None:
     for k, v in _SESSION_DEFAULTS.items():
         if k not in st.session_state:
             st.session_state[k] = v
-    # Lazy model archive load
     if st.session_state.model_archive is None:
         st.session_state.model_archive = load_all_models_from_disk()
 
-def _gc_collect() -> None:
-    """Explicit GC call to keep Cloud Run memory bounded after heavy operations."""
-    gc.collect()
+# ============================================================
+# Data cache — TTL=1h, max 64 entries
+# ============================================================
+
+@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
+def get_cached_data(
+    ticker: str,
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
+    try:
+        effective_period = None if (start or end) else period
+        df = get_data(ticker, effective_period, start, end)
+        if df is not None and not df.empty:
+            return df
+    except Exception as exc:
+        logger.warning("get_cached_data primary failed for %s: %s", ticker, exc)
+    try:
+        t  = yf.Ticker(ticker)
+        df = t.history(start=start, end=end) if (start or end) else t.history(period=period or "1y")
+        if df is not None and not df.empty:
+            return df
+    except Exception as exc:
+        logger.warning("get_cached_data fallback failed for %s: %s", ticker, exc)
+    return None
 
 # ============================================================
 # CSS / Theme
@@ -561,8 +700,8 @@ def inject_css() -> None:
 
         .stApp {
             background:
-                radial-gradient(circle at top left, rgba(38,166,154,0.08), transparent 28%),
-                radial-gradient(circle at top right, rgba(59,130,246,0.08), transparent 25%),
+                radial-gradient(circle at top left,  rgba(38,166,154,0.08), transparent 28%),
+                radial-gradient(circle at top right, rgba(59,130,246,0.08),  transparent 25%),
                 linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
             color: #d9e6f2;
         }
@@ -586,7 +725,47 @@ def inject_css() -> None:
             box-shadow: 0 14px 30px rgba(0,0,0,.22);
         }
 
-        .section-title { font-size: 1.15rem; font-weight: 700; color: #eaf4ff; margin-bottom: 0.4rem; }
+        /* Score explanation card */
+        .explain-card {
+            background: linear-gradient(135deg, rgba(10,20,38,0.95), rgba(7,15,28,0.98));
+            border: 1px solid rgba(59,130,246,0.25);
+            border-radius: 18px;
+            padding: 1.1rem 1.3rem;
+            margin-top: 0.6rem;
+        }
+        .explain-title {
+            font-size: 1.05rem; font-weight: 700; color: #7dd3fc;
+            margin-bottom: 0.6rem; border-bottom: 1px solid rgba(59,130,246,0.2);
+            padding-bottom: 0.4rem;
+        }
+        .explain-row {
+            display: flex; justify-content: space-between;
+            padding: 0.28rem 0; border-bottom: 1px solid rgba(125,155,190,0.08);
+            font-size: 0.92rem;
+        }
+        .explain-label { color: #9db0c9; }
+        .explain-value-pos { color: #26a69a; font-weight: 600; }
+        .explain-value-neg { color: #ef5350; font-weight: 600; }
+        .explain-value-neu { color: #d9e6f2; font-weight: 600; }
+        .explain-verdict {
+            margin-top: 0.75rem; padding: 0.55rem 0.8rem;
+            border-radius: 10px; font-weight: 600; font-size: 0.97rem;
+            background: rgba(38,166,154,0.12); color: #26a69a;
+            border: 1px solid rgba(38,166,154,0.25);
+        }
+        .explain-verdict-warn {
+            background: rgba(255,193,7,0.10); color: #ffc107;
+            border: 1px solid rgba(255,193,7,0.25);
+        }
+        .explain-verdict-bad {
+            background: rgba(239,83,80,0.10); color: #ef5350;
+            border: 1px solid rgba(239,83,80,0.25);
+        }
+        .explain-stub-note {
+            font-size: 0.8rem; color: #64748b; margin-top: 0.5rem; font-style: italic;
+        }
+
+        .section-title    { font-size: 1.15rem; font-weight: 700; color: #eaf4ff; margin-bottom: 0.4rem; }
         .section-subtitle { color: #9db0c9; margin-bottom: 0.8rem; line-height: 1.7; }
 
         .metric-box {
@@ -605,6 +784,16 @@ def inject_css() -> None:
         }
         .win  { border-color: #26a69a; }
         .loss { border-color: #ef5350; }
+
+        .zero-trades-banner {
+            background: rgba(239,83,80,0.12);
+            border: 1px solid rgba(239,83,80,0.35);
+            border-radius: 14px;
+            padding: 0.9rem 1.1rem;
+            margin-bottom: 0.8rem;
+        }
+        .zero-trades-title { color: #ef5350; font-weight: 700; font-size: 1.0rem; margin-bottom: 0.4rem; }
+        .zero-trades-tips  { color: #d9e6f2; font-size: 0.92rem; line-height: 1.8; }
 
         .widget-panel-ai {
             background: rgba(10,18,33,0.92);
@@ -637,45 +826,14 @@ def inject_css() -> None:
             border: 1px solid rgba(125,155,190,0.12);
         }
         .stTabs [data-baseweb="tab"] {
-            height: 3rem;
-            border-radius: 12px;
-            padding: 0 1rem;
-            background: transparent;
+            height: 3rem; border-radius: 12px;
+            padding: 0 1rem; background: transparent;
         }
         .stTabs [aria-selected="true"] { background: rgba(37,99,235,0.18) !important; }
         </style>
         """,
         unsafe_allow_html=True,
     )
-
-# ============================================================
-# Data cache — TTL=1h, max 64 entries to cap Cloud Run memory
-# ============================================================
-
-@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
-def get_cached_data(
-    ticker: str,
-    period: str = "1y",
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-) -> Optional[pd.DataFrame]:
-    try:
-        effective_period = None if (start or end) else period
-        df = get_data(ticker, effective_period, start, end)
-        if df is not None and not df.empty:
-            return df
-    except Exception as exc:
-        logger.warning("get_cached_data primary failed for %s: %s", ticker, exc)
-
-    # Fallback: direct yfinance
-    try:
-        t = yf.Ticker(ticker)
-        df = t.history(start=start, end=end) if (start or end) else t.history(period=period or "1y")
-        if df is not None and not df.empty:
-            return df
-    except Exception as exc:
-        logger.warning("get_cached_data fallback failed for %s: %s", ticker, exc)
-    return None
 
 # ============================================================
 # Threshold helpers
@@ -697,28 +855,134 @@ def render_threshold_control(label: str, key_prefix: str, min_value: int = 40, m
     c1, c2 = st.columns([4, 1], vertical_alignment="center")
     with c1:
         st.slider(
-            "",
-            min_value=min_value,
-            max_value=max_value,
+            "", min_value=min_value, max_value=max_value,
             value=int(st.session_state[f"{key_prefix}_slider"]),
-            key=f"{key_prefix}_slider",
-            label_visibility="collapsed",
-            on_change=sync_threshold_from_slider,
-            args=(key_prefix,),
+            key=f"{key_prefix}_slider", label_visibility="collapsed",
+            on_change=sync_threshold_from_slider, args=(key_prefix,),
         )
     with c2:
         st.number_input(
-            "",
-            min_value=min_value,
-            max_value=max_value,
+            "", min_value=min_value, max_value=max_value,
             value=int(st.session_state[f"{key_prefix}_number"]),
-            key=f"{key_prefix}_number",
-            label_visibility="collapsed",
-            on_change=sync_threshold_from_number,
-            args=(key_prefix,),
+            key=f"{key_prefix}_number", label_visibility="collapsed",
+            on_change=sync_threshold_from_number, args=(key_prefix,),
         )
     st.session_state[key_prefix] = int(st.session_state[f"{key_prefix}_slider"])
     return int(st.session_state[key_prefix])
+
+# ============================================================
+# explain_score UI widget
+# ============================================================
+
+def _value_css(val: float) -> str:
+    if val > 0.5:
+        return "explain-value-pos"
+    if val < -0.5:
+        return "explain-value-neg"
+    return "explain-value-neu"
+
+def render_explain_score(
+    df: pd.DataFrame,
+    phase: str,
+    cis: float,
+    context: str = "",
+) -> None:
+    """
+    Calls explain_score() and renders the result in a styled expander.
+    `context` is used to disambiguate keys when called from multiple screens.
+    """
+    expander_label = f"🔍 הסבר מפורט על ציון {cis:.1f}"
+    with st.expander(expander_label, expanded=False):
+        try:
+            expl: Dict[str, Any] = explain_score(df, phase, cis)
+        except Exception as exc:
+            st.warning(f"לא ניתן לחשב הסבר: {exc}")
+            return
+
+        components = expl.get("components", {})
+        details    = expl.get("details",    {})
+        interp     = expl.get("interpretation", "")
+        is_stub    = expl.get("stub", False)
+
+        # Verdict CSS class
+        if cis >= 65:
+            verdict_cls = "explain-verdict"
+        elif cis >= 40:
+            verdict_cls = "explain-verdict-warn"
+        else:
+            verdict_cls = "explain-verdict-bad"
+
+        # Build HTML for the card
+        rows_html = ""
+
+        # Components
+        comp_labels = {
+            "base":                  "בסיס",
+            "trend_contribution":    "תרומת מגמה",
+            "momentum_contribution": "תרומת מומנטום",
+            "volume_contribution":   "תרומת נפח",
+        }
+        for key, label in comp_labels.items():
+            val = components.get(key, 0)
+            css = _value_css(float(val)) if key != "base" else "explain-value-neu"
+            sign = "+" if float(val) > 0 and key != "base" else ""
+            rows_html += (
+                f'<div class="explain-row">'
+                f'<span class="explain-label">{label}</span>'
+                f'<span class="{css}">{sign}{val}</span>'
+                f'</div>'
+            )
+
+        # Details
+        detail_labels = {
+            "trend_20d":       "מגמה 20 ימים",
+            "trend_50d":       "מגמה 50 ימים",
+            "volume_ratio_20d":"יחס נפח (20d)",
+            "momentum_10d":    "מומנטום 10 ימים",
+        }
+        for key, label in detail_labels.items():
+            val = details.get(key)
+            if val is not None:
+                rows_html += (
+                    f'<div class="explain-row">'
+                    f'<span class="explain-label">{label}</span>'
+                    f'<span class="explain-value-neu">{val}</span>'
+                    f'</div>'
+                )
+
+        stub_note = '<div class="explain-stub-note">⚠️ מצב stub — הסבר מקוצר (scout_core לא טעון)</div>' if is_stub else ""
+
+        html = f"""
+        <div class="explain-card">
+            <div class="explain-title">📊 פירוט ציון CIS — {phase}</div>
+            {rows_html}
+            <div class="{verdict_cls}">{interp}</div>
+            {stub_note}
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+
+# ============================================================
+# Shared zero-trades banner
+# ============================================================
+
+def render_zero_trades_banner(threshold: int) -> None:
+    fallback = max(TRADES_FALLBACK_THRESHOLD, threshold - 10)
+    st.markdown(
+        f"""
+        <div class="zero-trades-banner">
+            <div class="zero-trades-title">⛔ אפס עסקאות — הסף גבוה מדי</div>
+            <div class="zero-trades-tips">
+                לא נמצאו עסקאות עם הסף הנוכחי ({threshold}).<br>
+                💡 פעולות מומלצות:<br>
+                &nbsp;&nbsp;• הנמך את הסף ל-<b>{fallback}</b> ונסה שוב<br>
+                &nbsp;&nbsp;• הרחב את תקופת הנתונים (נסה 3y במקום 2y)<br>
+                &nbsp;&nbsp;• וודא שה-Ticker סחיר ובעל נפח מספק
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # ============================================================
 # Visual helpers
@@ -734,14 +998,14 @@ def build_gauge(value: float, title: str = "CIS Score") -> go.Figure:
             title={"text": title, "font": {"size": 18}},
             gauge={
                 "axis": {"range": [0, 100], "tickwidth": 1, "tickcolor": "#9db0c9"},
-                "bar": {"color": "#26a69a"},
+                "bar":  {"color": "#26a69a"},
                 "bgcolor": "rgba(0,0,0,0)",
                 "borderwidth": 2,
                 "bordercolor": "rgba(125,155,190,0.18)",
                 "steps": [
-                    {"range": [0, 35],  "color": "rgba(239,83,80,0.22)"},
-                    {"range": [35, 65], "color": "rgba(255,193,7,0.22)"},
-                    {"range": [65, 100],"color": "rgba(38,166,154,0.22)"},
+                    {"range": [0,  35],  "color": "rgba(239,83,80,0.22)"},
+                    {"range": [35, 65],  "color": "rgba(255,193,7,0.22)"},
+                    {"range": [65, 100], "color": "rgba(38,166,154,0.22)"},
                 ],
                 "threshold": {"line": {"color": "#7dd3fc", "width": 4}, "thickness": 0.75, "value": value},
             },
@@ -764,11 +1028,10 @@ def render_header(title: str, subtitle: str) -> None:
 
 def render_info_banner() -> None:
     if st.session_state.use_ml and st.session_state.ml_model is not None:
-        metadata = st.session_state.ml_metadata or {}
-        acc = metadata.get("test_acc", metadata.get("train_acc", 0.0))
-        rec_th = metadata.get("recommended_threshold", "לא חושב")
-        tr_count = metadata.get("num_trades", "?")
-        # Surface zero-trades warning even in the banner
+        metadata   = st.session_state.ml_metadata or {}
+        acc        = metadata.get("test_acc", metadata.get("train_acc", 0.0))
+        rec_th     = metadata.get("recommended_threshold", "לא חושב")
+        tr_count   = metadata.get("num_trades", "?")
         if isinstance(tr_count, int) and tr_count == 0:
             st.error("⚠️ המודל הפעיל אומן על 0 עסקאות — התוצאות לא אמינות!")
         else:
@@ -777,6 +1040,10 @@ def render_info_banner() -> None:
                 f"דיוק OOB: {float(acc) * 100:.1f}% | "
                 f"סף מומלץ: {rec_th} | אימון על {tr_count} עסקאות"
             )
+
+# ============================================================
+# Shared AI selector widget
+# ============================================================
 
 def render_active_ai_selector_widget(screen_identifier: str) -> None:
     with st.container(border=False):
@@ -787,17 +1054,15 @@ def render_active_ai_selector_widget(screen_identifier: str) -> None:
         with col_a:
             archive = st.session_state.model_archive or {}
             if archive:
-                slots_list = list(archive.keys())
+                slots_list    = list(archive.keys())
                 selected_slot = st.selectbox(
-                    "בחר מודל מוסדי פעיל",
-                    slots_list,
+                    "בחר מודל מוסדי פעיל", slots_list,
                     key=f"selector_slot_{screen_identifier}",
                 )
                 if st.button("✅ טען והפעל מודל", key=f"activate_btn_{screen_identifier}", use_container_width=True):
                     target_data = archive[selected_slot]
-                    meta = target_data.get("metadata", {})
-                    num_trades = meta.get("num_trades", -1)
-                    # Validate trade count before activating
+                    meta        = target_data.get("metadata", {})
+                    num_trades  = meta.get("num_trades", -1)
                     if isinstance(num_trades, int):
                         valid, msg = validate_trade_count(num_trades, selected_slot)
                         if not valid:
@@ -805,18 +1070,17 @@ def render_active_ai_selector_widget(screen_identifier: str) -> None:
                         else:
                             if num_trades < MIN_TRADES_FOR_VALID_MODEL:
                                 st.warning(msg)
-                            st.session_state.ml_model = target_data["model"]
+                            st.session_state.ml_model    = target_data["model"]
                             st.session_state.ml_metadata = meta
                             st.session_state.phase_encoder = target_data.get("phase_encoder")
-                            st.session_state.use_ml = True
+                            st.session_state.use_ml      = True
                             st.success(f"המודל '{selected_slot}' הופעל בהצלחה")
                             st.rerun()
                     else:
-                        # No trade count metadata — load anyway with warning
-                        st.session_state.ml_model = target_data["model"]
+                        st.session_state.ml_model    = target_data["model"]
                         st.session_state.ml_metadata = meta
                         st.session_state.phase_encoder = target_data.get("phase_encoder")
-                        st.session_state.use_ml = True
+                        st.session_state.use_ml      = True
                         st.warning("המודל נטען, אך אין מידע על מספר עסקאות האימון.")
                         st.rerun()
             else:
@@ -831,8 +1095,7 @@ def render_active_ai_selector_widget(screen_identifier: str) -> None:
         with col_c:
             st.markdown("<br>", unsafe_allow_html=True)
             ai_toggle = st.checkbox(
-                "הפעל AI",
-                value=st.session_state.use_ml,
+                "הפעל AI", value=st.session_state.use_ml,
                 key=f"checkbox_ai_{screen_identifier}",
             )
             if ai_toggle != st.session_state.use_ml:
@@ -840,34 +1103,37 @@ def render_active_ai_selector_widget(screen_identifier: str) -> None:
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
+# ============================================================
+# Trainer control panel
+# ============================================================
+
 def render_trainer_control_panel() -> None:
     cleanup_stale_trainer_artifacts()
-    status = read_auto_trainer_status()
-    pid = read_trainer_pid()
+    status  = read_auto_trainer_status()
+    pid     = read_trainer_pid()
     running = is_trainer_running()
+
+    # Auto-reload once training finishes
+    if os.path.exists(AUTO_TRAINER_DONE_FLAG) and not running:
+        st.session_state.model_archive = load_all_models_from_disk()
 
     st.markdown("### 🚦 Auto-Trainer Control")
 
-    # Zero-trades alert from last run
     last_trades = status.get("num_trades")
     if last_trades is not None:
         try:
-            last_trades = int(last_trades)
-            if last_trades == 0:
-                st.error(
-                    f"⛔ הריצה האחרונה הניבה 0 עסקאות — "
-                    f"הנמך את ה-threshold ל-{TRADES_FALLBACK_THRESHOLD} ונסה שוב, "
-                    "או הרחב את תקופת הנתונים."
-                )
-            elif last_trades < MIN_TRADES_FOR_VALID_MODEL:
-                st.warning(f"⚠️ הריצה האחרונה: {last_trades} עסקאות (מינימום מומלץ: {MIN_TRADES_FOR_VALID_MODEL})")
+            lt = int(last_trades)
+            if lt == 0:
+                render_zero_trades_banner(int(status.get("bt_threshold", TRADES_FALLBACK_THRESHOLD)))
+            elif lt < MIN_TRADES_FOR_VALID_MODEL:
+                st.warning(f"⚠️ הריצה האחרונה: {lt} עסקאות (מינימום מומלץ: {MIN_TRADES_FOR_VALID_MODEL})")
         except Exception:
             pass
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("מצב", str(status.get("state", "idle")))
-    c2.metric("התקדמות", f"{status.get('progress', 0)}%")
-    c3.metric("PID", str(pid) if pid is not None else str(status.get("pid", "N/A")))
+    c1.metric("מצב",          str(status.get("state", "idle")))
+    c2.metric("התקדמות",      f"{status.get('progress', 0)}%")
+    c3.metric("PID",          str(pid) if pid is not None else str(status.get("pid", "N/A")))
     c4.metric("סקטור נוכחי", str(status.get("current_slot", "N/A")))
 
     b1, b2, b3 = st.columns([1.2, 1.2, 2])
@@ -915,69 +1181,62 @@ def screen_wyckoff() -> None:
     with col2:
         run_btn = st.button("▶ הרץ ניתוח", use_container_width=True, type="primary")
 
+    if not run_btn:
+        return
+
+    ticker = ticker.strip().upper()
+    with st.spinner("מחשב FactorEngine..."):
+        try:
+            result = _compute_wyckoff(ticker)
+        except Exception as exc:
+            logger.error("screen_wyckoff compute error: %s", exc, exc_info=True)
+            st.error(f"שגיאה בחישוב המנוע: {exc}")
+            st.code(traceback.format_exc())
+            return
+
+    if result is None:
+        st.error(f"אין נתונים זמינים או פחות מ-60 שורות עבור '{ticker}' — בדוק את ה-Ticker.")
+        return
+
     left, right = st.columns([1.15, 1], vertical_alignment="top")
 
-    if run_btn:
-        ticker = ticker.strip().upper()
-        with st.spinner("מחשב FactorEngine..."):
-            df = get_cached_data(ticker)
-            if df is None or df.empty:
-                st.error(f"אין נתונים זמינים עבור '{ticker}' — בדוק את ה-Ticker.")
-                return
-            try:
-                engine = FactorEngine(BacktestConfig())
-                factors = engine.compute(df)
-                if factors is None or factors.empty:
-                    st.warning(f"המנוע לא הצליח לחשב פקטורים עבור '{ticker}' — ייתכן שיש פחות מ-60 שורות נתון.")
-                    return
-                phases = engine.get_wyckoff_phase(df)
-                cis = engine.composite_cis(factors, df)
-                if cis is None or len(cis) == 0:
-                    st.warning("לא התקבל ציון CIS תקין.")
-                    return
+    with left:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Ticker", ticker)
+        m2.metric("Phase",  result.current_phase)
+        m3.metric("Entry Allowed", "כן" if result.allowed else "לא")
+        st.plotly_chart(build_gauge(result.current_cis, "Composite Institutional Score"), use_container_width=True)
 
-                current_phase = str(phases.iloc[-1])
-                current_cis = float(cis.iloc[-1])
-                allowed = check_phase_entry_allowed(current_phase, current_cis) if callable(check_phase_entry_allowed) else True
+        # ── explain_score ──────────────────────────────────────────
+        render_explain_score(result.df, result.current_phase, result.current_cis, context="wyckoff")
 
-                with left:
-                    m1, m2, m3 = st.columns(3)
-                    m1.metric("Ticker", ticker)
-                    m2.metric("Phase", current_phase)
-                    m3.metric("Entry Allowed", "כן" if allowed else "לא")
-                    st.plotly_chart(build_gauge(current_cis, "Composite Institutional Score"), use_container_width=True)
+    with right:
+        st.markdown("### מדדי מצב")
+        st.metric("Composite CIS", f"{result.current_cis:.1f}")
+        st.metric("Bars",          result.num_bars)
+        st.metric("Last Close",    f"{result.last_close:.2f}")
+        st.metric("Vol",           f"{result.last_volume:,.0f}")
 
-                with right:
-                    st.markdown("### מדדי מצב")
-                    st.metric("Composite CIS", f"{current_cis:.1f}")
-                    st.metric("Bars", len(df))
-                    st.metric("Last Close", f"{float(df['Close'].iloc[-1]):.2f}")
-                    st.metric("Vol", f"{float(df['Volume'].iloc[-1]):,.0f}")
+    st.markdown("### נתוני פקטורים אחרונים")
+    st.dataframe(result.factors.tail(12).copy(), use_container_width=True)
 
-                st.markdown("### נתוני פקטורים אחרונים")
-                st.dataframe(factors.tail(12).copy(), use_container_width=True)
+    st.markdown("### Price Snapshot")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=result.df.index, y=result.df["Close"], name="Close"))
+    close_max  = result.df["Close"].max()
+    vol_scaled = result.df["Volume"] / result.df["Volume"].max() * close_max
+    fig.add_trace(go.Scatter(x=result.df.index, y=vol_scaled, name="Volume (scaled)", line=dict(dash="dot")))
+    fig.update_layout(
+        height=420,
+        margin=dict(l=0, r=0, t=25, b=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#d9e6f2"),
+        legend=dict(orientation="h"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    _gc_collect()
 
-                st.markdown("### Price Snapshot")
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="Close"))
-                if "Volume" in df.columns:
-                    close_max = df["Close"].max()
-                    vol_scaled = df["Volume"] / df["Volume"].max() * close_max
-                    fig.add_trace(go.Scatter(x=df.index, y=vol_scaled, name="Volume (scaled)", line=dict(dash="dot")))
-                fig.update_layout(
-                    height=420,
-                    margin=dict(l=0, r=0, t=25, b=0),
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    font=dict(color="#d9e6f2"),
-                    legend=dict(orientation="h"),
-                )
-                st.plotly_chart(fig, use_container_width=True)
-                _gc_collect()
-            except Exception as exc:
-                logger.error("screen_wyckoff error: %s", exc, exc_info=True)
-                st.error(f"שגיאה בחישוב המנוע: {exc}")
-                st.code(traceback.format_exc())
 
 def screen_backtest() -> None:
     st.markdown("### 📊 Wyckoff-Anchored Backtest")
@@ -988,93 +1247,107 @@ def screen_backtest() -> None:
     with c1:
         ticker = st.text_input("Ticker לבדיקה", value=st.session_state.backtest_ticker, key="backtest_ticker")
     with c2:
-        risk_profile = st.selectbox("Risk Profile", ["Aggressive", "Balanced", "Conservative"], index=1, key="risk_profile")
+        risk_profile = st.selectbox(
+            "Risk Profile", ["Aggressive", "Balanced", "Conservative"],
+            index=1, key="risk_profile",
+        )
     with c3:
         bt_threshold = render_threshold_control("סף ציון CIS", "bt_threshold")
 
-    if st.button("▶ הרץ סימולציה", use_container_width=True, type="primary"):
-        ticker = ticker.strip().upper()
-        with st.spinner("מריץ Backtest..."):
-            bt_df, audit_df = None, None
-            try:
-                bt_df, audit_df = run_wyckoff_anchored_backtest(
-                    ticker,
-                    st.session_state.use_ml,
-                    bt_threshold,
-                    period="2y",
-                    risk_profile=risk_profile,
-                )
-            except NotImplementedError:
-                st.warning("run_wyckoff_anchored_backtest לא זמין כרגע ב-scout_core.")
-                return
-            except Exception as exc:
-                logger.error("Backtest error for %s: %s", ticker, exc, exc_info=True)
-                st.error(f"שגיאה בהרצת הבק-טסט: {exc}")
-                st.code(traceback.format_exc())
-                return
+    if not st.button("▶ הרץ סימולציה", use_container_width=True, type="primary"):
+        return
 
-            if bt_df is None or bt_df.empty:
-                st.error("אין נתוני backtest — ייתכן שה-Ticker לא נמצא או שאין מספיק נתוני מחיר.")
-                return
-
-            t_count = len(audit_df) if audit_df is not None else 0
-
-            # Zero-trades detection
-            if t_count == 0:
-                st.error(
-                    f"⚠️ הבק-טסט הניב 0 עסקאות עבור '{ticker}' עם סף {bt_threshold}.\n\n"
-                    f"💡 נסה:\n"
-                    f"• הנמך את הסף ל-{TRADES_FALLBACK_THRESHOLD} ונסה שוב\n"
-                    "• הרחב את תקופת הנתונים ל-3y\n"
-                    "• וודא שמדובר במניה עם נפח מסחר מספק"
-                )
-                return
-
-            if t_count < MIN_TRADES_FOR_VALID_MODEL:
-                st.warning(f"⚠️ נמצאו רק {t_count} עסקאות — הסטטיסטיקה עשויה להיות לא מהימנה.")
-
-            w_count = len(audit_df[audit_df["win"] == True]) if (audit_df is not None and "win" in audit_df.columns) else 0
-            w_rate = w_count / t_count if t_count > 0 else 0
-            s_ret = float(bt_df["Cum_Strategy"].iloc[-1]) if "Cum_Strategy" in bt_df.columns else float("nan")
-            baseline = float(bt_df["Cum_Baseline"].iloc[-1]) if "Cum_Baseline" in bt_df.columns else float("nan")
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("עסקאות", t_count)
-            m2.metric("Win Rate", f"{w_rate:.1%}")
-            m3.metric("Strategy", f"{s_ret:.2%}" if not np.isnan(s_ret) else "N/A")
-            m4.metric("Baseline", f"{baseline:.2%}" if not np.isnan(baseline) else "N/A")
-
-            fig = go.Figure()
-            if "Cum_Strategy" in bt_df.columns:
-                fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df["Cum_Strategy"], name="Wyckoff Strategy"))
-            if "Cum_Baseline" in bt_df.columns:
-                fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df["Cum_Baseline"], name="Baseline", line=dict(dash="dot")))
-            fig.update_layout(
-                height=420,
-                margin=dict(l=0, r=0, t=25, b=0),
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#d9e6f2"),
-                legend=dict(orientation="h"),
+    ticker = ticker.strip().upper()
+    with st.spinner("מריץ Backtest..."):
+        bt_df, audit_df = None, None
+        try:
+            bt_df, audit_df = run_wyckoff_anchored_backtest(
+                ticker,
+                st.session_state.use_ml,
+                bt_threshold,
+                period="2y",
+                risk_profile=risk_profile,
             )
-            st.plotly_chart(fig, use_container_width=True)
+        except NotImplementedError:
+            st.warning("run_wyckoff_anchored_backtest לא זמין כרגע ב-scout_core.")
+            return
+        except Exception as exc:
+            logger.error("Backtest error for %s: %s", ticker, exc, exc_info=True)
+            st.error(f"שגיאה בהרצת הבק-טסט: {exc}")
+            st.code(traceback.format_exc())
+            return
 
-            if audit_df is not None and not audit_df.empty:
-                st.markdown("### Audit Logs")
-                for _, row in audit_df.iterrows():
-                    is_win = bool(row.get("win", False))
-                    cls = "win" if is_win else "loss"
-                    emoji = "✅" if is_win else "❌"
-                    st.markdown(
-                        f'<div class="audit-row {cls}">'
-                        f"{emoji} {row.get('entry_date', 'N/A')} → {row.get('exit_date', 'N/A')}<br>"
-                        f"פאזה: {row.get('phase_at_entry', 'N/A')} | "
-                        f"תשואה: {row.get('return_pct', 'N/A')}% | "
-                        f"יציאה: {row.get('exit_type', 'N/A')}"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
-            _gc_collect()
+    if bt_df is None or bt_df.empty:
+        st.error("אין נתוני backtest — ייתכן שה-Ticker לא נמצא או שאין מספיק נתוני מחיר.")
+        return
+
+    t_count = len(audit_df) if audit_df is not None else 0
+
+    if t_count == 0:
+        render_zero_trades_banner(bt_threshold)
+        return
+
+    if t_count < MIN_TRADES_FOR_VALID_MODEL:
+        st.warning(f"⚠️ נמצאו רק {t_count} עסקאות — הסטטיסטיקה עשויה להיות לא מהימנה.")
+
+    w_count  = len(audit_df[audit_df["win"] == True]) if (audit_df is not None and "win" in audit_df.columns) else 0
+    w_rate   = w_count / t_count if t_count > 0 else 0
+    s_ret    = float(bt_df["Cum_Strategy"].iloc[-1]) if "Cum_Strategy" in bt_df.columns else float("nan")
+    baseline = float(bt_df["Cum_Baseline"].iloc[-1]) if "Cum_Baseline" in bt_df.columns else float("nan")
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("עסקאות",  t_count)
+    m2.metric("Win Rate",  f"{w_rate:.1%}")
+    m3.metric("Strategy",  f"{s_ret:.2%}"    if not np.isnan(s_ret)    else "N/A")
+    m4.metric("Baseline",  f"{baseline:.2%}" if not np.isnan(baseline) else "N/A")
+
+    # ── explain_score for latest backtest bar ──────────────────
+    df_for_explain = get_cached_data(ticker, period="2y")
+    if df_for_explain is not None and not df_for_explain.empty:
+        engine  = FactorEngine(BacktestConfig())
+        factors = engine.compute(df_for_explain)
+        if factors is not None and not factors.empty:
+            cis_series = engine.composite_cis(factors, df_for_explain)
+            phases     = engine.get_wyckoff_phase(df_for_explain)
+            render_explain_score(
+                df_for_explain,
+                str(phases.iloc[-1]),
+                float(cis_series.iloc[-1]),
+                context="backtest",
+            )
+
+    fig = go.Figure()
+    if "Cum_Strategy" in bt_df.columns:
+        fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df["Cum_Strategy"], name="Wyckoff Strategy"))
+    if "Cum_Baseline" in bt_df.columns:
+        fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df["Cum_Baseline"], name="Baseline", line=dict(dash="dot")))
+    fig.update_layout(
+        height=420,
+        margin=dict(l=0, r=0, t=25, b=0),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#d9e6f2"),
+        legend=dict(orientation="h"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    if audit_df is not None and not audit_df.empty:
+        st.markdown("### Audit Logs")
+        for _, row in audit_df.iterrows():
+            is_win = bool(row.get("win", False))
+            cls    = "win" if is_win else "loss"
+            emoji  = "✅" if is_win else "❌"
+            st.markdown(
+                f'<div class="audit-row {cls}">'
+                f"{emoji} {row.get('entry_date','N/A')} → {row.get('exit_date','N/A')}<br>"
+                f"פאזה: {row.get('phase_at_entry','N/A')} | "
+                f"תשואה: {row.get('return_pct','N/A')}% | "
+                f"יציאה: {row.get('exit_type','N/A')}"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+    _gc_collect()
+
 
 def screen_scanner() -> None:
     st.markdown("### 🔎 Market Scanner")
@@ -1094,50 +1367,64 @@ def screen_scanner() -> None:
 
     scan_th = render_threshold_control("סף כניסה לסינון", "scan_threshold")
 
-    if st.button("🚀 התחל סריקה", use_container_width=True, type="primary"):
-        results: List[Dict[str, Any]] = []
-        errors: List[str] = []
-        engine = FactorEngine(BacktestConfig())
-        progress = st.progress(0)
-        total = max(1, min(scan_limit, len(chosen_universe)))
+    if not st.button("🚀 התחל סריקה", use_container_width=True, type="primary"):
+        return
 
-        for i, ticker in enumerate(chosen_universe[:scan_limit], start=1):
-            try:
-                df = get_cached_data(ticker, period="6mo")
-                if df is not None and len(df) > 30:
-                    factors = engine.compute(df)
-                    if factors is None or factors.empty:
-                        continue
-                    cis = engine.composite_cis(factors, df)
-                    phase = engine.get_wyckoff_phase(df)
-                    score = float(cis.iloc[-1]) if hasattr(cis, "iloc") else float(cis)
-                    if score >= scan_th:
-                        results.append({
-                            "Ticker": ticker,
-                            "Score": round(score, 1),
-                            "Phase": str(phase.iloc[-1]) if hasattr(phase, "iloc") else str(phase),
-                            "Close": float(df["Close"].iloc[-1]),
-                        })
-            except Exception as exc:
-                errors.append(f"{ticker}: {exc}")
-                logger.warning("Scanner error %s: %s", ticker, exc)
-            finally:
-                progress.progress(min(1.0, i / total))
+    results: List[Dict[str, Any]] = []
+    errors:  List[str] = []
+    engine   = FactorEngine(BacktestConfig())
+    progress = st.progress(0)
+    total    = max(1, min(scan_limit, len(chosen_universe)))
 
-        if results:
-            st.success(f"נמצאו {len(results)} מניות מעל {scan_th}")
-            st.dataframe(pd.DataFrame(results).sort_values("Score", ascending=False), use_container_width=True)
-        else:
-            st.warning(
-                f"אף מניה לא חצתה את רף הציון {scan_th}.\n"
-                f"💡 נסה להנמיך את הסף ל-{max(40, scan_th - 10)} ולסרוק שוב."
+    for i, ticker in enumerate(chosen_universe[:scan_limit], start=1):
+        try:
+            row = _run_scan_row(engine, ticker, scan_th)
+            if row is not None:
+                results.append(row)
+        except Exception as exc:
+            errors.append(f"{ticker}: {exc}")
+            logger.warning("Scanner error %s: %s", ticker, exc)
+        finally:
+            progress.progress(min(1.0, i / total))
+
+    if results:
+        st.success(f"נמצאו {len(results)} מניות מעל {scan_th}")
+
+        # Separate display dict (strip "_df") from full results
+        display_rows = [{k: v for k, v in r.items() if k != "_df"} for r in results]
+        result_df    = pd.DataFrame(display_rows).sort_values("Score", ascending=False)
+        st.dataframe(result_df, use_container_width=True)
+
+        # ── explain_score for top result ───────────────────────
+        top = sorted(results, key=lambda r: r["Score"], reverse=True)[0]
+        if top.get("_df") is not None:
+            st.markdown(f"#### 🔍 הסבר ציון עבור {top['Ticker']} (מוביל הסריקה)")
+            render_explain_score(
+                top["_df"], top["Phase"], top["Score"], context="scanner_top"
             )
 
-        if errors:
-            with st.expander(f"⚠️ שגיאות סריקה ({len(errors)})", expanded=False):
-                st.code("\n".join(errors[:30]))
+        # Additional per-ticker explanations in expander
+        with st.expander("📋 הסבר ציון לכל מניה בתוצאות", expanded=False):
+            for row in sorted(results, key=lambda r: r["Score"], reverse=True):
+                if row.get("_df") is not None:
+                    st.markdown(f"**{row['Ticker']}** — ציון {row['Score']}, פאזה: {row['Phase']}")
+                    render_explain_score(
+                        row["_df"], row["Phase"], row["Score"],
+                        context=f"scanner_{row['Ticker']}",
+                    )
+                    st.markdown("---")
+    else:
+        st.warning(
+            f"אף מניה לא חצתה את רף הציון {scan_th}.\n"
+            f"💡 נסה להנמיך את הסף ל-{max(40, scan_th - 10)} ולסרוק שוב."
+        )
 
-        _gc_collect()
+    if errors:
+        with st.expander(f"⚠️ שגיאות סריקה ({len(errors)})", expanded=False):
+            st.code("\n".join(errors[:30]))
+
+    _gc_collect()
+
 
 def screen_monitor() -> None:
     st.markdown("### 👁️ Lab Monitor")
@@ -1152,11 +1439,22 @@ def screen_monitor() -> None:
     if st.session_state.model_archive:
         download_cols = st.columns(3)
         for i, slot in enumerate(list(st.session_state.model_archive.keys())):
-            safe_slot = clean_filename(str(slot))
+            safe_slot  = clean_filename(str(slot))
             model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
-            meta = st.session_state.model_archive[slot].get("metadata", {})
+            meta       = st.session_state.model_archive[slot].get("metadata", {})
             num_trades = meta.get("num_trades", "?")
-            label_extra = f" ({num_trades} עסקאות)" if num_trades != "?" else ""
+
+            # Trade-count badge on download button
+            if isinstance(num_trades, int):
+                if num_trades == 0:
+                    label_extra = " ⛔ 0 עסקאות"
+                elif num_trades < MIN_TRADES_FOR_VALID_MODEL:
+                    label_extra = f" ⚠️ {num_trades} עסקאות"
+                else:
+                    label_extra = f" ✅ {num_trades} עסקאות"
+            else:
+                label_extra = ""
+
             if os.path.exists(model_path):
                 with open(model_path, "rb") as f:
                     data = f.read()
@@ -1175,12 +1473,12 @@ def screen_monitor() -> None:
     if not st.session_state.model_archive:
         return
 
-    slot = st.selectbox("בחר סקטור למעקב", list(st.session_state.model_archive.keys()), key="monitor_slot")
+    slot      = st.selectbox("בחר סקטור למעקב", list(st.session_state.model_archive.keys()), key="monitor_slot")
     safe_slot = clean_filename(str(slot))
-    csv_path = os.path.join(MODEL_DIR, f"training_data_{safe_slot}.csv")
-    model_data = st.session_state.model_archive[slot]
-    model = model_data.get("model")
-    meta = model_data.get("metadata", {})
+    csv_path  = os.path.join(MODEL_DIR, f"training_data_{safe_slot}.csv")
+    model_data= st.session_state.model_archive[slot]
+    model     = model_data.get("model")
+    meta      = model_data.get("metadata", {})
 
     df = pd.DataFrame()
     if os.path.exists(csv_path):
@@ -1192,12 +1490,17 @@ def screen_monitor() -> None:
     num_trades = meta.get("num_trades", len(df) if not df.empty else 0)
     if isinstance(num_trades, int):
         _, trade_msg = validate_trade_count(num_trades, slot)
-        st.info(trade_msg)
+        if num_trades == 0:
+            st.error(trade_msg)
+        elif num_trades < MIN_TRADES_FOR_VALID_MODEL:
+            st.warning(trade_msg)
+        else:
+            st.success(trade_msg)
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("OOB / Train", f"{float(meta.get('train_acc', 0.0)) * 100:.1f}%")
-    m2.metric("שורות נתונים", len(df) if not df.empty else 0)
-    m3.metric("Threshold מומלץ", meta.get("recommended_threshold", 50))
+    m1.metric("OOB / Train",      f"{float(meta.get('train_acc', 0.0)) * 100:.1f}%")
+    m2.metric("שורות נתונים",     len(df) if not df.empty else 0)
+    m3.metric("Threshold מומלץ",  meta.get("recommended_threshold", 50))
     if not df.empty and "label" in df.columns:
         m4.metric("Win Rate", f"{float(df['label'].mean()) * 100:.1f}%")
     else:
@@ -1209,7 +1512,10 @@ def screen_monitor() -> None:
         st.markdown("### Feature Importance")
         if hasattr(model, "feature_importances_") and hasattr(model, "feature_names_in_"):
             fi_df = (
-                pd.DataFrame({"Feature": list(model.feature_names_in_), "Importance": list(model.feature_importances_)})
+                pd.DataFrame({
+                    "Feature":    list(model.feature_names_in_),
+                    "Importance": list(model.feature_importances_),
+                })
                 .sort_values("Importance", ascending=True)
                 .tail(10)
             )
@@ -1227,7 +1533,11 @@ def screen_monitor() -> None:
         st.markdown("### מניות מובילות בספרייה")
         if not df.empty and "ticker" in df.columns:
             ticker_counts = df["ticker"].value_counts().head(10)
-            fig2 = go.Figure(go.Pie(labels=ticker_counts.index.tolist(), values=ticker_counts.values.tolist(), hole=0.42))
+            fig2 = go.Figure(go.Pie(
+                labels=ticker_counts.index.tolist(),
+                values=ticker_counts.values.tolist(),
+                hole=0.42,
+            ))
             fig2.update_layout(
                 height=350, margin=dict(l=0, r=0, t=20, b=0),
                 paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#d9e6f2"),
@@ -1237,49 +1547,51 @@ def screen_monitor() -> None:
     if not df.empty:
         st.markdown("### עסקאות אחרונות")
         cols_ok = [c for c in ["entry_date", "ticker", "phase", "label"] if c in df.columns]
-        show_df = df[cols_ok].sort_values("entry_date", ascending=False).head(15).copy() if cols_ok else df.head(15).copy()
+        show_df = (
+            df[cols_ok].sort_values("entry_date", ascending=False).head(15).copy()
+            if cols_ok else df.head(15).copy()
+        )
         if "label" in show_df.columns:
             show_df["label"] = show_df["label"].apply(lambda x: "✅ הצלחה" if int(x) == 1 else "❌ כישלון")
         st.dataframe(show_df, use_container_width=True)
+
 
 def screen_ml_trainer() -> None:
     st.markdown("### 🧠 Batched ML Trainer")
     st.caption("הפעלת אימון מבוזר לפי סקטור, עם שמירה לדיסק והורדה של המודלים.")
     running = is_trainer_running()
-    status = read_auto_trainer_status()
+    status  = read_auto_trainer_status()
 
     if running:
         st.warning(
-            f"⏳ אימון פעיל: {status.get('current_slot', 'N/A')} — "
-            f"{status.get('message', '')} ({status.get('progress', 0)}%)"
+            f"⏳ אימון פעיל: {status.get('current_slot','N/A')} — "
+            f"{status.get('message','')} ({status.get('progress',0)}%)"
         )
 
-    # Zero-trades guard: surface last run result prominently
     last_trades = status.get("num_trades")
     if last_trades is not None and not running:
         try:
             lt = int(last_trades)
-            valid, msg = validate_trade_count(lt, status.get("current_slot", "?"))
-            if not valid:
-                st.error(msg)
+            if lt == 0:
+                render_zero_trades_banner(TRADES_FALLBACK_THRESHOLD)
             elif lt < MIN_TRADES_FOR_VALID_MODEL:
-                st.warning(msg)
+                st.warning(f"⚠️ הריצה האחרונה: {lt} עסקאות (מינימום מומלץ: {MIN_TRADES_FOR_VALID_MODEL})")
         except Exception:
             pass
 
     st.session_state.model_archive = load_all_models_from_disk()
 
     sectors_data = [
-        ("Growth (צמיחה)", GROWTH_TICKERS),
-        ("Value/Index (ערך/מדד)", VALUE_TICKERS),
-        ("Commodities (סחורות)", COMMODITIES_TICKERS),
+        ("Growth (צמיחה)",         GROWTH_TICKERS),
+        ("Value/Index (ערך/מדד)",   VALUE_TICKERS),
+        ("Commodities (סחורות)",     COMMODITIES_TICKERS),
     ]
 
     cols = st.columns(3)
     for idx, (slot_name, tickers) in enumerate(sectors_data):
         with cols[idx]:
             st.markdown(f"#### {slot_name}")
-            chunks = chunk_list(tickers, 10)
+            chunks              = chunk_list(tickers, 10)
             selected_for_slot: List[str] = []
             for i, chunk in enumerate(chunks):
                 if not chunk:
@@ -1304,18 +1616,21 @@ def screen_ml_trainer() -> None:
                 else:
                     ensure_dirs()
                     config_data = {
-                        "slot": slot_name,
-                        "tickers": selected_for_slot,
-                        "base_threshold": TRADES_FALLBACK_THRESHOLD,  # use safe default
-                        "min_trades": MIN_TRADES_FOR_VALID_MODEL,
-                        "created_at": safe_now(),
+                        "slot":            slot_name,
+                        "tickers":         selected_for_slot,
+                        "base_threshold":  TRADES_FALLBACK_THRESHOLD,
+                        "min_trades":      MIN_TRADES_FOR_VALID_MODEL,
+                        "created_at":      safe_now(),
                     }
                     try:
                         with open(BATCH_CONFIG_FILE, "w", encoding="utf-8") as f:
                             json.dump(config_data, f, ensure_ascii=False, indent=2)
                         pid = start_trainer_process()
                         st.success(f"האימון התחיל בהצלחה. PID: {pid}")
-                        logger.info("Trainer launched for slot '%s', PID=%d, tickers=%d", slot_name, pid, len(selected_for_slot))
+                        logger.info(
+                            "Trainer launched for slot '%s', PID=%d, tickers=%d",
+                            slot_name, pid, len(selected_for_slot),
+                        )
                         st.rerun()
                     except Exception as exc:
                         logger.error("start_trainer_process failed: %s", exc, exc_info=True)
@@ -1335,7 +1650,6 @@ def screen_ml_trainer() -> None:
                 st.cache_data.clear()
             except Exception:
                 pass
-            # Only clear non-critical session keys to avoid full reload jank
             for key in ["model_archive", "ml_model", "ml_metadata", "phase_encoder", "use_ml"]:
                 if key in st.session_state:
                     del st.session_state[key]
@@ -1348,6 +1662,7 @@ def screen_ml_trainer() -> None:
             except Exception as exc:
                 st.error(f"שגיאה בניקוי cache: {exc}")
 
+
 def screen_vp() -> None:
     st.markdown("### 🔮 Volume Profile")
     st.caption("מסך זה מוכן להרחבה עם לוגיקת Volume Profile, HVN/LVN, ואזורי איזון.")
@@ -1355,12 +1670,14 @@ def screen_vp() -> None:
         st.write("בפיתוח")
         st.write("המסך מחובר לתבנית המוסדית, ל-sidebar, ול-session_state.")
 
+
 def screen_vwap() -> None:
     st.markdown("### 📊 VWAP Deviation")
     st.caption("מסך זה מיועד למדידת סטיות ממוצע משוקלל נפח (VWAP).")
     with st.container(border=True):
         st.write("בפיתוח")
         st.write("אפשר להוסיף כאן banding, anchored VWAP, ו-signals.")
+
 
 def screen_composite() -> None:
     st.markdown("### 📈 Composite Score")
@@ -1424,3 +1741,39 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# ============================================================
+# שינויים עיקריים — V13.0
+# ============================================================
+#
+# 1. explain_score:
+#    • נוסף import מ-scout_core; stub מלא מחושב מהנתונים אם הספריה לא טעונה.
+#    • render_explain_score() — ווידג'ט expander מסוגנן (CSS: explain-card)
+#      מציג: תרומות trend/momentum/volume, ערכי detail, ופסיקת Verdict צבעונית.
+#    • מוטמע ב-screen_wyckoff (מתחת לגאוג'), screen_backtest (מתחת ל-metrics),
+#      ו-screen_scanner (מוביל הסריקה + expander לכל המניות).
+#
+# 2. טיפול ב-0 עסקאות:
+#    • render_zero_trades_banner() — כרטיס HTML אדום עם 3 המלצות פעולה קונקרטיות.
+#    • מוצג ב-screen_backtest, screen_ml_trainer, ו-render_trainer_control_panel.
+#    • כפתור הורדת מודל מציג תג ⛔/⚠️/✅ לפי מספר עסקאות.
+#
+# 3. הפרדת UI/לוגיקה:
+#    • _compute_wyckoff() — pure computation, ללא קריאות Streamlit.
+#    • _run_scan_row()   — pure computation לשורת סריקה בודדת.
+#    • WyckoffResult dataclass מחזיק את כל תוצאת החישוב.
+#
+# 4. ביצועים וזיכרון:
+#    • _gc_collect() אחרי כל פעולה כבדה.
+#    • max_entries=64 ב-cache_data (כמו קודם, נשאר).
+#    • scan_row שומר _df רק בזיכרון ומשמיד אותו לפני display.
+#
+# 5. Auto-reload Monitor:
+#    • render_trainer_control_panel() מזהה AUTO_TRAINER_DONE_FLAG ומרענן
+#      model_archive אוטומטית בסיום אימון.
+#
+# 6. Monitor — badge צבעוני:
+#    • כפתורי הורדה מציגים ⛔ 0 עסקאות / ⚠️ N עסקאות / ✅ N עסקאות.
+#    • st.error/warning/success בהתאם לספירת עסקאות.
+# ============================================================
