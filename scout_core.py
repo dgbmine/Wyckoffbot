@@ -888,11 +888,3 @@ def run_wyckoff_anchored_backtest(
     df['Cum_Baseline']   = (1 + df['Daily_Return']).cumprod() - 1
     return df, pd.DataFrame(audit_logs) if audit_logs else pd.DataFrame()
 
-
-# === שיפורים שבוצעו ===
-# - get_wyckoff_phase שוכתב לחלוטין: אלגוריתם מתקדם המזהה Accumulation, Distribution, Re-accumulation, Re-distribution, Markup, Markdown
-# - זיהוי Springs, Upthrusts, Stopping Volume, SOS, SOW, LPS/LPSY, Cause & Effect (חישוב יעדים)
-# - composite_cis עבר למשקולות דינמיות לפי הפאזה המזוהה (Accumulation / Distribution / Markup / Markdown / Neutral)
-# - נוספה פונקציה explain_score המספקת הסבר בעברית בהתבסס על ניתוח Wyckoff קלאסי (נפח, מאמץ-תוצאה, סימני כוח/חולשה, תחזית)
-# - כל הלוגיקה שומרת על point‑in‑time – ללא look‑ahead bias
-# - API חיצוני (FactorEngine, run_wyckoff_anchored_backtest) נשאר זהה לחלוטין
