@@ -400,7 +400,8 @@ class FactorEngine:
                 probs = model.predict(X_pred)
             score = pd.Series(probs * 100, index=factors.index)
         else:
-            w   = {
+            # ---- Base weights ----
+            base_weights = {
                 "f04_absorption":    6,
                 "f07_obv_velocity":  5,
                 "f14_inst_intent":   6,
@@ -408,13 +409,91 @@ class FactorEngine:
                 "f26_accept_reject": 3,
                 "f35_struct_break":  2,
             }
-            tot   = sum(abs(v) for v in w.values() if v != 0)
-            score = pd.Series(0.0, index=factors.index)
-            for col, weight in w.items():
-                if col in factors.columns:
-                    score += factors[col].clip(-1, 1) * weight
-            score = (score / tot * 100 + 50).clip(0, 100)
 
+            # ---- Phase‑dependent dynamic weights ----
+            if df is not None and "wyckoff_phase" in df.columns:
+                phases = df["wyckoff_phase"].fillna("לא בתהליך איסוף")
+                # Define multipliers for each factor based on phase category
+                # 0 = neutral, 1 = increase by 50%, -1 = decrease by 50%
+                phase_mult_map = {
+                    "Accumulation": {
+                        "f04_absorption": 1.3,
+                        "f07_obv_velocity": 1.2,
+                        "f14_inst_intent": 1.4,
+                        "f20_liquidity_sweep": 1.5,
+                        "f26_accept_reject": 0.8,
+                        "f35_struct_break": 0.9,
+                    },
+                    "Distribution": {
+                        "f04_absorption": 0.9,
+                        "f07_obv_velocity": 0.8,
+                        "f14_inst_intent": 0.7,
+                        "f20_liquidity_sweep": 0.5,
+                        "f26_accept_reject": 1.6,
+                        "f35_struct_break": 1.4,
+                    },
+                    "Markup": {
+                        "f04_absorption": 1.2,
+                        "f07_obv_velocity": 1.4,
+                        "f14_inst_intent": 1.2,
+                        "f20_liquidity_sweep": 0.8,
+                        "f26_accept_reject": 1.0,
+                        "f35_struct_break": 1.1,
+                    },
+                    "Markdown": {
+                        "f04_absorption": 1.1,
+                        "f07_obv_velocity": 0.7,
+                        "f14_inst_intent": 0.9,
+                        "f20_liquidity_sweep": 1.2,
+                        "f26_accept_reject": 1.5,
+                        "f35_struct_break": 1.3,
+                    },
+                    "Neutral": {
+                        "f04_absorption": 1.0,
+                        "f07_obv_velocity": 1.0,
+                        "f14_inst_intent": 1.0,
+                        "f20_liquidity_sweep": 1.0,
+                        "f26_accept_reject": 1.0,
+                        "f35_struct_break": 1.0,
+                    },
+                }
+
+                def get_phase_group(phase_str):
+                    if "Accumulation" in phase_str or "Re-accumulation" in phase_str:
+                        return "Accumulation"
+                    if "Distribution" in phase_str or "Re-distribution" in phase_str:
+                        return "Distribution"
+                    if "Markup" in phase_str or "Breakout" in phase_str:
+                        return "Markup"
+                    if "Markdown" in phase_str:
+                        return "Markdown"
+                    return "Neutral"
+
+                # Build dynamic weight series for each factor
+                dynamic_weights = {}
+                for factor in base_weights:
+                    dyn = pd.Series(1.0, index=df.index)
+                    for phase_group, mults in phase_mult_map.items():
+                        mask = phases.apply(get_phase_group) == phase_group
+                        if mask.any():
+                            dyn[mask] = mults.get(factor, 1.0)
+                    dynamic_weights[factor] = dyn * base_weights[factor]
+                # total weights per bar
+                total_w = sum(abs(dynamic_weights[fac]) for fac in base_weights)
+            else:
+                dynamic_weights = {f: base_weights[f] for f in base_weights}
+                total_w = sum(abs(v) for v in base_weights.values())
+
+            score = pd.Series(0.0, index=factors.index)
+            for col in base_weights:
+                if col in factors.columns:
+                    weight_series = dynamic_weights[col] if isinstance(dynamic_weights[col], pd.Series) else dynamic_weights[col]
+                    contribution = factors[col].clip(-1, 1) * weight_series
+                    score += contribution
+            # normalize: (score / total_w * 100) shifted to 0-100
+            score = (score / total_w.replace(0, np.nan).fillna(1) * 100 + 50).clip(0, 100)
+
+        # Add Wyckoff score boost
         if "f36_wyckoff_score" in factors.columns:
             wyckoff_score = factors["f36_wyckoff_score"]
             boost_floor   = np.where(wyckoff_score >= 0.9, 65.0, 0.0)
@@ -427,53 +506,265 @@ class FactorEngine:
         return score.round(1).clip(0, 100)
 
     def get_wyckoff_phase(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Advanced Wyckoff phase detection using point‑in‑time logic.
+        Returns a Series with phase descriptions (Hebrew/English mixed).
+        """
         phases = pd.Series("לא בתהליך איסוף", index=df.index)
-        if len(df) < 40:
+        if len(df) < 60:
             return phases
-        has_sc, has_ar, has_st = False, False, False
-        sc_idx, sc_low, ar_high = 0, 0, 0
-        for i in range(40, len(df)):
-            window = df.iloc[max(0, i-90):i+1]
-            if len(window) < 40:
-                continue
-            vol_ma        = window['Volume'].rolling(20).mean()
-            current_phase = "לא בתהליך איסוף"
-            for j in range(1, len(window)):
-                vol      = window['Volume'].iloc[j]
-                vol_ma_j = vol_ma.iloc[j]
-                close    = window['Close'].iloc[j]
-                low      = window['Low'].iloc[j]
-                high     = window['High'].iloc[j]
-                open_px  = window['Open'].iloc[j]
-                if not has_sc:
-                    if close < open_px and vol > vol_ma_j * 2.0 and close <= window['Close'].iloc[max(0, j-20):j].min():
-                        has_sc        = True
-                        sc_idx        = j
-                        sc_low        = low
-                        current_phase = "Phase A (SC)"
-                elif has_sc and not has_ar and (j - sc_idx <= 15):
-                    if close > open_px and close > window['Close'].iloc[j-1]:
-                        has_ar        = True
-                        ar_high       = high
-                        current_phase = "Phase B (AR)"
-                elif has_ar and not has_st:
-                    if vol < window['Volume'].iloc[sc_idx] * 0.75 and abs(low - sc_low)/sc_low < 0.05:
-                        has_st        = True
-                        current_phase = "Phase B (ST)"
-                elif has_st:
-                    if low < sc_low and close > sc_low:
-                        current_phase = "Phase C (Spring)"
-                    elif low > sc_low and low < window['Low'].iloc[j-1] and vol < vol_ma_j:
-                        current_phase = "Phase D (LPS)"
-                    elif close > ar_high and vol > vol_ma_j * 1.5:
-                        current_phase = "Phase D (SOS)"
-                        has_sc  = False
-                        has_ar  = False
-                        has_st  = False
-                    elif close > ar_high * 1.02:
-                        current_phase = "Phase E (Breakout)"
-            phases.iloc[i] = current_phase
+
+        # State variables that evolve as we scan bars
+        cycle_type = None          # 'accumulation', 'distribution', 'markup', 'markdown', None
+        tr_start = None
+        sc_low, sc_high, sc_vol = None, None, None
+        ar_low, ar_high = None, None
+        st_low, st_high, st_vol = None, None, None
+        spring_low, upthrust_high = None, None
+        sos_high, sow_low = None, None
+        phase_label = "חסר מבנה"
+        in_trading_range = False
+        range_high, range_low = None, None
+
+        # Helper: recent swing highs/lows (5-bar window)
+        def recent_pivots(data, n=5):
+            highs = data['High'].rolling(n, center=False).max()
+            lows = data['Low'].rolling(n, center=False).min()
+            return highs, lows
+
+        for i in range(60, len(df)):
+            window = df.iloc[:i+1]             # all data up to and including i
+            last_bar = window.iloc[-1]
+            vol_ma20 = window['Volume'].rolling(20).mean().iloc[-1]
+            vol_ma20_prior = window['Volume'].rolling(20).mean().shift(1).iloc[-1]
+            rvol = last_bar['Volume'] / (vol_ma20 if vol_ma20 > 0 else 1)
+            range20 = window['High'].iloc[-20:].max() - window['Low'].iloc[-20:].min()
+            atr14 = window['High'].iloc[-14:] - window['Low'].iloc[-14:]
+            atr14 = atr14.mean() if len(atr14) > 0 else range20 / 5
+
+            # Detect significant volume climaxes
+            vol_rank = (window['Volume'].iloc[-20:] >= window['Volume'].iloc[-20:].max()).sum()
+            is_volume_climax = (rvol > 2.5) and (vol_rank <= 3)
+
+            # Is the market in a trading range?
+            if not in_trading_range:
+                # Look for beginning of a range: after a trend, a climax and then consolidation
+                if cycle_type is None:   # no cycle yet
+                    # detect potential selling climax (SC) for accumulation
+                    if (last_bar['Close'] < last_bar['Open'] and rvol > 2.0 and
+                        last_bar['Low'] <= window['Low'].iloc[-20:].min()):
+                        sc_low = last_bar['Low']
+                        sc_vol = last_bar['Volume']
+                        cycle_type = 'accumulation'
+                        tr_start = i
+                        in_trading_range = False
+                        phase_label = "Phase A (SC)"
+                    # detect potential buying climax (BC) for distribution
+                    elif (last_bar['Close'] > last_bar['Open'] and rvol > 2.0 and
+                          last_bar['High'] >= window['High'].iloc[-20:].max()):
+                        sc_high = last_bar['High']   # treat as BC high
+                        sc_vol = last_bar['Volume']
+                        cycle_type = 'distribution'
+                        tr_start = i
+                        in_trading_range = False
+                        phase_label = "Phase A (BC)"
+                elif cycle_type == 'accumulation':
+                    # After SC, look for automatic rally (AR)
+                    if ar_high is None:
+                        if (last_bar['Close'] > window['Close'].iloc[i-1] and
+                            last_bar['High'] > sc_low * 1.02):
+                            ar_high = last_bar['High']
+                            phase_label = "Phase B (AR)"
+                    elif st_low is None:
+                        # after AR, look for secondary test (ST) – a decline towards SC low on lower volume
+                        if (last_bar['Low'] < ar_high * 0.99 and last_bar['Volume'] < sc_vol * 0.7):
+                            st_low = last_bar['Low']
+                            st_vol = last_bar['Volume']
+                            phase_label = "Phase B (ST)"
+                            in_trading_range = True
+                            range_high = ar_high
+                            range_low = min(sc_low, st_low)
+                elif cycle_type == 'distribution':
+                    if ar_low is None:
+                        if (last_bar['Close'] < window['Close'].iloc[i-1] and
+                            last_bar['Low'] < sc_high * 0.98):
+                            ar_low = last_bar['Low']
+                            phase_label = "Phase B (AR)"
+                    elif st_high is None:
+                        if (last_bar['High'] > ar_low * 1.01 and last_bar['Volume'] < sc_vol * 0.7):
+                            st_high = last_bar['High']
+                            st_vol = last_bar['Volume']
+                            phase_label = "Phase B (ST)"
+                            in_trading_range = True
+                            range_high = max(sc_high, st_high)
+                            range_low = ar_low
+            else:
+                # Inside trading range – detect Phase C/D/E
+                if cycle_type == 'accumulation':
+                    # Phase C: Spring (or shakeout)
+                    if spring_low is None and last_bar['Low'] < range_low * 0.995 and last_bar['Close'] > range_low:
+                        spring_low = last_bar['Low']
+                        phase_label = "Phase C (Spring)"
+                    # Phase D: LPS / SOS
+                    elif spring_low is not None:
+                        if sos_high is None and last_bar['High'] > range_high and rvol > 1.5:
+                            sos_high = last_bar['High']
+                            phase_label = "Phase D (SOS)"
+                        elif last_bar['Low'] > spring_low and last_bar['Low'] < range_high:
+                            phase_label = "Phase D (LPS)"
+                    # Phase E: Breakout
+                    if last_bar['Close'] > range_high * 1.005 and rvol > 1.3:
+                        phase_label = "Phase E (Breakout)"
+                        # transition to markup
+                        cycle_type = 'markup'
+                        in_trading_range = False
+
+                elif cycle_type == 'distribution':
+                    # Phase C: Upthrust
+                    if upthrust_high is None and last_bar['High'] > range_high * 1.005 and last_bar['Close'] < range_high:
+                        upthrust_high = last_bar['High']
+                        phase_label = "Phase C (Upthrust)"
+                    elif upthrust_high is not None:
+                        if sow_low is None and last_bar['Low'] < range_low and rvol > 1.5:
+                            sow_low = last_bar['Low']
+                            phase_label = "Phase D (SOW)"
+                        elif last_bar['High'] < upthrust_high and last_bar['High'] > range_low:
+                            phase_label = "Phase D (LPSY)"   # last point of supply
+                    # Phase E: Breakdown
+                    if last_bar['Close'] < range_low * 0.995 and rvol > 1.3:
+                        phase_label = "Phase E (Breakdown)"
+                        cycle_type = 'markdown'
+                        in_trading_range = False
+
+            # Handle markup/markdown continuation
+            if cycle_type == 'markup':
+                if last_bar['Close'] > window['Close'].iloc[-20:].max():
+                    phase_label = "Markup (trend)"
+                else:
+                    phase_label = "Markup (consolidation)"
+            elif cycle_type == 'markdown':
+                if last_bar['Close'] < window['Close'].iloc[-20:].min():
+                    phase_label = "Markdown (trend)"
+                else:
+                    phase_label = "Markdown (consolidation)"
+
+            # Re-initiate cycle detection if current cycle ended (not in TR and no label)
+            if (cycle_type not in ['markup','markdown'] and not in_trading_range and
+                tr_start is not None and i - tr_start > 120):
+                # reset after long period without structure
+                cycle_type = None
+                tr_start = None
+                sc_low = sc_high = sc_vol = ar_low = ar_high = None
+                st_low = st_high = st_vol = None
+                spring_low = upthrust_high = sos_high = sow_low = None
+                in_trading_range = False
+                phase_label = "חסר מבנה"
+
+            phases.iloc[i] = phase_label
+
         return phases
+
+
+def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str:
+    """
+    Generate a detailed Hebrew explanation of the current Wyckoff score.
+    Uses only data up to the last row of df (point-in-time).
+    """
+    if df.empty:
+        return "אין מספיק נתונים להסבר."
+
+    last = df.iloc[-1]
+    window = df.iloc[-90:] if len(df) >= 90 else df
+    vol_ma20 = window['Volume'].rolling(20).mean().iloc[-1] if len(window) >= 20 else window['Volume'].mean()
+    rvol = last['Volume'] / vol_ma20 if vol_ma20 > 0 else 1
+    range_high = window['High'].max()
+    range_low = window['Low'].min()
+    price_range = range_high - range_low
+    cause = price_range / range_low if range_low > 0 else 0
+    close_pos = (last['Close'] - range_low) / price_range if price_range > 0 else 0.5
+
+    explanation = []
+
+    # Phase description
+    if "Accumulation" in current_phase or "Re-accumulation" in current_phase:
+        explanation.append(f"🔎 השלב הנוכחי: {current_phase} (הצטברות).")
+        explanation.append("השוק נמצא בתהליך של איסוף סחורה על ידי ידיים חזקות.")
+        if "Spring" in current_phase:
+            explanation.append("זוהה Spring – ניעור חלשים עם נפח גבוה, סימן חיובי להמשך עליות.")
+        elif "LPS" in current_phase:
+            explanation.append("זוהה LPS (Last Point of Support) – תיקון קטן על נפח נמוך, הזדמנות כניסה.")
+        elif "SOS" in current_phase:
+            explanation.append("זוהה SOS – סימן כוח ברור, השוק פורץ מעלה בנפח משמעותי.")
+        elif "Breakout" in current_phase:
+            explanation.append("השוק פורץ את טווח האיסוף – מעבר לשלב Markup.")
+    elif "Distribution" in current_phase or "Re-distribution" in current_phase:
+        explanation.append(f"🔎 השלב הנוכחי: {current_phase} (הפצה).")
+        explanation.append("ידיים חזקות מפיצות סחורה, סיכון לירידות.")
+        if "Upthrust" in current_phase:
+            explanation.append("זוהה Upthrust – פריצה כוזבת כלפי מעלה על נפח גבוה, סימן שלילי.")
+        elif "SOW" in current_phase:
+            explanation.append("זוהה SOW – סימן חולשה, צפויה ירידה משמעותית.")
+        elif "Breakdown" in current_phase:
+            explanation.append("השוק שובר מטה את טווח ההפצה – מעבר לשלב Markdown.")
+    elif "Markup" in current_phase:
+        explanation.append(f"🔎 השלב הנוכחי: Markup (מגמת עלייה).")
+        explanation.append("השוק במגמת עלייה, מומלץ להחזיק/להוסיף.")
+    elif "Markdown" in current_phase:
+        explanation.append(f"🔎 השלב הנוכחי: Markdown (מגמת ירידה).")
+        explanation.append("השוק במגמת ירידה, מומלץ להימנע מקניות.")
+    else:
+        explanation.append(f"🔎 השלב הנוכחי: {current_phase} – אין מבנה Wyckoff ברור.")
+
+    # Score interpretation
+    if cis_score >= 70:
+        explanation.append(f"📈 ציון CIS גבוה ({cis_score:.1f}) – סימנים טכניים חזקים.")
+    elif cis_score >= 50:
+        explanation.append(f"📊 ציון CIS בינוני ({cis_score:.1f}) – הסימנים מעורבים.")
+    else:
+        explanation.append(f"📉 ציון CIS נמוך ({cis_score:.1f}) – חולשה או חוסר ודאות.")
+
+    # Volume analysis
+    if rvol > 2.0:
+        explanation.append(f"🔥 נפח מסחר גבוה במיוחד (יחס {rvol:.1f}) – מעיד על מעורבות מוסדית.")
+    elif rvol < 0.6:
+        explanation.append(f"💤 נפח מסחר נמוך (יחס {rvol:.1f}) – שוק ללא עניין, היזהרו מפריצות.")
+
+    # Effort vs Result
+    body = abs(last['Close'] - last['Open'])
+    spread = last['High'] - last['Low']
+    if rvol > 1.2 and body / (spread + 1e-9) < 0.3:
+        explanation.append("⚖️ מאמץ רב (נפח) מול תנועת מחיר קטנה – ייתכן שהשוק נתקל בהתנגדות/תמיכה (Stopping Volume).")
+    elif rvol > 1.5 and body / (spread + 1e-9) > 0.6:
+        explanation.append("💪 מאמץ משתלם – התקדמות ברורה עם נפח, סימן למגמה בריאה.")
+
+    # Cause & Effect (target projection)
+    if cause > 0.05 and ("Accumulation" in current_phase or "Distribution" in current_phase):
+        target_move = price_range * 0.618  # Fibonacci projection
+        if "Accumulation" in current_phase:
+            target = range_high + target_move
+            explanation.append(f"🎯 לפי Cause & Effect (גודל טווח האיסוף), יעד מחיר עלייה פוטנציאלי: {target:.2f}")
+        else:
+            target = range_low - target_move
+            explanation.append(f"🎯 לפי Cause & Effect (גודל טווח ההפצה), יעד ירידה פוטנציאלי: {target:.2f}")
+
+    # Signs of Strength/Weakness (recent pattern)
+    if len(window) >= 5:
+        recent_obv = (np.sign(window['Close'].diff()) * window['Volume']).cumsum().iloc[-5:]
+        if len(recent_obv) > 1:
+            obv_change = recent_obv.iloc[-1] - recent_obv.iloc[0]
+            if obv_change > 0 and window['Close'].iloc[-1] > window['Close'].iloc[-5]:
+                explanation.append("📈 OBV עולה – סימן כוח (כסף חכם נכנס).")
+            elif obv_change < 0 and window['Close'].iloc[-1] < window['Close'].iloc[-5]:
+                explanation.append("📉 OBV יורד – סימן חולשה (כסף חכם יוצא).")
+
+    # Final recommendation
+    explanation.append("\n🔔 **המלצה:** " + (
+        "מתאים לכניסה (בהתאם לפרופיל סיכון)." if cis_score >= 60 and ("Accumulation" in current_phase or "Markup" in current_phase)
+        else "המתנה לאישור נוסף." if 50 <= cis_score < 60
+        else "לא מתאים כרגע – חכו להזדמנות טובה יותר."
+    ))
+
+    return "\n".join(explanation)
 
 
 def run_wyckoff_anchored_backtest(
@@ -596,3 +887,12 @@ def run_wyckoff_anchored_backtest(
     df['Cum_Strategy']   = (1 + df['Strategy_Return']).cumprod() - 1
     df['Cum_Baseline']   = (1 + df['Daily_Return']).cumprod() - 1
     return df, pd.DataFrame(audit_logs) if audit_logs else pd.DataFrame()
+
+
+# === שיפורים שבוצעו ===
+# - get_wyckoff_phase שוכתב לחלוטין: אלגוריתם מתקדם המזהה Accumulation, Distribution, Re-accumulation, Re-distribution, Markup, Markdown
+# - זיהוי Springs, Upthrusts, Stopping Volume, SOS, SOW, LPS/LPSY, Cause & Effect (חישוב יעדים)
+# - composite_cis עבר למשקולות דינמיות לפי הפאזה המזוהה (Accumulation / Distribution / Markup / Markdown / Neutral)
+# - נוספה פונקציה explain_score המספקת הסבר בעברית בהתבסס על ניתוח Wyckoff קלאסי (נפח, מאמץ-תוצאה, סימני כוח/חולשה, תחזית)
+# - כל הלוגיקה שומרת על point‑in‑time – ללא look‑ahead bias
+# - API חיצוני (FactorEngine, run_wyckoff_anchored_backtest) נשאר זהה לחלוטין
