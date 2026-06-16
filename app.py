@@ -1,6 +1,7 @@
 # ============================================================
-# INSTITUTIONAL SCOUT PRO — CLOUD RUN EDITION V13.5
-# Streamlit app for Wyckoff-style market analysis
+# INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.0
+# Streamlit app for advanced Wyckoff-style market analysis
+# Optimized for Google Cloud Run
 # ============================================================
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import LabelEncoder
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,7 +76,7 @@ except ImportError as _imp_exc:
 
 st.set_page_config(
     layout="wide",
-    page_title="Institutional Scout Pro",
+    page_title="Wyckoff Institutional Analyst",
     page_icon="📈",
     initial_sidebar_state="expanded",
 )
@@ -129,9 +129,8 @@ def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
         pass
     return loaded
 
-# ---- UI/CSS Helpers ----
 def render_explain_score(df: pd.DataFrame, phase: str, cis: float, context: str = "") -> None:
-    expander_label = f"🧑‍🏫 ניתוח אנליסט מוסדי (ציון {cis:.1f})"
+    expander_label = f"🧑‍🏫 ניתוח Wyckoff אנושי (ציון {cis:.1f})"
     with st.expander(expander_label, expanded=True):
         try:
             explanation_md = explain_score(df, phase, cis)
@@ -150,10 +149,11 @@ def inject_css() -> None:
         .main-header {
             padding: 1.15rem 1.4rem; border-radius: 22px;
             background: linear-gradient(135deg, rgba(7,14,25,0.88), rgba(13,25,43,0.92));
-            box-shadow: 0 18px 44px rgba(0,0,0,.28); margin-bottom: 1rem;
+            box-shadow: 0 18px 44px rgba(0,0,0,.28); margin-bottom: 1rem; border: 1px solid rgba(125,155,190,0.18);
         }
-        .main-header h1 { margin: 0; font-size: 2.0rem; color: #eaf4ff; }
-        .stMetric { background: rgba(10,18,33,0.88); border: 1px solid rgba(125,155,190,0.15); border-radius: 16px; padding: 0.75rem 0.9rem;}
+        .main-header h1 { margin: 0; font-size: 2.1rem; color: #eaf4ff; font-weight: 700; }
+        .main-header p { color: #9db0c9; font-size: 1.05rem; }
+        .stMetric { background: rgba(10,18,33,0.88); border: 1px solid rgba(59,130,246,0.3); border-radius: 16px; padding: 0.75rem 0.9rem;}
         </style>
     """, unsafe_allow_html=True)
 
@@ -196,14 +196,14 @@ def init_session_state() -> None:
 # ============================================================
 
 def screen_wyckoff() -> None:
-    st.markdown("### ⬛ Wyckoff Structural Engine")
+    st.markdown("### ⬛ Wyckoff Institutional Analyst")
     ticker = st.text_input("Ticker לניתוח", value="NVDA").strip().upper()
     
-    if st.button("▶ הרץ ניתוח", use_container_width=True, type="primary"):
-        with st.spinner("מחשב מנוע..."):
+    if st.button("▶ הרץ ניתוח מוסדי", use_container_width=True, type="primary"):
+        with st.spinner("מחשב מנוע Wyckoff מתקדם..."):
             result = _compute_wyckoff(ticker)
         if result is None:
-            st.error("אין נתונים זמינים.")
+            st.error("אין נתונים זמינים או נדרש לפחות 60 ימי מסחר.")
             return
 
         left, right = st.columns([1.15, 1])
@@ -214,18 +214,22 @@ def screen_wyckoff() -> None:
             render_explain_score(result["df"], result["current_phase"], result["current_cis"])
 
         with right:
-            st.markdown("### Price Snapshot")
+            st.markdown("### מפת שוק (Price & Volume)")
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=result["df"].index, y=result["df"]["Close"], name="Close"))
+            fig.add_trace(go.Scatter(x=result["df"].index, y=result["df"]["Close"], name="Close", line=dict(color='#7dd3fc')))
+            fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font=dict(color="#d9e6f2"), margin=dict(l=0, r=0, t=10, b=0)
+            )
             st.plotly_chart(fig, use_container_width=True)
 
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
     ticker = st.text_input("Ticker לבדיקה", value="COST").strip().upper()
-    bt_threshold = st.slider("סף כניסה (Threshold)", 40, 95, 65)
+    bt_threshold = st.slider("סף כניסה (CIS Threshold)", 40, 95, 65)
 
     if st.button("▶ הרץ סימולציה", type="primary"):
-        with st.spinner("מריץ Backtest..."):
+        with st.spinner("מריץ Backtest היסטורי..."):
             df, audit_df = run_wyckoff_anchored_backtest(ticker, st.session_state.use_ml, bt_threshold, period="2y")
         if df is None or df.empty:
             st.error("אין נתונים.")
@@ -234,7 +238,6 @@ def screen_backtest() -> None:
         t_count = len(audit_df)
         st.metric("עסקאות סה״כ", t_count)
         
-        # Explain the last bar
         engine = FactorEngine(BacktestConfig())
         cis_series = engine.composite_cis(engine.compute(df), df)
         phases = engine.get_wyckoff_phase(df)
@@ -249,7 +252,7 @@ def screen_scanner() -> None:
     scan_limit = st.slider("כמות מניות לסריקה", 5, 50, 10)
     scan_th = st.slider("סף מינימלי לתוצאה", 40, 95, 60)
 
-    if st.button("🚀 התחל סריקה", type="primary"):
+    if st.button("🚀 התחל סריקה מוסדית", type="primary"):
         results = []
         engine = FactorEngine(BacktestConfig())
         for ticker in SECTOR_MAP[sector_name][:scan_limit]:
@@ -263,11 +266,11 @@ def screen_scanner() -> None:
             st.markdown(f"#### המובילה: {top['Ticker']}")
             render_explain_score(top["_df"], top["Phase"], top["Score"])
         else:
-            st.warning("אף מניה לא עברה את הסף.")
+            st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
 
 def screen_monitor() -> None:
-    st.markdown("### 👁️ הורדת מודלים ופיקוח (Monitor)")
-    st.caption("כאן תוכל להוריד בקלות למחשב את קבצי ה-.pkl שנוצרו בסוף כל אימון.")
+    st.markdown("### 👁️ הורדת מודלים (Cloud Monitor)")
+    st.caption("כאן תוכל להוריד מודלים שאומנו על ידי מנוע ה-AI למחשב המקומי שלך.")
     
     if st.button("🔄 רענן מודלים מהדיסק"):
         st.session_state.model_archive = load_all_models_from_disk()
@@ -279,40 +282,41 @@ def screen_monitor() -> None:
             safe_slot  = clean_filename(str(slot))
             model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
             num_trades = archive[slot].get("metadata", {}).get("num_trades", "?")
+            acc = archive[slot].get("metadata", {}).get("train_acc", 0.0)
             
             if os.path.exists(model_path):
                 with open(model_path, "rb") as f:
                     data = f.read()
                 cols[i % 3].download_button(
-                    label=f"⬇️ הורד מודל ({slot}) | עסקאות: {num_trades}",
+                    label=f"⬇️ הורד {slot} | Acc: {acc:.0%}",
                     data=data,
                     file_name=f"model_{safe_slot}.pkl",
                     mime="application/octet-stream",
                     use_container_width=True,
                 )
     else:
-        st.info("לא נמצאו מודלים בתיקייה. עליך להריץ את הטריינר תחילה.")
+        st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
 def screen_ml_trainer() -> None:
-    st.markdown("### 🧠 ML Trainer - חילוץ דפוסי עבר")
-    st.caption("אימון אוטומטי של Random Forest לזיהוי עסקאות מוצלחות שמייצר קובץ מודל מוכן להורדה.")
+    st.markdown("### 🧠 Wyckoff Pattern AI Trainer")
+    st.caption("אימון מודל Random Forest לזיהוי דפוסי איסוף עבר לפי ה-Factor Engine המשודרג.")
     
-    if st.button("🚀 הפעל אימון בקעקע רקע (דרך auto_trainer_fixed.py)", type="primary"):
+    if st.button("🚀 הפעל אימון נתונים אסינכרוני", type="primary"):
         ensure_dirs()
         trainer_path = os.path.join(BASE_DIR, "auto_trainer_fixed.py")
         if os.path.exists(trainer_path):
             try:
                 subprocess.Popen([sys.executable, trainer_path], cwd=BASE_DIR, close_fds=True)
-                st.success("הטריינר החל לרוץ ברקע! בדוק את מסך ה-Monitor בעוד מספר דקות כדי להוריד את התוצאות.")
+                st.success("הטריינר רץ ברקע. בדוק את מסך ה-Monitor בקרוב כדי להוריד את הקבצים.")
             except Exception as e:
                 st.error(f"שגיאה בהפעלת הטריינר: {e}")
         else:
-            st.error("הקובץ auto_trainer_fixed.py לא נמצא.")
+            st.error("הקובץ auto_trainer_fixed.py לא נמצא בשרת.")
 
 def main() -> None:
     init_session_state()
     inject_css()
-    st.markdown('<div class="main-header"><h1>INSTITUTIONAL SCOUT PRO</h1></div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header"><h1>Wyckoff Institutional Analyst</h1><p>מערכת זיהוי דפוסי איסוף, הפצה וכניסת כסף חכם | Cloud Run Edition</p></div>', unsafe_allow_html=True)
 
     tabs = st.tabs(["⬛ Wyckoff", "📊 Backtest", "🔎 Scanner", "🧠 ML Trainer", "👁️ Monitor"])
     screen_fns = [screen_wyckoff, screen_backtest, screen_scanner, screen_ml_trainer, screen_monitor]
