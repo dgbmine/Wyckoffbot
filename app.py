@@ -48,10 +48,12 @@ MODEL_DIR               = os.path.join(_TMP_ROOT, "models")
 BATCH_CONFIG_FILE       = os.path.join(MODEL_DIR, "batch_config.json")
 AUTO_TRAINER_STATUS_FILE= os.path.join(MODEL_DIR, "auto_trainer_status.json")
 AUTO_TRAINER_DONE_FLAG  = os.path.join(MODEL_DIR, "auto_trainer.done")
-AUTO_TRAINER_LOG_FILE   = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
 AUTO_TRAINER_PID_FILE   = os.path.join(MODEL_DIR, "auto_trainer.pid")
 AUTO_TRAINER_STOP_FILE  = os.path.join(MODEL_DIR, "auto_trainer.stop")
 AUTO_TRAINER_LOCK_FILE  = os.path.join(MODEL_DIR, "auto_trainer.lock")
+
+# תוקן: קריאת הלוגים מאותה ספרייה של הטריינר
+AUTO_TRAINER_LOG_FILE   = os.path.join(BASE_DIR, "auto_trainer_error.log")
 
 # ============================================================
 # Optional imports from scout_core
@@ -190,6 +192,10 @@ def init_session_state() -> None:
         st.session_state.use_ml = False
     if "ml_model" not in st.session_state:
         st.session_state.ml_model = None
+    
+    # ML Trainer specific state - Pre-loaded with high-conviction assets
+    if "selected_tickers" not in st.session_state:
+        st.session_state.selected_tickers = ["BN", "DELL", "PANW", "GLD", "SLV", "NVDA", "BTC-USD"]
 
 # ============================================================
 # Screens
@@ -298,20 +304,148 @@ def screen_monitor() -> None:
         st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
 def screen_ml_trainer() -> None:
-    st.markdown("### 🧠 Wyckoff Pattern AI Trainer")
-    st.caption("אימון מודל Random Forest לזיהוי דפוסי איסוף עבר לפי ה-Factor Engine המשודרג.")
+    st.markdown("### 🧠 Wyckoff Pattern AI Trainer (Institutional Grade)")
+    st.caption("אימון מודל Random Forest עם ניהול תהליכי רקע אסינכרוני. מותאם לסביבת הייצור ב-Google Cloud Run.")
     
-    if st.button("🚀 הפעל אימון נתונים אסינכרוני", type="primary"):
-        ensure_dirs()
-        trainer_path = os.path.join(BASE_DIR, "auto_trainer_fixed.py")
-        if os.path.exists(trainer_path):
-            try:
-                subprocess.Popen([sys.executable, trainer_path], cwd=BASE_DIR, close_fds=True)
-                st.success("הטריינר רץ ברקע. בדוק את מסך ה-Monitor בקרוב כדי להוריד את הקבצים.")
-            except Exception as e:
-                st.error(f"שגיאה בהפעלת הטריינר: {e}")
-        else:
-            st.error("הקובץ auto_trainer_fixed.py לא נמצא בשרת.")
+    # 1. Determine Real-Time Status
+    status = "Waiting"
+    progress_text = ""
+    is_running = False
+    
+    if os.path.exists(AUTO_TRAINER_STATUS_FILE):
+        try:
+            with open(AUTO_TRAINER_STATUS_FILE, "r") as f:
+                status_data = json.load(f)
+            # תוקן: בודק קודם את מפתח "state" כפי שהטריינר שולח, וגיבוי של "status"
+            raw_status = status_data.get("state", status_data.get("status", "Waiting"))
+            status = raw_status.capitalize()
+            progress_text = status_data.get("progress", "")
+            if status.lower() == "running":
+                is_running = True
+        except Exception as e:
+            logger.warning(f"Failed to read status file: {e}")
+            pass
+
+    # Fallbacks for Cloud Run resilience
+    if not is_running and os.path.exists(AUTO_TRAINER_PID_FILE):
+        is_running = True
+        status = "Running"
+        progress_text = "מעבד נתונים (PID פעיל)..."
+        
+    if os.path.exists(AUTO_TRAINER_DONE_FLAG):
+        status = "Completed"
+        is_running = False
+
+    # Status Banner
+    if is_running:
+        st.info(f"🟢 **סטטוס מערכת:** רץ כרגע ברקע | {progress_text}")
+    elif status.lower() == "completed":
+        st.success("✅ **סטטוס מערכת:** האימון הסתיים בהצלחה. עבור למסך ה-Monitor להורדת המודלים.")
+    elif status.lower() == "error":
+        st.error("🔴 **סטטוס מערכת:** תהליך נכשל. סקור את הלוגים למטה ונסה שוב.")
+    else:
+        st.warning("⏳ **סטטוס מערכת:** בהמתנה להוראות ביצוע (Standby).")
+
+    # 2. Asset Allocation & Selection
+    EXTENDED_SECTORS = {
+        "טכנולוגיה ומומנטום מוסדי (Tech & High Conviction)": ["NVDA", "DELL", "PANW", "MSFT", "AAPL", "AMD", "CRWD", "AVGO", "PLTR", "SMCI", "META", "GOOGL"],
+        "תשתיות ופיננסים (Infrastructure & Value)": ["BN", "BRK-B", "JPM", "V", "MA", "COST", "WMT", "CAT", "BA", "JNJ", "UNH"],
+        "סחורות ואנרגיה קשה (Hard Assets & Commodities)": ["GLD", "SLV", "NEM", "GOLD", "PAAS", "XOM", "CVX", "FCX", "WPM", "OXY", "COP"],
+        "קריפטו וטכנולוגיות חדשות (Crypto & Disruptive)": ["BTC-USD", "ETH-USD", "COIN", "MSTR", "HOOD", "SQ", "PYPL", "MARA", "RIOT"]
+    }
+
+    # אתחול ה-State של כל הצ'קבוקסים כדי למנוע ריצודים בלוגיקה
+    all_possible_tickers = [ticker for group in EXTENDED_SECTORS.values() for ticker in group]
+    for t in all_possible_tickers:
+        chk_key = f"chk_{t}"
+        if chk_key not in st.session_state:
+            st.session_state[chk_key] = (t in st.session_state.selected_tickers)
+
+    if not is_running:
+        st.markdown("#### 🎯 הקצאת נכסים לאימון")
+        
+        for sector, tickers in EXTENDED_SECTORS.items():
+            with st.expander(f"📁 {sector} ({len(tickers)} נכסים)", expanded=False):
+                col1, col2, _ = st.columns([1, 1, 4])
+                
+                # כפתורי פעולה גורפת מתעדכנים ישירות מול ה-Session State
+                if col1.button("בחר הכל", key=f"all_{sector}"):
+                    for t in tickers:
+                        st.session_state[f"chk_{t}"] = True
+                    st.rerun()
+                    
+                if col2.button("נקה הכל", key=f"clear_{sector}"):
+                    for t in tickers:
+                        st.session_state[f"chk_{t}"] = False
+                    st.rerun()
+
+                cols = st.columns(5)
+                for i, t in enumerate(tickers):
+                    cols[i % 5].checkbox(t, key=f"chk_{t}")
+
+        # עדכון הרשימה הראשית בסוף רינדור ה-UI
+        st.session_state.selected_tickers = [t for t in all_possible_tickers if st.session_state.get(f"chk_{t}", False)]
+        
+        st.markdown(f"**סה״כ הוקצו לאימון:** {len(st.session_state.selected_tickers)} נכסים")
+
+        if st.button("🚀 הפעל אימון נתונים (Execute Script)", type="primary", use_container_width=True):
+            if not st.session_state.selected_tickers:
+                st.error("פעולה נדחתה. יש לבחור לפחות מניה אחת לאימון.")
+                return
+
+            ensure_dirs()
+            
+            # 1. כתיבת הנתונים לקובץ (שים לב שהטריינר חייב לקרוא את הקובץ הזה)
+            with open(BATCH_CONFIG_FILE, "w") as f:
+                json.dump({"tickers": list(st.session_state.selected_tickers)}, f)
+
+            # 2. ניקוי קבצי סטטוס ישנים
+            for file_path in [AUTO_TRAINER_DONE_FLAG, AUTO_TRAINER_STATUS_FILE, AUTO_TRAINER_PID_FILE]:
+                if os.path.exists(file_path):
+                    try:
+                        os.remove(file_path)
+                    except OSError:
+                        pass
+
+            # 3. הפעלת מנוע הטריינר ב-Subprocess
+            trainer_path = os.path.join(BASE_DIR, "auto_trainer_fixed.py")
+            if os.path.exists(trainer_path):
+                try:
+                    with open(AUTO_TRAINER_LOG_FILE, "w") as log_out:
+                        subprocess.Popen(
+                            [sys.executable, trainer_path],
+                            cwd=BASE_DIR,
+                            stdout=log_out,
+                            stderr=subprocess.STDOUT,
+                            close_fds=True,
+                            start_new_session=True 
+                        )
+                    st.success("הפקודה נשלחה בהצלחה לשרת! מתחיל במעקב ביצועים...")
+                    time.sleep(1.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"קריסת מערכת בהפעלת התהליך המוסדי: {e}")
+            else:
+                st.error(f"הקובץ {trainer_path} לא נמצא. ודא שהוא קיים ב-Deploy האחרון ל-Cloud Run.")
+
+    # 3. Live Log Viewer
+    st.markdown("---")
+    st.markdown("#### 📜 לוגים מהשרת (Live Terminal Output)")
+    log_content = "ממתין לפקודות שרת..."
+    if os.path.exists(AUTO_TRAINER_LOG_FILE):
+        try:
+            with open(AUTO_TRAINER_LOG_FILE, "r") as f:
+                lines = f.readlines()
+                log_content = "".join(lines[-60:]) if lines else "קובץ הלוג ריק כרגע."
+        except Exception:
+            log_content = "[שגיאה] לא ניתן לגשת לקובץ הלוג של המערכת."
+
+    st.text_area("auto_trainer_error.log", value=log_content, height=280, disabled=True, label_visibility="collapsed")
+
+    # 4. Polling Loop
+    if is_running:
+        time.sleep(3.5)
+        st.rerun()
 
 def main() -> None:
     init_session_state()
