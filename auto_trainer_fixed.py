@@ -1,13 +1,12 @@
-# auto_trainer_fixed.py – BATCHED MODE + FULL AUTO FALLBACK
+# auto_trainer_fixed.py – ADVANCED WYCKOFF ML TRAINER
 # ─────────────────────────────────────────────────────────────
 # מתחבר לפונקציות של scout_core.py, מריץ בדיקות רטרואקטיביות
-# ומאמן מודל ML לזיהוי דפוסי איסוף עבר מוצלחים.
+# מבוססות Wyckoff עמוק ומאמן מודל ML לזיהוי כניסת כספים.
 # ─────────────────────────────────────────────────────────────
 
 import os
 import sys
 import json
-import time
 import pickle
 import traceback
 from datetime import datetime
@@ -16,7 +15,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 
-# ── השתקת Streamlit לטובת ריצת רשת שקטה ──
+# ── השתקת Streamlit לטובת ריצת רשת שקטה ב-Cloud Run ──
 import streamlit as _st
 class _FakeStSession:
     def __getattr__(self, name): return None
@@ -56,17 +55,18 @@ def write_status(**kwargs):
     except:
         pass
 
-def process_sector(slot, tickers, base_threshold=60):
-    log_message(f"Starting training for {slot} with {len(tickers)} tickers.")
+def process_sector(slot, tickers, base_threshold=50):
+    log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers.")
     all_features = []
     
     for t in tickers:
         try:
-            df, audit_df = run_wyckoff_anchored_backtest(t, use_ai=False, threshold=base_threshold, period="2y")
+            # תקופת Backtest ארוכה יותר לאימון איכותי (3 שנים)
+            df, audit_df = run_wyckoff_anchored_backtest(t, use_ai=False, threshold=base_threshold, period="3y")
             if audit_df is None or audit_df.empty:
                 continue
             
-            engine = FactorEngine(BacktestConfig(period="2y"))
+            engine = FactorEngine(BacktestConfig(period="3y"))
             factors = engine.compute(df)
             
             for _, row in audit_df.iterrows():
@@ -80,16 +80,16 @@ def process_sector(slot, tickers, base_threshold=60):
         except Exception as e:
             log_message(f"Error on {t}: {e}")
             
-    if len(all_features) < 5:
-        log_message(f"Not enough trades for {slot}. Need at least 5.")
+    if len(all_features) < 10:
+        log_message(f"Not enough trades for {slot} (Found: {len(all_features)}). Need at least 10 for ML.")
         return
         
     data = pd.DataFrame(all_features)
     X = data.drop(columns=['label', 'ticker'])
     y = data['label']
     
-    # אימון מודל Random Forest לזיהוי העסקאות הטובות ביותר
-    model = RandomForestClassifier(n_estimators=100, max_depth=6, random_state=42, class_weight='balanced')
+    # Random Forest מכוון מראש לעבודה עמוקה עם נתוני Wyckoff (ללא Overfitting כבד)
+    model = RandomForestClassifier(n_estimators=200, max_depth=8, min_samples_split=4, random_state=42, class_weight='balanced')
     model.fit(X, y)
     
     train_acc = model.score(X, y)
@@ -98,14 +98,14 @@ def process_sector(slot, tickers, base_threshold=60):
     safe_slot = clean_filename(slot)
     model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
     
-    # אריזת המודל והכנתו להורדה
     payload = {
         "model": model,
         "metadata": {
             "slot": slot,
             "train_acc": train_acc,
             "num_trades": len(data),
-            "recommended_threshold": opt_th
+            "recommended_threshold": opt_th,
+            "timestamp": datetime.now().isoformat()
         }
     }
     with open(model_path, "wb") as f:
@@ -115,7 +115,7 @@ def process_sector(slot, tickers, base_threshold=60):
 
 if __name__ == "__main__":
     if not os.path.exists(MODEL_DIR): os.makedirs(MODEL_DIR)
-    write_status(state="running", progress=0, message="מתחיל אימון מקיף...")
+    write_status(state="running", progress=0, message="מתחיל אימון Wyckoff מקיף...")
     
     sectors = {
         "Growth": GROWTH_TICKERS,
@@ -124,9 +124,9 @@ if __name__ == "__main__":
     }
     
     for i, (name, ticks) in enumerate(sectors.items()):
-        write_status(state="running", progress=int((i/len(sectors))*100), message=f"מאמן את סקטור {name}")
-        process_sector(name, ticks, base_threshold=55)
+        write_status(state="running", progress=int((i/len(sectors))*100), message=f"מאמן דפוסי מוסדיים לסקטור {name}")
+        process_sector(name, ticks, base_threshold=50) # Threshold נמוך יותר לאיסוף יותר דאטה לאימון
         
     with open(DONE_FLAG, "w") as f:
         f.write("done")
-    write_status(state="completed", progress=100, message="אימון המודלים הושלם. ניתן להורידם במסך ה-Monitor.")
+    write_status(state="completed", progress=100, message="אימון המודלים הושלם בהצלחה. עבור למסך המוניטור.")
