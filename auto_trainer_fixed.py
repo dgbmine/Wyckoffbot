@@ -5,13 +5,11 @@
 # מבוססות Wyckoff עמוק ומאמן מודל ML לזיהוי כניסת כספים.
 #
 # גרסה מתקדמת ל-Google Cloud Run:
-# - Universe רחב של ~300 מניות אמריקאיות מגוונות
-# - תקופת אימון 6y
-# - עדכוני progress תכופים
-# - טיפול שגיאות ברמת טיקר / סקטור / אימון
-# - ניקוי כפילויות
-# - ניהול זיכרון זהיר
-# - שומר על ה-API הקיים: write_status, process_sector וכו'
+# - קורא דינמית את batch_config.json כדי להתאמן רק על נכסים נבחרים.
+# - Universe רחב כברירת מחדל של ~300 מניות אמריקאיות.
+# - תקופת אימון 6y.
+# - עדכוני progress מדויקים ל-UI.
+# - ניהול זיכרון קפדני.
 # ============================================================
 
 import gc
@@ -56,6 +54,7 @@ if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
 MODEL_DIR = os.path.join(BASE_DIR, "models")
+BATCH_CONFIG_FILE = os.path.join(MODEL_DIR, "batch_config.json")
 STATUS_FILE = os.path.join(MODEL_DIR, "auto_trainer_status.json")
 DONE_FLAG = os.path.join(MODEL_DIR, "auto_trainer.done")
 LOG_FILE = os.path.join(BASE_DIR, "auto_trainer_error.log")
@@ -77,7 +76,6 @@ def log_message(msg):
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(f"{stamp} - {msg}\n")
     except Exception:
-        # Never let logging break training
         pass
 
 def log_exception(prefix, exc):
@@ -99,9 +97,7 @@ from scout_core import (
 )
 
 # ------------------------------------------------------------------
-# Training universe – diverse U.S. equities (~300 names, deduped)
-# These are intentionally broad and liquid, split into labeled buckets
-# for reporting only. The final universe is deduplicated and ordered.
+# Training universe – Default broad buckets
 # ------------------------------------------------------------------
 TECH_TICKERS = [
     "AAPL","MSFT","NVDA","GOOGL","GOOG","AMZN","META","AVGO","CRM","ORCL",
@@ -176,7 +172,6 @@ DEFENSIVE_TICKERS = [
     "O","PLD","AMT","CCI","EQIX","DLR","WELL","VICI","PSA","AVB"
 ]
 
-# Master universe builder
 _RAW_BUCKETS = {
     "Tech": TECH_TICKERS,
     "Growth": GROWTH_TICKERS,
@@ -201,13 +196,10 @@ def _dedupe_keep_order(items):
             out.append(x)
     return out
 
-# Dedup across all buckets while preserving their original bucket order.
 UNIVERSE_TICKERS = _dedupe_keep_order(
     [ticker for bucket in _RAW_BUCKETS.values() for ticker in bucket]
 )
 
-# Rebuild cleaner buckets based on the deduped universe, keeping a broad mix.
-# This gives us stable, non-overlapping training groups for progress reporting.
 SECTOR_BUCKETS = {
     "Tech": _dedupe_keep_order(TECH_TICKERS),
     "Growth": _dedupe_keep_order([t for t in GROWTH_TICKERS if t not in TECH_TICKERS]),
@@ -222,7 +214,7 @@ SECTOR_BUCKETS = {
 }
 
 # ------------------------------------------------------------------
-# Global runtime state for progress reporting
+# Global runtime state
 # ------------------------------------------------------------------
 TRAINING_STATE = {
     "overall_total": len(UNIVERSE_TICKERS),
@@ -233,6 +225,29 @@ TRAINING_STATE = {
     "current_sector": "",
 }
 
+def apply_custom_batch():
+    """
+    Reads the UI's selected batch. If valid, overrides the training universe
+    so we only compute what the manager requested.
+    """
+    global UNIVERSE_TICKERS
+    if os.path.exists(BATCH_CONFIG_FILE):
+        try:
+            with open(BATCH_CONFIG_FILE, "r") as f:
+                data = json.load(f)
+                if "tickers" in data and isinstance(data["tickers"], list) and len(data["tickers"]) > 0:
+                    custom_tickers = _dedupe_keep_order([str(t).upper() for t in data["tickers"]])
+                    log_message(f"Custom batch configuration loaded. Overriding universe to {len(custom_tickers)} selected tickers.")
+                    
+                    # Update global universe and state logic
+                    UNIVERSE_TICKERS = custom_tickers
+                    TRAINING_STATE["overall_total"] = len(custom_tickers)
+                    
+                    return [("Selected_Assets", custom_tickers)]
+        except Exception as e:
+            log_exception("Failed to parse batch_config.json. Falling back to default universe.", e)
+    return None
+
 def _safe_json_dump(path, payload):
     _ensure_dirs()
     tmp_path = f"{path}.tmp"
@@ -241,10 +256,6 @@ def _safe_json_dump(path, payload):
     os.replace(tmp_path, path)
 
 def write_status(**kwargs):
-    """
-    Kept for API compatibility.
-    Writes a compact JSON status file that Cloud Run / Streamlit can read.
-    """
     try:
         _ensure_dirs()
         payload = dict(kwargs)
@@ -263,7 +274,6 @@ def _normalize_timestamp(value):
     if pd.isna(ts):
         return None
     try:
-        # tz-aware -> naive
         if getattr(ts, "tzinfo", None) is not None:
             ts = ts.tz_localize(None)
     except Exception:
@@ -316,6 +326,8 @@ def _update_progress(slot, extra=""):
     failed = TRAINING_STATE["overall_failed"]
     skipped = TRAINING_STATE["overall_skipped"]
     progress = 0 if total <= 0 else int((done / total) * 100)
+    
+    # State key is explicitly "state" for UI synchronization
     write_status(
         state="running",
         progress=progress,
@@ -333,18 +345,15 @@ def _prepare_training_frame(all_features):
     if "label" not in data.columns:
         return None, None, None
 
-    # Keep only numeric factor columns plus target/meta.
     drop_cols = [c for c in ["label", "ticker", "entry_date", "exit_date"] if c in data.columns]
     X = data.drop(columns=drop_cols, errors="ignore")
     y = data["label"].astype(int)
 
-    # Make sure we train on pure numeric data.
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     for col in X.columns:
         if not pd.api.types.is_numeric_dtype(X[col]):
             X[col] = pd.to_numeric(X[col], errors="coerce").fillna(0.0)
 
-    # Remove constant columns to reduce noise and memory footprint.
     nunique = X.nunique(dropna=False)
     keep_cols = nunique[nunique > 1].index.tolist()
     if keep_cols:
@@ -353,11 +362,6 @@ def _prepare_training_frame(all_features):
     return data, X, y
 
 def process_sector(slot, tickers, base_threshold=50):
-    """
-    API kept intact.
-    Sequentially processes a bucket of tickers, extracts Wyckoff features,
-    trains a RandomForest, and saves a model for the bucket.
-    """
     TRAINING_STATE["current_sector"] = slot
     tickers = _dedupe_keep_order(tickers or [])
 
@@ -366,7 +370,7 @@ def process_sector(slot, tickers, base_threshold=50):
         return
 
     log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers.")
-    _update_progress(slot, extra=f"מתחיל סקטור עם {len(tickers)} מניות")
+    _update_progress(slot, extra=f"מתחיל אצווה עם {len(tickers)} נכסים")
 
     all_features = []
     sector_success = 0
@@ -376,7 +380,6 @@ def process_sector(slot, tickers, base_threshold=50):
     for i, ticker in enumerate(tickers, start=1):
         TRAINING_STATE["overall_done"] += 1
         try:
-            # Long horizon backtest for serious model training.
             df, audit_df = run_wyckoff_anchored_backtest(
                 ticker,
                 use_ai=False,
@@ -396,7 +399,6 @@ def process_sector(slot, tickers, base_threshold=50):
                 _update_progress(slot, extra=f"{ticker} ללא עסקאות")
                 continue
 
-            # Compute factors once per ticker, reuse for all audit rows.
             engine = FactorEngine(BacktestConfig(period=TRAINING_PERIOD))
             factors = engine.compute(df)
 
@@ -442,22 +444,14 @@ def process_sector(slot, tickers, base_threshold=50):
             _update_progress(slot, extra=f"שגיאה ב-{ticker}")
 
         finally:
-            # Memory hygiene for Cloud Run.
-            try:
-                del df
-            except Exception:
-                pass
-            try:
-                del audit_df
-            except Exception:
-                pass
-            try:
-                del factors
-            except Exception:
-                pass
+            try: del df
+            except Exception: pass
+            try: del audit_df
+            except Exception: pass
+            try: del factors
+            except Exception: pass
             gc.collect()
 
-        # Light checkpoint every few tickers.
         if i % 5 == 0:
             _update_progress(
                 slot,
@@ -484,7 +478,6 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
 
-    # Random Forest tuned for stable Cloud Run training.
     model = RandomForestClassifier(
         n_estimators=200,
         max_depth=8,
@@ -551,33 +544,17 @@ def process_sector(slot, tickers, base_threshold=50):
         extra=f"הושלם | עסקאות={len(data)} | דיוק={train_acc:.2%} | threshold={opt_th:.3f}",
     )
 
-    # Release large objects explicitly.
-    try:
-        del data, X, y, model, payload, all_features
-    except Exception:
-        pass
+    try: del data, X, y, model, payload, all_features
+    except Exception: pass
     gc.collect()
 
 def _build_sector_map_from_universe():
-    """
-    Build broad training buckets from the universe.
-    This keeps the public API simple while ensuring the full universe is used.
-    """
-    # Prefer the curated sector buckets, but ensure every universe ticker is covered once.
     covered = []
     ordered_buckets = []
 
     for sector_name in [
-        "Tech",
-        "Growth",
-        "Value",
-        "Healthcare",
-        "Financials",
-        "Energy",
-        "Consumer",
-        "Industrials",
-        "MidCaps",
-        "Defensive",
+        "Tech", "Growth", "Value", "Healthcare", "Financials",
+        "Energy", "Consumer", "Industrials", "MidCaps", "Defensive"
     ]:
         tickers = _dedupe_keep_order(SECTOR_BUCKETS.get(sector_name, []))
         ordered_buckets.append((sector_name, tickers))
@@ -593,35 +570,40 @@ def _build_sector_map_from_universe():
 if __name__ == "__main__":
     try:
         _ensure_dirs()
+        
+        # בדוק קודם אם ה-UI שלח לנו רשימה ספציפית
+        sector_map = apply_custom_batch()
+        if not sector_map:
+            # אם אין רשימה, רוץ על כל היקום הדיפולטיבי
+            sector_map = _build_sector_map_from_universe()
+            TRAINING_STATE["overall_total"] = len(UNIVERSE_TICKERS)
+
         write_status(
             state="running",
             progress=0,
-            message=f"מתחיל אימון Wyckoff מקיף ({TRAINING_PERIOD}) על {len(UNIVERSE_TICKERS)} מניות...",
-            universe_size=len(UNIVERSE_TICKERS),
+            message=f"מתחיל אימון Wyckoff מקיף ({TRAINING_PERIOD}) על {TRAINING_STATE['overall_total']} נכסים...",
+            universe_size=TRAINING_STATE["overall_total"],
             training_period=TRAINING_PERIOD,
         )
 
         log_message("============================================================")
         log_message("=== auto_trainer_fixed.py STARTED ===")
-        log_message(f"Universe size: {len(UNIVERSE_TICKERS)}")
+        log_message(f"Execution Target Size: {TRAINING_STATE['overall_total']} tickers")
         log_message(f"Training period: {TRAINING_PERIOD}")
-        log_message(f"Buckets: {list(_RAW_BUCKETS.keys())}")
 
-        sector_map = _build_sector_map_from_universe()
         total_sectors = len(sector_map)
 
         for idx, (name, ticks) in enumerate(sector_map, start=1):
             if not ticks:
-                log_message(f"Sector {name} empty after cleanup; skipping.")
                 continue
 
             overall_progress = 0 if total_sectors <= 0 else int(((idx - 1) / total_sectors) * 100)
             write_status(
                 state="running",
                 progress=overall_progress,
-                message=f"מאמן bucket {name} ({idx}/{total_sectors}) עם {len(ticks)} מניות...",
+                message=f"מעבד אצווה {name} ({idx}/{total_sectors}) עם {len(ticks)} נכסים...",
                 current_sector=name,
-                universe_size=len(UNIVERSE_TICKERS),
+                universe_size=TRAINING_STATE["overall_total"],
                 training_period=TRAINING_PERIOD,
             )
 
@@ -636,8 +618,8 @@ if __name__ == "__main__":
         write_status(
             state="completed",
             progress=100,
-            message="אימון המודלים הושלם בהצלחה. עבור למסך המוניטור.",
-            universe_size=len(UNIVERSE_TICKERS),
+            message="הריצה הושלמה בהצלחה. כל המודלים נשמרו.",
+            universe_size=TRAINING_STATE["overall_total"],
             training_period=TRAINING_PERIOD,
         )
         log_message("=== auto_trainer_fixed.py COMPLETED SUCCESSFULLY ===")
@@ -648,7 +630,7 @@ if __name__ == "__main__":
             state="error",
             progress=0,
             message=f"שגיאה קריטית באימון: {e}",
-            universe_size=len(UNIVERSE_TICKERS),
+            universe_size=TRAINING_STATE.get("overall_total", 0),
             training_period=TRAINING_PERIOD,
         )
         raise
