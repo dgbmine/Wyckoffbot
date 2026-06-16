@@ -1,0 +1,34 @@
+steps:
+  # Step 1: Build Docker image and push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - build
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/tradingbot/streamlit-service:$COMMIT_SHA'
+      - .
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - push
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/tradingbot/streamlit-service:$COMMIT_SHA'
+
+  # Step 2: Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - '[YOUR-SERVICE-NAME]'               # <--- החלף בשם השירות שלך
+      - '--image=us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/tradingbot/streamlit-service:$COMMIT_SHA'
+      - '--region=[YOUR-REGION]'            # <--- החלף באזור שלך (למשל us-central1)
+      - '--platform=managed'
+      - '--port=8501'
+      - '--memory=1Gi'                      # ניתן להגדיל לפי הצורך
+      - '--timeout=900'
+      - '--set-env-vars=PYTHONUNBUFFERED=1'
+      - '--allow-unauthenticated'           # הסר אם השירות צריך אימות
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/tradingbot/streamlit-service:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
