@@ -5,6 +5,7 @@
 # מבוססות Wyckoff עמוק ומאמן מודל ML לזיהוי כניסת כספים.
 #
 # גרסה מתקדמת ל-Google Cloud Run:
+# - כותב לוגים, סטטוסים ומודלים ל- /tmp/scout (ניתן לכתיבה).
 # - קורא דינמית את batch_config.json כדי להתאמן רק על נכסים נבחרים.
 # - Universe רחב כברירת מחדל של ~300 מניות אמריקאיות.
 # - תקופת אימון 6y.
@@ -47,17 +48,24 @@ except Exception:
     _st = _FakeStModule()  # type: ignore
 
 # ------------------------------------------------------------------
-# Paths / environment
+# Paths / environment – Cloud Run aware
 # ------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
 
-MODEL_DIR = os.path.join(BASE_DIR, "models")
+_CLOUD_RUN = (
+    os.environ.get("K_SERVICE") is not None
+    or os.environ.get("CLOUD_RUN", "").lower() == "true"
+)
+# על Cloud Run כל הקבצים ייכתבו תחת /tmp/scout
+_TMP_ROOT = "/tmp/scout" if _CLOUD_RUN else BASE_DIR
+
+MODEL_DIR = os.path.join(_TMP_ROOT, "models")
 BATCH_CONFIG_FILE = os.path.join(MODEL_DIR, "batch_config.json")
 STATUS_FILE = os.path.join(MODEL_DIR, "auto_trainer_status.json")
 DONE_FLAG = os.path.join(MODEL_DIR, "auto_trainer.done")
-LOG_FILE = os.path.join(BASE_DIR, "auto_trainer_error.log")
+LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
 
 TRAINING_PERIOD = "6y"
 BASE_THRESHOLD = 50
@@ -68,15 +76,25 @@ MIN_TRADES_FOR_ML = 10
 # ------------------------------------------------------------------
 def _ensure_dirs():
     os.makedirs(MODEL_DIR, exist_ok=True)
+    # גם תיקיית הבסיס של הלוג (במקרה שמשתמשים בתיקייה נפרדת)
+    log_dir = os.path.dirname(LOG_FILE)
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
 
 def log_message(msg):
     try:
         _ensure_dirs()
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"{stamp} - {msg}\n"
+        # כתיבה לקובץ (אם נכשל – ננסה לכתוב ל-stderr כגיבוי)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
-            f.write(f"{stamp} - {msg}\n")
+            f.write(line)
+            f.flush()
     except Exception:
-        pass
+        try:
+            sys.stderr.write(f"[trainer log fallback] {line}")
+        except Exception:
+            pass
 
 def log_exception(prefix, exc):
     try:
