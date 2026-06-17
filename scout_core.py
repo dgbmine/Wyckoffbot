@@ -555,4 +555,3 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
 {bottom_line}
 """
     return md
-
