@@ -356,6 +356,7 @@ def run_wyckoff_anchored_backtest(
     audit_logs = []
     in_position = False
     entry_price = 0
+    entry_atr = 0
     entry_phase = ""
     entry_date = None
     peak_price = 0
@@ -379,11 +380,12 @@ def run_wyckoff_anchored_backtest(
                 entry_date = df.index[i]
                 peak_price = entry_price
                 cis_at_entry = current_cis
-                atr_val = atr_series.iloc[i] if not pd.isna(atr_series.iloc[i]) else 0
-                if atr_val > 0:
+                entry_atr = atr_series.iloc[i] if not pd.isna(atr_series.iloc[i]) else 0
+                
+                if entry_atr > 0:
                     stop_loss_level = min(
                         entry_price * (1 - stop_loss_pct),
-                        entry_price - atr_val * atr_multiplier,
+                        entry_price - entry_atr * atr_multiplier,
                     )
                 else:
                     stop_loss_level = entry_price * (1 - stop_loss_pct)
@@ -394,6 +396,11 @@ def run_wyckoff_anchored_backtest(
                 positions.append(0)
                 exit_px = stop_loss_level
                 ret = (exit_px - entry_price) / entry_price
+                
+                # Strict Labeling: Trade is a WIN only if return exceeds 1.2x ATR or 2% min
+                target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
+                is_win = bool(ret > target_ret)
+                
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
                     "exit_date": df.index[i].strftime("%Y-%m-%d"),
@@ -401,7 +408,7 @@ def run_wyckoff_anchored_backtest(
                     "entry_price": round(entry_price, 2),
                     "exit_price": round(exit_px, 2),
                     "return_pct": round(ret * 100, 2),
-                    "win": ret > 0,
+                    "win": is_win,
                     "exit_type": "Stop_Loss",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
@@ -413,6 +420,11 @@ def run_wyckoff_anchored_backtest(
                 positions.append(0)
                 exit_px = df['Close'].iloc[i]
                 ret = (exit_px - entry_price) / entry_price
+                
+                # Strict Labeling: Trade is a WIN only if return exceeds 1.2x ATR or 2% min
+                target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
+                is_win = bool(ret > target_ret)
+                
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
                     "exit_date": df.index[i].strftime("%Y-%m-%d"),
@@ -420,7 +432,7 @@ def run_wyckoff_anchored_backtest(
                     "entry_price": round(entry_price, 2),
                     "exit_price": round(exit_px, 2),
                     "return_pct": round(ret * 100, 2),
-                    "win": ret > 0,
+                    "win": is_win,
                     "exit_type": "Phase_Change",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
