@@ -501,14 +501,15 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
 
+    # הוחלפו פרמטרי האימון למניעת Overfitting חמור
     model = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=8,
-        min_samples_split=4,
-        min_samples_leaf=2,
+        n_estimators=100,
+        max_depth=4,
+        min_samples_split=20,
+        min_samples_leaf=10,
         random_state=42,
         class_weight="balanced",
-        n_jobs=1,
+        n_jobs=-1,
     )
 
     try:
