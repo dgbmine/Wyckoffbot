@@ -67,7 +67,7 @@ def calculate_optimal_threshold(model, X, y):
     return best_thresh
 
 def check_phase_entry_allowed(phase, risk_profile):
-    if "לא בתהליך" in phase or "Markdown" in phase or "Distribution" in phase:
+    if "לא בתהליך" in phase or "Markdown" in phase or "Distribution" in phase or "TRANSITION" in phase or "UNCERTAIN" in phase:
         return False
     if risk_profile == "Aggressive":
         return any(p in phase for p in ["Phase C", "Phase D", "Phase E", "Spring", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
@@ -99,7 +99,6 @@ class FactorEngine:
         has_sc, has_ar, has_st = False, False, False
         sc_idx, sc_low, ar_high = 0, 0.0, 0.0
         
-        # Deepened lookback for better structural context
         search_df = df.iloc[-120:] if len(df) > 120 else df 
         for i in range(1, len(search_df)):
             idx = search_df.index[i]
@@ -111,40 +110,32 @@ class FactorEngine:
             open_px = search_df["Open"].iloc[i]
             prev_close = search_df["Close"].iloc[i-1]
             
-            # Dynamic context
             local_min = search_df["Close"].iloc[max(0, i - 20):i].min()
             
-            # SC (Selling Climax) - Huge volume on a sharp down move, closing off the lows
             if not has_sc:
                 if close < prev_close and vol > vol_ma_i * 2.5 and low <= local_min and close > low + (high - low) * 0.4:
                     has_sc = True
                     sc_idx = i
                     sc_low = low
                     score.loc[idx] = 0.3
-            # AR (Automatic Rally) - Rebound from SC driven by short covering
             elif has_sc and not has_ar and (i - sc_idx <= 25):
                 if close > open_px and close > prev_close and vol > vol_ma_i:
                     has_ar = True
                     ar_high = high
                     score.loc[idx] = 0.4
-            # ST (Secondary Test) - Retest of SC low on lighter volume
             elif has_ar and not has_st:
                 if vol < search_df["Volume"].iloc[sc_idx] * 0.75 and low <= sc_low * 1.05 and close >= sc_low * 0.98:
                     has_st = True
                     score.loc[idx] = 0.6
-            # Phase C/D/E advancement
             elif has_st:
-                # Spring (Phase C) - Liquidity sweep below SC/ST low, closing back inside TR
                 if low < sc_low and close > sc_low and vol > vol_ma_i * 1.2: 
-                    score.loc[idx] = 0.9 # Very bullish institutional footprint
-                    sc_low = low # Update TR floor
-                # LPS (Phase D) - Higher low on contracting volume
+                    score.loc[idx] = 0.9 
+                    sc_low = low 
                 elif low > sc_low and low < search_df["Low"].iloc[i - 1] and vol < vol_ma_i * 0.8 and close > open_px: 
                     score.loc[idx] = 0.85
-                # SOS / Breakout (Phase D->E) - Strong push through AR high
                 elif close > ar_high and vol > vol_ma_i * 1.5 and close - open_px > (high - low) * 0.7: 
                     score.loc[idx] = 1.0
-                    has_sc = False # Reset for potential re-accumulation
+                    has_sc = False 
         return score
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -157,39 +148,24 @@ class FactorEngine:
         close_diff = df["Close"].diff()
         midpoint = (df["High"] + df["Low"]) / 2
 
-        # Core Wyckoff Features
         f["f04_absorption"] = (((df["Volume"] > vol_ma20 * 1.5) & (rng < spread_ma20 * 0.8)) & (df["Close"] <= df["Low"].rolling(20).min() * 1.05)).astype(float)
         f["f36_wyckoff_score"] = self._compute_quick_wyckoff(df)
         
-        # OBV Velocity - Enhanced to capture sudden institutional inflows
         obv_raw = np.sign(close_diff) * df["Volume"]
         obv_cum = obv_raw.cumsum()
         f["f07_obv_velocity"] = (obv_cum.diff(10) / obv_cum.abs().rolling(10).mean().replace(0, np.nan)).clip(-3, 3)
         
-        # Liquidity Sweep (Spring-like behavior)
         f["f20_liquidity_sweep"] = ((df["Low"] < df["Low"].rolling(20).min().shift(1)) & (df["Close"] > df["Low"].rolling(20).min().shift(1)) & (df["Close"] > df["Open"])).astype(float)
-        
-        # Accept/Reject Value Areas
         f["f26_accept_reject"] = ((df["Close"] > midpoint) & (df["Volume"] > vol_ma20)).astype(float).rolling(5).mean() - ((df["Close"] < midpoint) & (df["Volume"] > vol_ma20)).astype(float).rolling(5).mean()
-        
-        # Structural Break (Choch/BOS)
         f["f35_struct_break"] = (df["Close"] > df["High"].rolling(20).max().shift(1)).astype(float) - (df["Close"] < df["Low"].rolling(20).min().shift(1)).astype(float)
-
-        # Institutional Intent = Absorption + Liquidity Sweep + OBV Surge
         f["f14_inst_intent"] = (f["f04_absorption"] * 0.3 + f["f07_obv_velocity"].clip(0, 1) * 0.3 + f["f20_liquidity_sweep"] * 0.4).clip(0, 1)
 
-        # Advanced Wyckoff Pro Features
-        # 1. Effort vs Result: High volume (effort) but price didn't drop much (result) -> Bullish
         f["f_effort_vs_result"] = ((df["Volume"] / vol_ma20) / ((rng / spread_ma20).replace(0, 1e-5))).clip(0, 5)
-        
-        # 2. Stopping Volume: Down day, huge volume, close in upper half of bar
         f["f_stopping_volume"] = ((close_diff < 0) & (df["Volume"] > vol_ma20 * 1.5) & (df["Close"] > df["Low"] + rng * 0.6)).astype(float)
         
-        # 3. Re-accumulation Footprint: Price holding above 50SMA, volume drying up on down days
         sma50 = df["Close"].rolling(50).mean()
         f["f_reaccumulation"] = ((df["Close"] > sma50) & (close_diff < 0) & (df["Volume"] < vol_ma20 * 0.8)).astype(float).rolling(5).sum() / 5.0
         
-        # 4. Relative Strength vs SPY (True Alpha)
         if "spy_close" in df.columns:
             f["f_rs_spy"] = (df["Close"].pct_change(20) - df["spy_close"].pct_change(20)).fillna(0)
         else:
@@ -218,12 +194,10 @@ class FactorEngine:
         for col in dynamic_weights:
             score += factors[col].clip(-2, 2) * dynamic_weights[col]
 
-        # Normalize to 0-100
         norm_score = (score / total_w.replace(0, np.nan).fillna(1) * 100 + 50).clip(0, 100).round(1)
         
-        # Boost based on Wyckoff specific score
         if "f36_wyckoff_score" in factors.columns:
-            boost = factors["f36_wyckoff_score"] * 18 # Increased institutional weight
+            boost = factors["f36_wyckoff_score"] * 18 
             norm_score = (norm_score + boost).clip(0, 100)
             
         return norm_score
@@ -244,7 +218,16 @@ class FactorEngine:
         low60 = df['Low'].rolling(60).min()
         atr = (df['High'] - df['Low']).rolling(14).mean()
 
-        # State machine for institutional phase detection
+        close_diff = close.diff()
+        obv = (np.sign(close_diff) * vol).cumsum()
+        obv_diff = obv.diff(10)
+        
+        if "spy_close" in df.columns:
+            rs_spy = (close.pct_change(20) - df["spy_close"].pct_change(20)).fillna(0)
+        else:
+            rs_spy = pd.Series(0.0, index=df.index)
+
+        # STRICT LOGIC GATE: Price + Volume + Momentum constraints.
         for i in range(60, len(df)):
             c = close.iloc[i]
             v = vol.iloc[i]
@@ -257,39 +240,62 @@ class FactorEngine:
             s50 = sma50.iloc[i]
             s200 = sma200.iloc[i] if not pd.isna(sma200.iloc[i]) else s50
             
+            o_diff = obv_diff.iloc[i]
+            rs = rs_spy.iloc[i]
+            
             prev_phase = phases.iloc[i-1]
 
             # Phase E: Markup (Strong trend)
             if c > s20 and s20 > s50 and s50 > s200 and c >= h60 * 0.95:
-                phases.iloc[i] = "Phase E (Markup)"
+                if o_diff > 0 and rs > 0:
+                    phases.iloc[i] = "Phase E (Markup)"
+                else:
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             # Re-accumulation (Pause in Markup)
             elif "Markup" in prev_phase and c > s200 and c < h60 * 0.95 and v < v_ma:
-                phases.iloc[i] = "Re-accumulation (LPS/BUEC)"
+                if o_diff >= 0:
+                    phases.iloc[i] = "Re-accumulation (LPS/BUEC)"
+                else:
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             # Phase D: SOS (Sign of Strength) / Breakout from TR
             elif c > s50 and v > v_ma * 1.5 and c >= h60 * 0.90 and c > df['Open'].iloc[i]:
-                phases.iloc[i] = "Phase D (SOS / Breakout)"
+                if o_diff > 0:
+                    phases.iloc[i] = "Phase D (SOS / Breakout)"
+                else:
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             # Phase C: Spring / Shakeout (Liquidity sweep below TR)
             elif df['Low'].iloc[i] < l60 + a and c > df['Open'].iloc[i] and c < s50:
-                phases.iloc[i] = "Phase C (Spring / Liquidity Sweep)"
+                if v > v_ma * 1.2:
+                    phases.iloc[i] = "Phase C (Spring / Liquidity Sweep)"
+                else:
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             # LPS (Last Point of Support in TR)
             elif "Spring" in prev_phase or "Accumulation" in prev_phase:
                 if c > l60 + a * 2 and c < s50 and v < v_ma * 0.8:
-                    phases.iloc[i] = "Phase D (LPS)"
+                    if o_diff >= 0:
+                        phases.iloc[i] = "Phase D (LPS)"
+                    else:
+                        phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
                 elif c < s50:
                     phases.iloc[i] = "Phase B (Accumulation)"
                 else:
-                    phases.iloc[i] = prev_phase
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             # Phase A: Selling Climax
             elif c < l60 * 1.05 and v > v_ma * 2.5 and df['Close'].iloc[i] > df['Low'].iloc[i] + (df['High'].iloc[i] - df['Low'].iloc[i]) * 0.5:
                 phases.iloc[i] = "Phase A (Selling Climax)"
             # Markdown / Distribution
             elif c < s20 and s20 < s50 and c < s200:
-                phases.iloc[i] = "Markdown (Institutional Distribution)"
+                if o_diff < 0:
+                    phases.iloc[i] = "Markdown (Institutional Distribution)"
+                else:
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             elif c < s50 and v > v_ma * 2.0 and c < df['Open'].iloc[i]:
                 phases.iloc[i] = "Distribution (Heavy Supply)"
             else:
-                # Carry forward previous state if no clear signal
-                phases.iloc[i] = phases.iloc[i-1] 
+                if prev_phase not in ["TRANSITION / UNCERTAIN STATE", "לא בתהליך איסוף"]:
+                    phases.iloc[i] = prev_phase 
+                else:
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
                 
         return phases
 
@@ -321,8 +327,10 @@ def run_wyckoff_anchored_backtest(
     df['wyckoff_phase'] = engine.get_wyckoff_phase(df)
     df['cis_score'] = engine.composite_cis(factors, df)
     df['Daily_Return'] = df['Close'].pct_change().fillna(0)
+    
+    # Overfitting RS Filter enforcement
+    df['rs_spy_factor'] = factors['f_rs_spy'] if 'f_rs_spy' in factors.columns else 0.0
 
-    # Simple AI injection
     if use_ai and st is not None and getattr(st, "session_state", None) and getattr(st.session_state, "ml_model", None) is not None:
         try:
             model = st.session_state.ml_model
@@ -357,8 +365,10 @@ def run_wyckoff_anchored_backtest(
     for i in range(len(df)):
         current_phase = df['wyckoff_phase'].iloc[i]
         current_cis = df['cis_score'].iloc[i]
+        
         phase_allowed = check_phase_entry_allowed(current_phase, risk_profile)
-        score_allowed = current_cis >= threshold
+        # RS Momentum filter: Only enter if RS > 0 (prevents taking trades against the market trend)
+        score_allowed = (current_cis >= threshold) and (df['rs_spy_factor'].iloc[i] > 0)
 
         if not in_position:
             if phase_allowed and score_allowed:
@@ -399,7 +409,7 @@ def run_wyckoff_anchored_backtest(
                 in_position = False
                 continue
 
-            if "Markdown" in current_phase or "Distribution" in current_phase or current_cis < threshold - 15:
+            if "Markdown" in current_phase or "Distribution" in current_phase or "TRANSITION" in current_phase or current_cis < threshold - 15:
                 positions.append(0)
                 exit_px = df['Close'].iloc[i]
                 ret = (exit_px - entry_price) / entry_price
@@ -435,7 +445,9 @@ def run_wyckoff_anchored_backtest(
 
 def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str:
     """
-    Institutional-grade analysis breakdown. Direct, blunt, no fluff.
+    STRICT INSTITUTIONAL EXPLANATION RULE:
+    No assumptions, no empty language. Must detail exactly what the 3 core pillars are doing.
+    Evidence Ledger format required.
     """
     if df is None or df.empty:
         return "אין מספיק נתונים לאנליזה מוסדית. נדרשים נתונים היסטוריים נוספים."
@@ -459,99 +471,92 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
     
     rs_spy = (df["Close"].pct_change(20).iloc[-1] - df.get("spy_close", df["Close"]).pct_change(20).iloc[-1]) if "spy_close" in df.columns else 0.0
     
-    high60 = df['High'].rolling(60).max().shift(1).iloc[-1] if len(df) >= 60 else close
     low60 = df['Low'].rolling(60).min().shift(1).iloc[-1] if len(df) >= 60 else df['Low'].iloc[-1]
-    breakout = close > high60 * 0.98
     spring_cond = df['Low'].iloc[-1] < low60 and close > df['Open'].iloc[-1]
     
-    pros = []
-    cons = []
+    pos_factors = []
+    neg_factors = []
+    neutral_mixed = []
 
+    # 1. Price Structure Core
+    if close > sma20 and sma20 > sma50 and sma50 > sma200:
+        pos_factors.append("Price Structure: מבנה שוורי מלא (Close > 20 > 50 > 200)")
+        trend_text = "תמיכה מלאה במגמת עלייה מוסדית."
+    elif close < sma20 and sma20 < sma50 and sma50 < sma200:
+        neg_factors.append("Price Structure: מבנה דובי מלא (Close < 20 < 50 < 200)")
+        trend_text = "היצע כלוא (Supply Overhead) ומגמת ירידה."
+    else:
+        neutral_mixed.append("Price Structure: ממוצעים מעורבים או דשדוש")
+        trend_text = "דשדוש מבני ללא כיוון מובהק."
+
+    # 2. Volume & OBV Core
+    if obv_diff > 0 and vol_ratio >= 1.2 and close > df['Open'].iloc[-1]:
+        pos_factors.append(f"Volume/OBV: התרחבות חיובית וכניסת הון מתמשכת (Vol Ratio: {vol_ratio:.1f}x)")
+        obv_text = "חיובית (הון נטו זורם פנימה בעשרת הימים האחרונים)."
+    elif obv_diff < 0 and vol_ratio >= 1.2 and close < df['Open'].iloc[-1]:
+        neg_factors.append(f"Volume/OBV: לחץ מכירות ויציאת הון מוסדית (Vol Ratio: {vol_ratio:.1f}x)")
+        obv_text = "שלילית (הון נטו זורם החוצה מהנכס)."
+    else:
+        neutral_mixed.append("Volume/OBV: זרימת הון שטוחה או נפח שאינו תומך באופן מובהק")
+        obv_text = "ניטרלית או ללא אישור נפח חזק."
+
+    # 3. Momentum & Trend Strength Core
+    if rs_spy > 0.02:
+        pos_factors.append(f"Momentum: עוצמה יחסית חיובית משמעותית ({rs_spy:.2%} מול השוק)")
+        mom_text = "מייצר אלפא מובהקת, המוסדיים רודפים אחרי הנכס."
+    elif rs_spy < -0.02:
+        neg_factors.append(f"Momentum: חולשה יחסית משמעותית ({rs_spy:.2%} מול השוק)")
+        mom_text = "מפגר משמעותית מול השוק, עלות אלטרנטיבה גבוהה."
+    else:
+        neutral_mixed.append("Momentum: עוצמה יחסית שולית או שטוחה ביחס לשוק")
+        mom_text = "מייצר תשואה דומה למדד הרחב ללא יתרון תחרותי."
+
+    # Supplementary Factors
     if effort_result > 1.8 and close > df['Open'].iloc[-1]:
-        pros.append("✓ **ספיגת היצע (Absorption / Effort vs Result)**: מחזור מסחר גבוה מאוד שמייצר תנועת מחיר מינימלית כלפי מטה. הכסף החכם קונה לתוך ההיצע. טביעת אצבע מוסדית קלאסית.")
-    elif vol_ratio >= 1.5 and close > df['Open'].iloc[-1]:
-        pros.append("✓ **איסוף מוסדי אגרסיבי**: המחזור גבוה ב-50%+ מהממוצע ביום עליות. הקונים מנקים את ההיצע באופן אקטיבי.")
-    elif vol_ratio < 0.7:
-        cons.append("• **יובש נזילות (Liquidity Desert)**: מסחר של כסף קטן (Retail) בלבד. אין נוכחות מוסדית משמעותית כרגע.")
-        
-    if spring_cond:
-        pros.append("✓ **ציד נזילות (Spring / Shakeout)**: המחיר שבר את התמיכה כדי להפעיל פקודות Stop-Loss, ואז דחה את השבירה והתאושש. ניעור קלאסי של שלב C.")
-        
-    if close > sma20 and close > sma50 and sma50 > sma200:
-        pros.append("✓ **מבנה מגמה (Pristine Trend)**: המחיר שומר על כל הממוצעים הנעים המרכזיים. דרך ההתנגדות הקלה היא חד משמעית למעלה.")
-    elif close < sma200 and close < sma50:
-        cons.append("• **היצע כלוא (Supply Overhead)**: המחיר קבור מתחת לממוצעים 50 ו-200. כל ניסיון עליה צפוי להיתקל בלחץ מכירות מוסדי.")
-        
-    if obv_diff > 0:
-        pros.append("✓ **זרימת פקודות חיובית (Order Flow)**: ה-OBV מתרחב. הון נטו זורם לתוך הנכס בעשרת ימי המסחר האחרונים.")
+        pos_factors.append("Liquidity/Absorption: מאמץ גבוה מול תוצאה נמוכה כלפי מטה (ספיגת היצע אקטיבית)")
+    if spring_cond and vol_ratio > 1.2:
+        pos_factors.append("False Breakouts/Traps: ניעור נזילות (Spring) אושר במחזור גבוה מחוץ לטווח המסחר")
+    if vol_ratio < 0.7:
+        neg_factors.append("Liquidity Behavior: יובש נזילות מוחלט, היעדר נוכחות של כסף חכם")
+
+    # Decision Gate Consistency Logic
+    is_bullish = len(pos_factors) >= 3 and len(neg_factors) == 0
+    is_bearish = len(neg_factors) >= 3 and len(pos_factors) == 0
+
+    if is_bullish:
+        dominant_driver = "ACCUMULATION / MARKUP: קונצנזוס חיובי של כניסת הון ועוצמה מבנית."
+        logic_text = "קיימת התאמה מלאה בין המחיר, הנפח (OBV) והמומנטום. הנתונים מאשרים נוכחות אקטיבית של כסף חכם הסופג היצע ודוחף כלפי מעלה. הוסר חשש מסתירות."
+    elif is_bearish:
+        dominant_driver = "DISTRIBUTION / MARKDOWN: קונצנזוס שלילי, לחץ מכירות קשיח."
+        logic_text = "קטגוריות הליבה מצביעות מטה פה אחד. מוסדיים מבצעים פיזור סחורה ללא התנגדות. הוסר חשש מסתירות."
+        if current_phase not in ["Markdown (Institutional Distribution)", "Distribution (Heavy Supply)", "לא בתהליך איסוף"]:
+             current_phase = "TRANSITION / UNCERTAIN STATE"
     else:
-        cons.append("• **זרימת פקודות שלילית**: ה-OBV שטוח או יורד. ההון מבצע רוטציה החוצה מהנכס.")
-        
-    if rs_spy > 0.05:
-        pros.append("✓ **ייצור אלפא (Relative Strength)**: ביצועי יתר של מעל 5% מול ה-SPY ב-20 הימים האחרונים. מוסדיים רודפים אחרי עוצמה יחסית.")
-    elif rs_spy < -0.05:
-        cons.append("• **חולשה יחסית**: פיגור משמעותי מול השוק הרחב. עלות האלטרנטיבה (Opportunity Cost) גבוהה מדי.")
+        dominant_driver = "TRANSITION: חוסר עקביות או סתירה מהותית בין הפקטורים."
+        current_phase = "TRANSITION / UNCERTAIN STATE"
+        logic_text = "המערכת מזהה נתונים מעורבים (למשל, מבנה מחיר חיובי מול OBV שלילי). עקב כללי הסתירה הלוגית המחמירים של SCOUT, הנרטיב נפסל עד ליצירת קונצנזוס בין הון למחיר. המצב הנוכחי מוגדר כמעבר בלבד."
 
-    if breakout:
-        pros.append("✓ **סימן לעוצמה (SOS)**: המחיר חותך דרך בלוק ההתנגדות של 60 הימים האחרונים. שלב ההמראה (Markup) מתחיל.")
+    md = f"""### ⚖️ Evidence Ledger
 
-    if cis_score >= 70:
-        pros.append(f"✓ **ציון מוסדי גבוה (CIS: {cis_score:.1f})**: המודלים הכמותיים מאשרים הסתברות גבוהה לאיסוף מבני.")
-    elif cis_score < 45:
-        cons.append(f"• **ציון מוסדי נמוך (CIS: {cis_score:.1f})**: חותם כמותי המעיד על פיזור (Distribution) או 'כסף מת'.")
+**Positive Factors:**
+{chr(10).join(['- ' + f for f in pos_factors]) if pos_factors else '- אין עדות חיובית מוצקה'}
 
-    if cis_score >= 70:
-        opening = "**הערכת אנליסט:** בלי ללכת סביב. אנחנו רואים כאן טביעת אצבע מוסדית ברורה. הכסף החכם מתמקם באופן אקטיבי, והמסחר מראה ספיגה מכוונת של כל היצע זמין."
-    elif cis_score >= 55:
-        opening = "**הערכת אנליסט:** שלב מעבר. אנו מזהים סממנים ראשוניים של איסוף, אך התזה טרם קיבלה אישור סופי. יש לנהל סיכונים בקפידה ולהמתין ל-SOS (סימן לעוצמה) אגרסיבי או ל-LPS מאושר."
-    else:
-        opening = "**הערכת אנליסט:** כסף מת או פיזור מוסדי אקטיבי. פרופיל המחזורים חלש ותנועת המחיר לא מראה שום דחיפות מצד הכסף החכם. אל תבזבזו הון על מאבק במגמה הזו."
+**Negative Factors:**
+{chr(10).join(['- ' + f for f in neg_factors]) if neg_factors else '- אין עדות שלילית מוצקה'}
 
-    phase_explanations = {
-        "Phase A": "### שלב A: בלימת המגמה (Selling Climax)\nקפיטולציה של הציבור. מחזור כבד עוצר את הירידות, אבל התנודתיות עדיין רעילה. אל תנסה לתפוס סכין נופלת. תן לטווח המסחר (TR) להיבנות.",
-        "Phase B": "### שלב B: איסוף וצבירה (Building the Cause)\nתנועת מחיר משעממת וקופצנית. זה המקום בו המוסדיים בונים פוזיציה בשקט על פני שבועות או חודשים. התנודתיות מתכווצת. חפש סימני ספיגה בחלק התחתון של הטווח.",
-        "Phase C": "### שלב C: ציד נזילות (Spring / Liquidity Sweep)\nהמלכודת האולטימטיבית. המוסדיים מהנדסים שבירה מטה כדי לאסוף נזילות ולהפעיל סטופים של הציבור לפני המהלך האמיתי. חזרה מהירה לתוך הטווח היא איתות קנייה בביטחון גבוה.",
-        "Phase D": "### שלב D: אישור עוצמה (SOS & LPS)\nהתזה מאושרת. ההיצע הותש. אנו רואים פריצות מעלה במחזורים גבוהים (SOS) ותיקונים רדודים ללא מחזור (LPS). זהו חלון הכניסה האופטימלי.",
-        "Phase E": "### שלב E: המראה (Markup)\nהרכבת יצאה מהתחנה. המחיר במגמה אגרסיבית. נהל סיכונים עם סטופ עוקב ותן למומנטום האלגוריתמי לעשות את העבודה.",
-        "Re-accumulation": "### איסוף מחדש (Re-accumulation / LPS)\nהפסקה הכרחית במגמת העלייה. הנכס מעכל את העליות ובונה בסיס חדש. חפש התייבשות מוחלטת של המחזורים בימי ירידות.",
-        "Markdown": "### שלב ירידות / פיזור (Distribution)\nהמוסדיים פורקים סיכון. השוק כבד. חסל פוזיציות לונג או שקול שורט. שמירת הון (Capital Preservation) היא בעדיפות עליונה כאן."
-    }
+**Neutral / Mixed:**
+{chr(10).join(['- ' + f for f in neutral_mixed]) if neutral_mixed else '- אין'}
 
-    phase_text = phase_explanations.get("Phase B", "### מבנה לא מאושר\nממתין לפרמטרים ברורים של Wyckoff.") 
-    for k, v in phase_explanations.items():
-        if k in current_phase:
-            phase_text = v
-            break
-
-    if cis_score >= 75:
-        confidence = "גבוהה מאוד (High Conviction)"
-    elif cis_score >= 60:
-        confidence = "בינונית (Moderate)"
-    else:
-        confidence = "נמוכה / התרחק (Avoid)"
-        
-    bottom_line = f"""### 💡 שורה תחתונה:
-{ "**הנתונים נוטים בבירור לכיוון של איסוף מוסדי.**" if cis_score >= 60 else "**התזה המבנית שבורה או לא מאושרת. עדיף להקצות הון למקומות אחרים.**" }
-
-**רמת ביטחון מערכת:** {confidence}
-"""
-
-    pros_text = "\n".join(pros) if pros else "• לא זוהו טביעות אצבע חיוביות."
-    cons_text = "\n".join(cons) if cons else "• אין דגלים אדומים מהותיים במבנה."
-
-    md = f"""{opening}
-
-{phase_text}
-
-### ⚖️ ספר הוכחות (Evidence Ledger):
-
-**טביעות אצבע חיוביות (איסוף/המחיר עולה):**
-{pros_text}
-
-**טביעות אצבע שליליות (פיזור/חולשה):**
-{cons_text}
+**Dominant Driver:**
+{dominant_driver}
 
 ---
-{bottom_line}
+### 1. פירוט פאקטורים אמיתי (Raw Data)
+* **Price Structure (מבנה מחיר)**: סגירת נר אחרונה ב-{close:.2f}. {trend_text}
+* **Volume / OBV (זרימת הון)**: המחזור עומד על פי {vol_ratio:.2f} ממוצע 20 יום. זרימת ה-OBV ל-10 ימים היא {obv_text}
+* **Momentum (עוצמה יחסית)**: ה-RS למול ה-SPY ב-20 הימים האחרונים עומד על {rs_spy:.2%}. {mom_text}
+
+### 2. לוגיקה מפורשת (Decision Gate)
+{logic_text}
 """
     return md
