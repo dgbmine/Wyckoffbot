@@ -24,10 +24,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix
 
-# ------------------------------------------------------------------
-# Safe Streamlit import (Cloud Run friendly)
-# ------------------------------------------------------------------
 try:
     import streamlit as _st  # type: ignore
     try:
@@ -41,15 +39,10 @@ try:
 except Exception:
     class _FakeStModule:
         session_state = None
-
         def __getattr__(self, name):
             return None
-
     _st = _FakeStModule()  # type: ignore
 
-# ------------------------------------------------------------------
-# Paths / environment – Cloud Run aware
-# ------------------------------------------------------------------
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.append(BASE_DIR)
@@ -58,7 +51,6 @@ _CLOUD_RUN = (
     os.environ.get("K_SERVICE") is not None
     or os.environ.get("CLOUD_RUN", "").lower() == "true"
 )
-# על Cloud Run כל הקבצים ייכתבו תחת /tmp/scout
 _TMP_ROOT = "/tmp/scout" if _CLOUD_RUN else BASE_DIR
 
 MODEL_DIR = os.path.join(_TMP_ROOT, "models")
@@ -71,12 +63,8 @@ TRAINING_PERIOD = "6y"
 BASE_THRESHOLD = 50
 MIN_TRADES_FOR_ML = 10
 
-# ------------------------------------------------------------------
-# Logging helpers
-# ------------------------------------------------------------------
 def _ensure_dirs():
     os.makedirs(MODEL_DIR, exist_ok=True)
-    # גם תיקיית הבסיס של הלוג (במקרה שמשתמשים בתיקייה נפרדת)
     log_dir = os.path.dirname(LOG_FILE)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
@@ -86,7 +74,6 @@ def log_message(msg):
         _ensure_dirs()
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"{stamp} - {msg}\n"
-        # כתיבה לקובץ (אם נכשל – ננסה לכתוב ל-stderr כגיבוי)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line)
             f.flush()
@@ -103,9 +90,6 @@ def log_exception(prefix, exc):
     except Exception:
         pass
 
-# ------------------------------------------------------------------
-# scout_core imports (SAFE WRAPPER)
-# ------------------------------------------------------------------
 _SCOUT_IMPORT_ERROR = None
 try:
     from scout_core import (
@@ -119,9 +103,6 @@ except Exception as e:
     log_exception("CRITICAL ERROR: Failed to import scout_core", e)
     _SCOUT_IMPORT_ERROR = str(e)
 
-# ------------------------------------------------------------------
-# Training universe – Default broad buckets
-# ------------------------------------------------------------------
 TECH_TICKERS = [
     "AAPL","MSFT","NVDA","GOOGL","GOOG","AMZN","META","AVGO","CRM","ORCL",
     "ADBE","AMD","INTC","QCOM","TXN","ADI","NOW","SNPS","CDNS","ANSS",
@@ -236,9 +217,6 @@ SECTOR_BUCKETS = {
     "Defensive": _dedupe_keep_order([t for t in DEFENSIVE_TICKERS if t not in TECH_TICKERS]),
 }
 
-# ------------------------------------------------------------------
-# Global runtime state
-# ------------------------------------------------------------------
 TRAINING_STATE = {
     "overall_total": len(UNIVERSE_TICKERS),
     "overall_done": 0,
@@ -249,10 +227,6 @@ TRAINING_STATE = {
 }
 
 def apply_custom_batch():
-    """
-    Reads the UI's selected batch. If valid, overrides the training universe
-    so we only compute what the manager requested.
-    """
     global UNIVERSE_TICKERS
     if os.path.exists(BATCH_CONFIG_FILE):
         try:
@@ -261,11 +235,8 @@ def apply_custom_batch():
                 if "tickers" in data and isinstance(data["tickers"], list) and len(data["tickers"]) > 0:
                     custom_tickers = _dedupe_keep_order([str(t).upper() for t in data["tickers"]])
                     log_message(f"Custom batch configuration loaded. Overriding universe to {len(custom_tickers)} selected tickers.")
-                    
-                    # Update global universe and state logic
                     UNIVERSE_TICKERS = custom_tickers
                     TRAINING_STATE["overall_total"] = len(custom_tickers)
-                    
                     return [("Selected_Assets", custom_tickers)]
         except Exception as e:
             log_exception("Failed to parse batch_config.json. Falling back to default universe.", e)
@@ -350,7 +321,6 @@ def _update_progress(slot, extra=""):
     skipped = TRAINING_STATE["overall_skipped"]
     progress = 0 if total <= 0 else int((done / total) * 100)
     
-    # State key is explicitly "state" for UI synchronization
     write_status(
         state="running",
         progress=progress,
@@ -410,6 +380,7 @@ def process_sector(slot, tickers, base_threshold=50):
                 use_ai=False,
                 threshold=base_threshold,
                 period=TRAINING_PERIOD,
+                atr_multiplier=2.5, # Overfitting Constraint
             )
 
             if df is None or getattr(df, "empty", True):
@@ -498,7 +469,6 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra="dataset ריק אחרי ניקוי")
         return
 
-    # Sanity check logging and exclusion documentation
     excluded_dict = {}
     for col in excluded_cols:
         msg = f"WARNING: feature '{col}' has near-zero variance (unique <= 1). Likely uninformative. Removing from training."
@@ -510,12 +480,11 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
 
-    # הוחלפו פרמטרי האימון למניעת Overfitting חמור - הוספת OOB Score ו-Bootstrap מפורש
     model = RandomForestClassifier(
         n_estimators=100,
-        max_depth=4,
+        max_depth=3, # Overfitting Constraint
         min_samples_split=20,
-        min_samples_leaf=10,
+        min_samples_leaf=15, # Overfitting Constraint
         random_state=42,
         class_weight="balanced",
         n_jobs=-1,
@@ -541,12 +510,18 @@ def process_sector(slot, tickers, base_threshold=50):
         oob_acc = float("nan")
 
     try:
+        preds = model.predict(X)
+        cm = confusion_matrix(y, preds)
+        log_message(f"Confusion Matrix for {slot}: TN={cm[0][0]}, FP={cm[0][1]}, FN={cm[1][0]}, TP={cm[1][1]}")
+    except Exception:
+        pass
+
+    try:
         opt_th = calculate_optimal_threshold(model, X, y)
     except Exception as e:
         log_exception(f"Threshold calculation failed for {slot}", e)
         opt_th = 0.5
         
-    # הדפסת פיצ'רים דומיננטיים ללוג
     try:
         importances = model.feature_importances_
         feature_names = model.feature_names_in_
@@ -624,7 +599,6 @@ if __name__ == "__main__":
     try:
         _ensure_dirs()
         
-        # בדוק קודם אם היה כשל ביבוא הפונקציות מסקאוט_קור
         if _SCOUT_IMPORT_ERROR:
             write_status(
                 state="error",
@@ -635,10 +609,8 @@ if __name__ == "__main__":
             )
             sys.exit(1)
             
-        # בדוק קודם אם ה-UI שלח לנו רשימה ספציפית
         sector_map = apply_custom_batch()
         if not sector_map:
-            # אם אין רשימה, רוץ על כל היקום הדיפולטיבי
             sector_map = _build_sector_map_from_universe()
             TRAINING_STATE["overall_total"] = len(UNIVERSE_TICKERS)
 
@@ -676,7 +648,6 @@ if __name__ == "__main__":
 
             gc.collect()
 
-        # בדיקה קשיחה האם בכלל נוצרו מודלים/היו הצלחות בעסקאות
         if TRAINING_STATE["overall_success"] == 0:
             error_msg = "האימון הסתיים ללא נתונים תקינים או ללא עסקאות מותאמות לאף נכס (0 הצלחות). המודלים לא נוצרו."
             log_message(f"ERROR: {error_msg}")
@@ -687,9 +658,8 @@ if __name__ == "__main__":
                 universe_size=TRAINING_STATE["overall_total"],
                 training_period=TRAINING_PERIOD,
             )
-            sys.exit(1) # אל תייצר DONE_FLAG אם כל האימון נכשל
+            sys.exit(1) 
 
-        # אם עברנו את בדיקת התקינות, ייצר DONE_FLAG וסיים בהצלחה
         with open(DONE_FLAG, "w", encoding="utf-8") as f:
             f.write("done")
 
