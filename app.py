@@ -324,11 +324,13 @@ def screen_monitor() -> None:
             model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
             num_trades = archive[slot].get("metadata", {}).get("num_trades", "?")
             acc = archive[slot].get("metadata", {}).get("train_acc", 0.0)
+            oob = archive[slot].get("metadata", {}).get("oob_acc", None)
+            oob_str = f" | OOB: {oob:.0%}" if oob is not None else ""
             if os.path.exists(model_path):
                 with open(model_path, "rb") as f:
                     data = f.read()
                 cols[i % 3].download_button(
-                    label=f"⬇️ הורד {slot} | Acc: {acc:.0%}",
+                    label=f"⬇️ הורד {slot} | Acc: {acc:.0%}{oob_str}",
                     data=data,
                     file_name=f"model_{safe_slot}.pkl",
                     mime="application/octet-stream",
