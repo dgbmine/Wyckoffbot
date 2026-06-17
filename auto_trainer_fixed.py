@@ -104,15 +104,20 @@ def log_exception(prefix, exc):
         pass
 
 # ------------------------------------------------------------------
-# scout_core imports
+# scout_core imports (SAFE WRAPPER)
 # ------------------------------------------------------------------
-from scout_core import (
-    clean_filename,
-    calculate_optimal_threshold,
-    FactorEngine,
-    BacktestConfig,
-    run_wyckoff_anchored_backtest,
-)
+_SCOUT_IMPORT_ERROR = None
+try:
+    from scout_core import (
+        clean_filename,
+        calculate_optimal_threshold,
+        FactorEngine,
+        BacktestConfig,
+        run_wyckoff_anchored_backtest,
+    )
+except Exception as e:
+    log_exception("CRITICAL ERROR: Failed to import scout_core", e)
+    _SCOUT_IMPORT_ERROR = str(e)
 
 # ------------------------------------------------------------------
 # Training universe – Default broad buckets
@@ -589,6 +594,17 @@ if __name__ == "__main__":
     try:
         _ensure_dirs()
         
+        # בדוק קודם אם היה כשל ביבוא הפונקציות מסקאוט_קור
+        if _SCOUT_IMPORT_ERROR:
+            write_status(
+                state="error",
+                progress=0,
+                message=f"שגיאה קריטית: ייבוא scout_core נכשל ({_SCOUT_IMPORT_ERROR})",
+                universe_size=0,
+                training_period=TRAINING_PERIOD,
+            )
+            sys.exit(1)
+            
         # בדוק קודם אם ה-UI שלח לנו רשימה ספציפית
         sector_map = apply_custom_batch()
         if not sector_map:
@@ -630,6 +646,20 @@ if __name__ == "__main__":
 
             gc.collect()
 
+        # בדיקה קשיחה האם בכלל נוצרו מודלים/היו הצלחות בעסקאות
+        if TRAINING_STATE["overall_success"] == 0:
+            error_msg = "האימון הסתיים ללא נתונים תקינים או ללא עסקאות מותאמות לאף נכס (0 הצלחות). המודלים לא נוצרו."
+            log_message(f"ERROR: {error_msg}")
+            write_status(
+                state="error",
+                progress=100,
+                message=error_msg,
+                universe_size=TRAINING_STATE["overall_total"],
+                training_period=TRAINING_PERIOD,
+            )
+            sys.exit(1) # אל תייצר DONE_FLAG אם כל האימון נכשל
+
+        # אם עברנו את בדיקת התקינות, ייצר DONE_FLAG וסיים בהצלחה
         with open(DONE_FLAG, "w", encoding="utf-8") as f:
             f.write("done")
 
@@ -651,4 +681,4 @@ if __name__ == "__main__":
             universe_size=TRAINING_STATE.get("overall_total", 0),
             training_period=TRAINING_PERIOD,
         )
-        raise
+        sys.exit(1)
