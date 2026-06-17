@@ -55,7 +55,7 @@ AUTO_TRAINER_STOP_FILE = os.path.join(MODEL_DIR, "auto_trainer.stop")
 AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
 
 # לוג רציף יכתב לכאן ישירות על ידי ה-Trainer
-AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")  # תוקן
+AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
 
 # ============================================================
 # Optional imports from scout_core
@@ -492,6 +492,11 @@ def screen_ml_trainer() -> None:
             except Exception as e:
                 st.error(f"קריסת מערכת בהפעלת התהליך המוסדי: {e}")
 
+    # ──────── כפתור רענון סטטוס אימון ────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🔄 רענן סטטוס אימון (Refresh Status)", use_container_width=True):
+        st.rerun()
+
     # ─────────────────── 3. Live Log Viewer ───────────────────
     st.markdown("---")
     st.markdown("#### 📜 לוגים מהשרת (Live Terminal Output)")
@@ -512,6 +517,23 @@ def screen_ml_trainer() -> None:
         disabled=True,
         label_visibility="collapsed"
     )
+
+    # ──────── כפתור ריבוט מערכת ────────
+    if st.button("♻️ ריבוט מערכת (נקה נתונים והפעל מחדש)", type="secondary", use_container_width=True):
+        files_to_clean = [
+            AUTO_TRAINER_DONE_FLAG,
+            AUTO_TRAINER_STATUS_FILE,
+            AUTO_TRAINER_PID_FILE,
+            AUTO_TRAINER_LOG_FILE
+        ]
+        for fp in files_to_clean:
+            if os.path.exists(fp):
+                try:
+                    os.remove(fp)
+                except OSError:
+                    pass
+        st.session_state.clear()
+        st.rerun()
 
     # רענון אוטומטי **רק** כשהאימון רץ
     if is_running:
