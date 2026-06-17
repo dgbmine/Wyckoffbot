@@ -363,10 +363,10 @@ def _update_progress(slot, extra=""):
 def _prepare_training_frame(all_features):
     data = pd.DataFrame(all_features)
     if data.empty:
-        return None, None, None
+        return None, None, None, []
 
     if "label" not in data.columns:
-        return None, None, None
+        return None, None, None, []
 
     drop_cols = [c for c in ["label", "ticker", "entry_date", "exit_date"] if c in data.columns]
     X = data.drop(columns=drop_cols, errors="ignore")
@@ -379,10 +379,12 @@ def _prepare_training_frame(all_features):
 
     nunique = X.nunique(dropna=False)
     keep_cols = nunique[nunique > 1].index.tolist()
+    excluded_cols = [c for c in X.columns if c not in keep_cols]
+    
     if keep_cols:
         X = X[keep_cols]
 
-    return data, X, y
+    return data, X, y, excluded_cols
 
 def process_sector(slot, tickers, base_threshold=50):
     TRAINING_STATE["current_sector"] = slot
@@ -490,18 +492,25 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra=msg)
         return
 
-    data, X, y = _prepare_training_frame(all_features)
+    data, X, y, excluded_cols = _prepare_training_frame(all_features)
     if data is None or X is None or y is None or X.empty:
         log_message(f"{slot}: prepared dataset is empty after cleanup.")
         _update_progress(slot, extra="dataset ריק אחרי ניקוי")
         return
+
+    # Sanity check logging and exclusion documentation
+    excluded_dict = {}
+    for col in excluded_cols:
+        msg = f"WARNING: feature '{col}' has near-zero variance (unique <= 1). Likely uninformative. Removing from training."
+        log_message(msg)
+        excluded_dict[col] = "Zero/near-zero variance (nunique <= 1)"
 
     if y.nunique(dropna=True) < 2:
         log_message(f"{slot}: not enough class variety to train (labels={y.nunique(dropna=True)}).")
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
 
-    # הוחלפו פרמטרי האימון למניעת Overfitting חמור
+    # הוחלפו פרמטרי האימון למניעת Overfitting חמור - הוספת OOB Score ו-Bootstrap מפורש
     model = RandomForestClassifier(
         n_estimators=100,
         max_depth=4,
@@ -510,6 +519,8 @@ def process_sector(slot, tickers, base_threshold=50):
         random_state=42,
         class_weight="balanced",
         n_jobs=-1,
+        oob_score=True,
+        bootstrap=True
     )
 
     try:
@@ -523,12 +534,28 @@ def process_sector(slot, tickers, base_threshold=50):
         train_acc = float(model.score(X, y))
     except Exception:
         train_acc = float("nan")
+        
+    try:
+        oob_acc = float(model.oob_score_)
+    except Exception:
+        oob_acc = float("nan")
 
     try:
         opt_th = calculate_optimal_threshold(model, X, y)
     except Exception as e:
         log_exception(f"Threshold calculation failed for {slot}", e)
         opt_th = 0.5
+        
+    # הדפסת פיצ'רים דומיננטיים ללוג
+    try:
+        importances = model.feature_importances_
+        feature_names = model.feature_names_in_
+        sorted_idx = np.argsort(importances)[::-1]
+        top_4_idx = sorted_idx[:4]
+        top_features_str = ", ".join([f"{feature_names[i]} ({importances[i]:.1%})" for i in top_4_idx])
+        log_message(f"Top 4 Features for {slot}: {top_features_str}")
+    except Exception as e:
+        log_exception("Failed to extract top features", e)
 
     safe_slot = clean_filename(slot)
     model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
@@ -538,8 +565,10 @@ def process_sector(slot, tickers, base_threshold=50):
         "metadata": {
             "slot": slot,
             "train_acc": train_acc,
+            "oob_acc": oob_acc,
             "num_trades": int(len(data)),
             "num_features": int(X.shape[1]),
+            "excluded_features": excluded_dict,
             "recommended_threshold": float(opt_th),
             "period": TRAINING_PERIOD,
             "base_threshold": base_threshold,
@@ -561,7 +590,7 @@ def process_sector(slot, tickers, base_threshold=50):
 
     log_message(
         f"Successfully trained {slot}. Trades: {len(data)}, "
-        f"Acc: {train_acc:.2%}. Model saved to {model_path}."
+        f"Acc: {train_acc:.2%}, OOB Acc: {oob_acc:.2%}. Model saved to {model_path}."
     )
     _update_progress(
         slot,
