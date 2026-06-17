@@ -474,12 +474,18 @@ def screen_ml_trainer() -> None:
                 return
 
             try:
+                # הניתוב החשוב ביותר: מזרים את הפלט ישירות לקובץ הלוג
+                log_fd = open(AUTO_TRAINER_LOG_FILE, "a", encoding="utf-8")
                 subprocess.Popen(
                     [sys.executable, trainer_path],
                     cwd=BASE_DIR,
+                    stdout=log_fd,
+                    stderr=subprocess.STDOUT,
                     close_fds=True,
                     start_new_session=True
                 )
+                log_fd.close() # משחרר את הנעילה של הורה התהליך, תהליך הבן ממשיך לכתוב אליו חופשי
+                
                 st.success("הפקודה נשלחה בהצלחה לשרת! מתחיל במעקב ביצועים...")
                 time.sleep(1.5)
                 st.rerun()
