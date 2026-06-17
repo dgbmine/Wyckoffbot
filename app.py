@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.0
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.1
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -54,12 +54,8 @@ AUTO_TRAINER_PID_FILE = os.path.join(MODEL_DIR, "auto_trainer.pid")
 AUTO_TRAINER_STOP_FILE = os.path.join(MODEL_DIR, "auto_trainer.stop")
 AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
 
-# לוג רציף יכתב לכאן ישירות על ידי ה-Trainer
 AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
 
-# ============================================================
-# Optional imports from scout_core
-# ============================================================
 try:
     from scout_core import (
         clean_filename,
@@ -79,7 +75,7 @@ except ImportError as _imp_exc:
     def explain_score(df: pd.DataFrame, phase: str, cis: float) -> str:
         return (
             f"ציון CIS: {cis:.1f}\nשלב Wyckoff: {phase}\n\n"
-            "המערכת מזהה התנהגות שוק. טען את scout_core.py לקבלת הסבר אנליסט מלא ומקיף."
+            "המערכת מזהה התנהגות שוק אך הרכיב הלוגי חסר. טען את scout_core.py המלא לקבלת Evidence Ledger."
         )
 
 st.set_page_config(
@@ -119,10 +115,8 @@ SECTOR_MAP: Dict[str, List[str]] = {
 MIN_TRADES_FOR_VALID_MODEL = 10
 TRADES_FALLBACK_THRESHOLD = 35
 
-
 def ensure_dirs() -> None:
     os.makedirs(MODEL_DIR, exist_ok=True)
-
 
 def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
     ensure_dirs()
@@ -143,7 +137,6 @@ def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
         pass
     return loaded
 
-
 def render_explain_score(df: pd.DataFrame, phase: str, cis: float, context: str = "") -> None:
     expander_label = f"🧑‍🏫 ניתוח Wyckoff אנושי (ציון {cis:.1f})"
     with st.expander(expander_label, expanded=True):
@@ -152,7 +145,6 @@ def render_explain_score(df: pd.DataFrame, phase: str, cis: float, context: str 
             st.markdown(explanation_md)
         except Exception as exc:
             st.warning(f"לא ניתן לחשב הסבר: {exc}")
-
 
 def inject_css() -> None:
     st.markdown("""
@@ -175,11 +167,9 @@ def inject_css() -> None:
     </style>
     """, unsafe_allow_html=True)
 
-
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def get_cached_data(ticker: str, period: str = "1y", start: Optional[str] = None, end: Optional[str] = None):
     return get_data(ticker, period, start, end) if SCOUT_CORE_AVAILABLE else None
-
 
 def _compute_wyckoff(ticker: str):
     df = get_cached_data(ticker)
@@ -202,7 +192,6 @@ def _compute_wyckoff(ticker: str):
         "num_bars": len(df)
     }
 
-
 def _run_scan_row(engine, ticker: str, scan_th: float):
     df = get_cached_data(ticker, period="6mo")
     if df is None or len(df) <= 30:
@@ -215,7 +204,6 @@ def _run_scan_row(engine, ticker: str, scan_th: float):
         return None
     return {"Ticker": ticker, "Score": round(score, 1), "Phase": str(phase.iloc[-1]), "_df": df}
 
-
 def init_session_state() -> None:
     if "model_archive" not in st.session_state:
         st.session_state.model_archive = load_all_models_from_disk()
@@ -224,10 +212,8 @@ def init_session_state() -> None:
     if "ml_model" not in st.session_state:
         st.session_state.ml_model = None
 
-    # ML Trainer specific state - Pre-loaded with high-conviction assets
     if "selected_tickers" not in st.session_state:
         st.session_state.selected_tickers = ["BN", "DELL", "PANW", "GLD", "SLV", "NVDA", "BTC-USD"]
-
 
 # ============================================================
 # Screens
@@ -247,7 +233,7 @@ def screen_wyckoff() -> None:
         with left:
             m1, m2 = st.columns(2)
             m1.metric("Ticker", ticker)
-            m2.metric("Phase", result["current_phase"])
+            m2.metric("Phase (Decision Gate)", result["current_phase"])
             render_explain_score(result["df"], result["current_phase"], result["current_cis"])
         with right:
             st.markdown("### מפת שוק (Price & Volume)")
@@ -261,7 +247,6 @@ def screen_wyckoff() -> None:
                 margin=dict(l=0, r=0, t=10, b=0)
             )
             st.plotly_chart(fig, use_container_width=True)
-
 
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
@@ -285,7 +270,6 @@ def screen_backtest() -> None:
         if audit_df is not None and not audit_df.empty:
             st.dataframe(audit_df)
 
-
 def screen_scanner() -> None:
     st.markdown("### 🔎 Market Scanner")
     sector_name = st.selectbox("בחר סקטור לסריקה", list(SECTOR_MAP.keys()))
@@ -307,7 +291,6 @@ def screen_scanner() -> None:
             render_explain_score(top["_df"], top["Phase"], top["Score"])
         else:
             st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
-
 
 def screen_monitor() -> None:
     st.markdown("### 👁️ הורדת מודלים (Cloud Monitor)")
@@ -339,17 +322,14 @@ def screen_monitor() -> None:
     else:
         st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
-
 def screen_ml_trainer() -> None:
     st.markdown("### 🧠 Wyckoff Pattern AI Trainer (Institutional Grade)")
     st.caption("אימון מודל Random Forest עם ניהול תהליכי רקע אסינכרוני. מותאם לסביבת הייצור ב-Google Cloud Run.")
 
-    # ─────────────────── 1. Real‑time status ───────────────────
     status = "Waiting"
     progress_text = ""
     is_running = False
 
-    # קרא קובץ סטטוס JSON – תומך ב-"state" וגם ב-"status"
     if os.path.exists(AUTO_TRAINER_STATUS_FILE):
         try:
             with open(AUTO_TRAINER_STATUS_FILE, "r", encoding="utf-8") as f:
@@ -362,7 +342,6 @@ def screen_ml_trainer() -> None:
         except Exception as e:
             logger.warning("Failed to read status file: %s", e)
 
-    # Fallback: PID קיים ו־DONE לא קיים – מניחים שרץ
     if not is_running and os.path.exists(AUTO_TRAINER_PID_FILE):
         is_running = True
         status = "Running"
@@ -374,7 +353,6 @@ def screen_ml_trainer() -> None:
     elif os.path.exists(AUTO_TRAINER_STATUS_FILE) and status.lower() == "error":
         is_running = False
 
-    # באנר סטטוס
     if is_running:
         st.info(f"🟢 **סטטוס מערכת:** רץ כרגע ברקע | {progress_text}")
     elif status.lower() == "completed":
@@ -384,7 +362,6 @@ def screen_ml_trainer() -> None:
     else:
         st.warning("⏳ **סטטוס מערכת:** בהמתנה להוראות ביצוע (Standby).")
 
-    # ─────────────────── 2. Asset selection ───────────────────
     EXTENDED_SECTORS = {
         "טכנולוגיה ומומנטום מוסדי (Tech & High Conviction)": [
             "NVDA", "DELL", "PANW", "MSFT", "AAPL", "AMD", "CRWD", "AVGO",
@@ -406,7 +383,6 @@ def screen_ml_trainer() -> None:
 
     all_possible_tickers = [t for group in EXTENDED_SECTORS.values() for t in group]
 
-    # סנכרון checkboxes עם selected_tickers הקיים
     for t in all_possible_tickers:
         chk_key = f"chk_{t}"
         if chk_key not in st.session_state:
@@ -430,14 +406,12 @@ def screen_ml_trainer() -> None:
                 for i, t in enumerate(tickers):
                     cols[i % 5].checkbox(t, key=f"chk_{t}")
 
-        # עדכון selected_tickers **לפני** הצגת המספר
         st.session_state.selected_tickers = [
             t for t in all_possible_tickers
             if st.session_state.get(f"chk_{t}", False)
         ]
         st.markdown(f"**סה״כ הוקצו לאימון:** {len(st.session_state.selected_tickers)} נכסים")
 
-        # ──────── כפתור הפעלת אימון ────────
         if st.button("🚀 הפעל אימון נתונים (Execute Script)", type="primary", use_container_width=True):
             if not st.session_state.selected_tickers:
                 st.error("פעולה נדחתה. יש לבחור לפחות מניה אחת לאימון.")
@@ -452,7 +426,6 @@ def screen_ml_trainer() -> None:
                 st.error(f"שגיאה בכתיבת קובץ קונפיגורציה: {e}")
                 return
 
-            # ניקוי קבצי סטטוס ישנים
             files_to_clean = [
                 AUTO_TRAINER_DONE_FLAG,
                 AUTO_TRAINER_STATUS_FILE,
@@ -476,7 +449,6 @@ def screen_ml_trainer() -> None:
                 return
 
             try:
-                # הניתוב החשוב ביותר: מזרים את הפלט ישירות לקובץ הלוג
                 log_fd = open(AUTO_TRAINER_LOG_FILE, "a", encoding="utf-8")
                 subprocess.Popen(
                     [sys.executable, trainer_path],
@@ -486,7 +458,7 @@ def screen_ml_trainer() -> None:
                     close_fds=True,
                     start_new_session=True
                 )
-                log_fd.close() # משחרר את הנעילה של הורה התהליך, תהליך הבן ממשיך לכתוב אליו חופשי
+                log_fd.close() 
                 
                 st.success("הפקודה נשלחה בהצלחה לשרת! מתחיל במעקב ביצועים...")
                 time.sleep(1.5)
@@ -494,12 +466,10 @@ def screen_ml_trainer() -> None:
             except Exception as e:
                 st.error(f"קריסת מערכת בהפעלת התהליך המוסדי: {e}")
 
-    # ──────── כפתור רענון סטטוס אימון ────────
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🔄 רענן סטטוס אימון (Refresh Status)", use_container_width=True):
         st.rerun()
 
-    # ─────────────────── 3. Live Log Viewer ───────────────────
     st.markdown("---")
     st.markdown("#### 📜 לוגים מהשרת (Live Terminal Output)")
 
@@ -520,7 +490,6 @@ def screen_ml_trainer() -> None:
         label_visibility="collapsed"
     )
 
-    # ──────── כפתור ריבוט מערכת ────────
     if st.button("♻️ ריבוט מערכת (נקה נתונים והפעל מחדש)", type="secondary", use_container_width=True):
         files_to_clean = [
             AUTO_TRAINER_DONE_FLAG,
@@ -537,11 +506,9 @@ def screen_ml_trainer() -> None:
         st.session_state.clear()
         st.rerun()
 
-    # רענון אוטומטי **רק** כשהאימון רץ
     if is_running:
         time.sleep(3.5)
         st.rerun()
-
 
 def main() -> None:
     init_session_state()
@@ -558,7 +525,6 @@ def main() -> None:
     for tab, fn in zip(tabs, screen_fns):
         with tab:
             fn()
-
 
 if __name__ == "__main__":
     main()
