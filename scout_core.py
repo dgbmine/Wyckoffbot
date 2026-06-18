@@ -65,6 +65,7 @@ def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) 
     losing_trades = total_trades - winning_trades
     total_profit = sum(t.get('profit', 0) for t in trades)
     
+    # חישוב אחוזי הצלחה נכון (לוקח את כל מי שנכנס לפי וואיקוף)
     wyckoff_trades = [t for t in trades if t.get('wyckoff_confirmed', False)]
     wyckoff_wins = sum(1 for t in wyckoff_trades if t.get('is_win', t.get('profit', 0) > 0))
     wyckoff_success_rate = (wyckoff_wins / len(wyckoff_trades) * 100) if wyckoff_trades else 0.0
@@ -209,7 +210,6 @@ class FactorEngine:
         obv_cum = obv_raw.cumsum()
         f["f07_obv_velocity"] = (obv_cum.diff(10) / obv_cum.abs().rolling(10).mean().replace(0, np.nan)).clip(-3, 3)
         
-        # Variance Fixes applied here
         rolling_low_10 = df["Low"].shift(1).rolling(10).min()
         f["f20_liquidity_sweep"] = ((df["Low"] < rolling_low_10) & (df["Close"] > rolling_low_10)).astype(float)
         
@@ -303,8 +303,9 @@ class FactorEngine:
             
             prev_phase = phases.iloc[i-1]
 
-            if c > s20 and s20 > s50 and s50 > s200 and c >= h60 * 0.95:
-                if o_diff > 0 and rs > 0:
+            # הגמשת תנאי ה-Markup כדי לאפשר למניות צמיחה כמו אנבידיה "לנשום" ולא להיזרק על תיקון קל
+            if c > s50 and s50 > s200 and c >= h60 * 0.85:
+                if o_diff > 0 and rs > -0.02:
                     phases.iloc[i] = "Phase E (Markup)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
@@ -411,14 +412,15 @@ def run_wyckoff_anchored_backtest(
     peak_price = 0
     cis_at_entry = 0
     stop_loss_level = 0
-    position_size = 10000.0  # Normalized $ amount for metrics 
+    position_size = 10000.0  
 
     for i in range(len(df)):
         current_phase = df['wyckoff_phase'].iloc[i]
         current_cis = df['cis_score'].iloc[i]
         
         phase_allowed = check_phase_entry_allowed(current_phase, risk_profile)
-        score_allowed = (current_cis >= threshold) and (df['rs_spy_factor'].iloc[i] > 0)
+        # הוספנו מרווח נשימה לתנאי ה-RS (מעל מינוס 2%)
+        score_allowed = (current_cis >= threshold) and (df['rs_spy_factor'].iloc[i] > -0.02)
 
         if not in_position:
             if phase_allowed and score_allowed:
@@ -460,7 +462,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
-                    "wyckoff_confirmed": phase_allowed,
+                    "wyckoff_confirmed": True, # תוקן: מאחר ונכנסנו לעסקה, היה אישור בוודאות.
                     "exit_type": "Stop_Loss",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
@@ -468,7 +470,8 @@ def run_wyckoff_anchored_backtest(
                 in_position = False
                 continue
 
-            if "Markdown" in current_phase or "Distribution" in current_phase or "TRANSITION" in current_phase or current_cis < threshold - 15:
+            # תוקן: הסרנו את "TRANSITION" כתנאי ליציאה מהירה! כעת המערכת נותנת לרווחים לרוץ.
+            if "Markdown" in current_phase or "Distribution" in current_phase or current_cis < threshold - 20:
                 positions.append(0)
                 exit_px = df['Close'].iloc[i]
                 ret = (exit_px - entry_price) / entry_price
@@ -487,7 +490,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
-                    "wyckoff_confirmed": phase_allowed,
+                    "wyckoff_confirmed": True, # תוקן: מאחר ונכנסנו לעסקה, היה אישור בוודאות.
                     "exit_type": "Phase_Change",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
