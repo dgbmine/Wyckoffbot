@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.3
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.4
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -67,7 +67,7 @@ try:
         run_wyckoff_anchored_backtest,
         explain_score,
         calculate_advanced_metrics,
-        calculate_phase_follow_through
+        calculate_phase_followthrough
     )
     SCOUT_CORE_AVAILABLE = True
 except ImportError as _imp_exc:
@@ -83,7 +83,7 @@ except ImportError as _imp_exc:
     def calculate_advanced_metrics(trades, initial_capital=100000.0):
         return {}
     
-    def calculate_phase_follow_through(df, horizon=30, threshold_pct=0.04):
+    def calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04):
         return {}
 
 st.set_page_config(
@@ -358,21 +358,22 @@ def screen_monitor() -> None:
     
     if col_b.button("📈 חלץ מטריקות מתקדמות", use_container_width=True):
         with st.spinner(f"מחשב מדדים היסטוריים ל-{test_ticker}..."):
-            from scout_core import run_wyckoff_anchored_backtest, calculate_advanced_metrics, calculate_phase_follow_through
+            from scout_core import run_wyckoff_anchored_backtest, calculate_advanced_metrics, calculate_phase_followthrough
             df, audit_df = run_wyckoff_anchored_backtest(test_ticker, use_ai=st.session_state.use_ml, threshold=65, period=monitor_period)
             if audit_df is not None and not audit_df.empty:
                 trades = audit_df.to_dict('records')
                 metrics = calculate_advanced_metrics(trades)
                 render_monitor_metrics(metrics)
                 
+                # תיקון 3: תצוגה מפורשת וברורה של מדד הדיוק הטהור
                 st.markdown("---")
-                st.markdown("#### 🎯 דיוק זיהוי Wyckoff טהור (Phase Follow-Through)")
-                st.caption("מודד האם זיהוי השלב הוביל לתנועת מחיר מצופה (יעד מעל 4% ב-30 ימים), במנותק מרווח כספי או פגיעה ב-Stop-Loss.")
+                st.markdown("#### 🎯 דיוק זיהוי Wyckoff (ללא תלות ברווח)")
+                st.caption("מדד Phase Follow-Through: בוחן האם זיהוי השלב הוביל לתנועת מחיר מצופה (יעד של 4% תוך 20 ימי מסחר), במנותק מניהול עסקאות כלכלי או Stop-Loss.")
                 
-                follow_through_stats = calculate_phase_follow_through(df, horizon=30, threshold_pct=0.04)
+                follow_through_stats = calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04)
                 if follow_through_stats:
                     ft_df = pd.DataFrame([
-                        {"שלב שזוהה": k, "סה״כ זיהויים": v["total"], "זיהויים מוצלחים": v["success"], "אחוז דיוק פולו-ת'רו": f"{v['rate']:.1f}%"}
+                        {"סוג פאזה": k, "סה״כ זיהויים": v["total"], "זיהויים מוצלחים": v["success"], "אחוז דיוק": f"{v['rate']:.1f}%"}
                         for k, v in follow_through_stats.items()
                     ])
                     st.dataframe(ft_df, use_container_width=True, hide_index=True)
@@ -405,6 +406,7 @@ def screen_monitor() -> None:
             cm = meta.get("cm", {})
             exc_feat = meta.get("excluded_features", {})
             is_small = meta.get("small_sample_warning", False)
+            ft_meta = meta.get("phase_followthrough", {})
             
             oob_str = f" | OOB: {oob:.0%}" if oob is not None else ""
             
@@ -438,6 +440,10 @@ def screen_monitor() -> None:
                             st.markdown("**Excluded Features:**")
                             for ef_name, ef_rsn in exc_feat.items():
                                 st.markdown(f"- `{ef_name}`: {ef_rsn}")
+                        if ft_meta:
+                            st.markdown("**Phase Follow-Through:**")
+                            for p_name, p_stats in ft_meta.items():
+                                st.markdown(f"- `{p_name}`: {p_stats['success']}/{p_stats['total']} ({p_stats['rate']:.1f}%)")
     else:
         st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
