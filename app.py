@@ -365,7 +365,7 @@ def screen_monitor() -> None:
                 metrics = calculate_advanced_metrics(trades)
                 render_monitor_metrics(metrics)
                 
-                # תיקון 3: תצוגה מפורשת וברורה של מדד הדיוק הטהור
+                # תצוגה מפורשת וברורה של מדד הדיוק הטהור
                 st.markdown("---")
                 st.markdown("#### 🎯 דיוק זיהוי Wyckoff (ללא תלות ברווח)")
                 st.caption("מדד Phase Follow-Through: בוחן האם זיהוי השלב הוביל לתנועת מחיר מצופה (יעד של 4% תוך 20 ימי מסחר), במנותק מניהול עסקאות כלכלי או Stop-Loss.")
