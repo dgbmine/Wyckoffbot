@@ -1,18 +1,6 @@
 # ============================================================
 # auto_trainer_fixed.py – ADVANCED WYCKOFF ML TRAINER
 # ============================================================
-# מתחבר לפונקציות של scout_core.py, מריץ בדיקות רטרואקטיביות
-# מבוססות Wyckoff עמוק ומאמן מודל ML לזיהוי כניסת כספים.
-#
-# גרסה מתקדמת ל-Google Cloud Run:
-# - כותב לוגים, סטטוסים ומודלים ל- /tmp/scout (ניתן לכתיבה).
-# - קורא דינמית את batch_config.json כדי להתאמן רק על נכסים נבחרים.
-# - Universe רחב כברירת מחדל של ~300 מניות אמריקאיות.
-# - תקופת אימון 6y.
-# - עדכוני progress מדויקים ל-UI.
-# - ניהול זיכרון קפדני.
-# ============================================================
-
 import gc
 import json
 import os
@@ -380,7 +368,7 @@ def process_sector(slot, tickers, base_threshold=50):
                 use_ai=False,
                 threshold=base_threshold,
                 period=TRAINING_PERIOD,
-                atr_multiplier=2.5, # Overfitting Constraint
+                atr_multiplier=2.5,
             )
 
             if df is None or getattr(df, "empty", True):
@@ -475,16 +463,27 @@ def process_sector(slot, tickers, base_threshold=50):
         log_message(msg)
         excluded_dict[col] = "Zero/near-zero variance (nunique <= 1)"
 
+    # --- FIX B: Explicit Pre-Train Variance Checking ---
+    for col in X.columns:
+        try:
+            unique_vals = X[col].nunique()
+            if unique_vals < 2:
+                val_std = X[col].std() if pd.api.types.is_numeric_dtype(X[col]) else 0.0
+                log_message(f"WARNING: feature '{col}' has near-zero variance (std={val_std:.4f}, unique={unique_vals}) — likely uninformative.")
+        except Exception:
+            pass
+
     if y.nunique(dropna=True) < 2:
         log_message(f"{slot}: not enough class variety to train (labels={y.nunique(dropna=True)}).")
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
 
+    # --- FIX A: OOB Score evaluation activated ---
     model = RandomForestClassifier(
         n_estimators=100,
-        max_depth=3, # Overfitting Constraint
+        max_depth=4, 
         min_samples_split=20,
-        min_samples_leaf=15, # Overfitting Constraint
+        min_samples_leaf=10, 
         random_state=42,
         class_weight="balanced",
         n_jobs=-1,
@@ -522,6 +521,7 @@ def process_sector(slot, tickers, base_threshold=50):
         log_exception(f"Threshold calculation failed for {slot}", e)
         opt_th = 0.5
         
+    # --- FIX D: Log Top 4 Features ---
     try:
         importances = model.feature_importances_
         feature_names = model.feature_names_in_
