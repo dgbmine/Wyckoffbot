@@ -453,29 +453,48 @@ def process_sector(slot, tickers, base_threshold=50):
 
     data, X, y, excluded_cols = _prepare_training_frame(all_features)
     if data is None or X is None or y is None or X.empty:
-        log_message(f"{slot}: prepared dataset is empty after cleanup.")
+        log_message(f"[{slot}] prepared dataset is empty after cleanup.")
         _update_progress(slot, extra="dataset ריק אחרי ניקוי")
         return
 
     excluded_dict = {}
     for col in excluded_cols:
         msg = f"WARNING: feature '{col}' has near-zero variance (unique <= 1). Likely uninformative. Removing from training."
-        log_message(msg)
-        excluded_dict[col] = "Zero/near-zero variance (nunique <= 1)"
+        log_message(f"[{slot}] {msg}")
+        excluded_dict[col] = f"Removed in sector '{slot}': Zero/near-zero variance (nunique <= 1)"
 
     for col in X.columns:
         try:
             unique_vals = X[col].nunique()
             if unique_vals < 2:
                 val_std = X[col].std() if pd.api.types.is_numeric_dtype(X[col]) else 0.0
-                log_message(f"WARNING: feature '{col}' has near-zero variance (std={val_std:.4f}, unique={unique_vals}) — likely uninformative.")
+                log_message(f"[{slot}] WARNING: feature '{col}' has near-zero variance (std={val_std:.4f}, unique={unique_vals}) — likely uninformative.")
         except Exception:
             pass
 
     if y.nunique(dropna=True) < 2:
-        log_message(f"{slot}: not enough class variety to train (labels={y.nunique(dropna=True)}).")
+        log_message(f"[{slot}] not enough class variety to train (labels={y.nunique(dropna=True)}).")
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
+
+    # תיקון 3 - בדיקת קורלציה דיאגנוסטית ל-f36_wyckoff_score אם הוא בפיצ'רים
+    try:
+        if "f36_wyckoff_score" in X.columns and X.shape[1] > 1:
+            corr_matrix = X.corr(method="pearson")
+            if "f36_wyckoff_score" in corr_matrix.columns:
+                f36_corrs = corr_matrix["f36_wyckoff_score"].drop("f36_wyckoff_score", errors="ignore").fillna(0)
+                top_3_corrs = f36_corrs.abs().sort_values(ascending=False).head(3)
+                corr_log_str = ", ".join([f"{idx} ({f36_corrs[idx]:.2f})" for idx in top_3_corrs.index])
+                log_message(f"[{slot}] Top 3 features correlated with f36_wyckoff_score: {corr_log_str}")
+    except Exception as e:
+        log_exception(f"[{slot}] Failed to calculate f36_wyckoff_score correlation", e)
+
+    # תיקון 5 - אזהרת מדגם קטן
+    sample_size = len(data)
+    small_sample_warning = False
+    if sample_size < 150:
+        small_sample_warning = True
+        log_message(f"[{slot}] WARNING: Sample size is small ({sample_size} trades) — OOB/test accuracy estimates may carry high variance and should be interpreted with caution.")
 
     model = RandomForestClassifier(
         n_estimators=100,
@@ -506,10 +525,13 @@ def process_sector(slot, tickers, base_threshold=50):
     except Exception:
         oob_acc = float("nan")
 
+    # תיקון 2 - שמירת Confusion Matrix
+    cm_dict = {}
     try:
         preds = model.predict(X)
         cm = confusion_matrix(y, preds)
         log_message(f"Confusion Matrix for {slot}: TN={cm[0][0]}, FP={cm[0][1]}, FN={cm[1][0]}, TP={cm[1][1]}")
+        cm_dict = {"tn": int(cm[0][0]), "fp": int(cm[0][1]), "fn": int(cm[1][0]), "tp": int(cm[1][1])}
     except Exception:
         pass
 
@@ -519,11 +541,13 @@ def process_sector(slot, tickers, base_threshold=50):
         log_exception(f"Threshold calculation failed for {slot}", e)
         opt_th = 0.5
         
+    top_4_features_names = []
     try:
         importances = model.feature_importances_
         feature_names = model.feature_names_in_
         sorted_idx = np.argsort(importances)[::-1]
         top_4_idx = sorted_idx[:4]
+        top_4_features_names = [feature_names[i] for i in top_4_idx]
         top_features_str = ", ".join([f"{feature_names[i]} ({importances[i]:.1%})" for i in top_4_idx])
         log_message(f"Top 4 Features for {slot}: {top_features_str}")
     except Exception as e:
@@ -532,13 +556,25 @@ def process_sector(slot, tickers, base_threshold=50):
     safe_slot = clean_filename(slot)
     model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
 
+    # תיקון 4 - בדיקת יציבות פיצ'רים עם ריצה קודמת
+    try:
+        if os.path.exists(model_path):
+            with open(model_path, "rb") as f_old:
+                old_payload = pickle.load(f_old)
+            old_top = old_payload.get("metadata", {}).get("top_features", [])
+            if old_top and top_4_features_names:
+                overlap = set(old_top).intersection(set(top_4_features_names))
+                log_message(f"[{slot}] Feature stability: {len(overlap)}/4 top features unchanged from previous run.")
+    except Exception:
+        pass
+
     payload = {
         "model": model,
         "metadata": {
             "slot": slot,
             "train_acc": train_acc,
             "oob_acc": oob_acc,
-            "num_trades": int(len(data)),
+            "num_trades": int(sample_size),
             "num_features": int(X.shape[1]),
             "excluded_features": excluded_dict,
             "recommended_threshold": float(opt_th),
@@ -549,6 +585,9 @@ def process_sector(slot, tickers, base_threshold=50):
             "sector_failed": int(sector_failed),
             "sector_skipped": int(sector_skipped),
             "timestamp": datetime.now().isoformat(),
+            "cm": cm_dict,
+            "small_sample_warning": small_sample_warning,
+            "top_features": top_4_features_names
         },
     }
 
