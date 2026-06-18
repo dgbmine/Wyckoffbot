@@ -66,6 +66,7 @@ try:
         FactorEngine,
         run_wyckoff_anchored_backtest,
         explain_score,
+        calculate_advanced_metrics
     )
     SCOUT_CORE_AVAILABLE = True
 except ImportError as _imp_exc:
@@ -77,6 +78,9 @@ except ImportError as _imp_exc:
             f"ציון CIS: {cis:.1f}\nשלב Wyckoff: {phase}\n\n"
             "המערכת מזהה התנהגות שוק אך הרכיב הלוגי חסר. טען את scout_core.py המלא לקבלת Evidence Ledger."
         )
+        
+    def calculate_advanced_metrics(trades, initial_capital=100000.0):
+        return {}
 
 st.set_page_config(
     layout="wide",
@@ -146,6 +150,35 @@ def render_explain_score(df: pd.DataFrame, phase: str, cis: float, context: str 
         except Exception as exc:
             st.warning(f"לא ניתן לחשב הסבר: {exc}")
 
+def render_monitor_metrics(metrics: dict):
+    st.markdown("### 📊 ביצועי מערכת מתקדמים (Advanced System Metrics)")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("רווח נקי (Total Profit)", f"${metrics['total_profit']:,.2f}")
+    with col2:
+        st.metric("דרואו דאון מקסימלי (Max DD)", f"{metrics['max_drawdown']:.2f}%")
+    with col3:
+        st.metric("סה\"כ עסקאות (Total Trades)", metrics['total_trades'])
+        st.caption(f"✅ {metrics['winning_trades']} מרוויחות | ❌ {metrics['losing_trades']} מפסידות")
+    with col4:
+        st.metric("אישורי וואיקוף - אחוזי הצלחה", f"{metrics['wyckoff_success_rate']:.1f}%")
+    
+    if metrics.get('annual_pnl'):
+        st.markdown("#### 📅 דוח רווח/הפסד שנתי")
+        annual_df = pd.DataFrame([
+            {"שנה": str(year), "רווח/הפסד ($)": pnl}
+            for year, pnl in metrics['annual_pnl'].items()
+        ]).sort_values("שנה")
+        
+        def color_pnl(val):
+            color = '#16a34a' if val > 0 else '#dc2626'
+            return f'color: {color}'
+            
+        st.dataframe(annual_df.style.map(color_pnl, subset=['רווח/הפסד ($)']), use_container_width=True, hide_index=True)
+    else:
+        st.info("אין נתוני מסחר שנתיים להצגה.")
+
 def inject_css() -> None:
     st.markdown("""
     <style>
@@ -211,7 +244,6 @@ def init_session_state() -> None:
         st.session_state.use_ml = False
     if "ml_model" not in st.session_state:
         st.session_state.ml_model = None
-
     if "selected_tickers" not in st.session_state:
         st.session_state.selected_tickers = ["BN", "DELL", "PANW", "GLD", "SLV", "NVDA", "BTC-USD"]
 
@@ -293,7 +325,24 @@ def screen_scanner() -> None:
             st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
 
 def screen_monitor() -> None:
-    st.markdown("### 👁️ הורדת מודלים (Cloud Monitor)")
+    st.markdown("### 👁️ Institutional Performance Monitor")
+    
+    st.markdown("#### ניתוח עומק לנכס (Performance Analytics)")
+    col_t, col_b = st.columns([3, 1])
+    test_ticker = col_t.text_input("הזן סימול (Ticker) לחילוץ מטריקות ודרואו-דאון:", value="NVDA", key="monitor_ticker").strip().upper()
+    if col_b.button("📈 חלץ מטריקות מתקדמות", use_container_width=True):
+        with st.spinner(f"מחשב מדדים היסטוריים ל-{test_ticker}..."):
+            from scout_core import run_wyckoff_anchored_backtest, calculate_advanced_metrics
+            df, audit_df = run_wyckoff_anchored_backtest(test_ticker, use_ai=st.session_state.use_ml, threshold=65, period="2y")
+            if audit_df is not None and not audit_df.empty:
+                trades = audit_df.to_dict('records')
+                metrics = calculate_advanced_metrics(trades)
+                render_monitor_metrics(metrics)
+            else:
+                st.warning("לא נמצאו מספיק עסקאות להפקת מדדים באסטרטגיה הנוכחית עבור נכס זה.")
+                
+    st.markdown("---")
+    st.markdown("#### הורדת מודלים (Cloud Models Archive)")
     st.caption("כאן תוכל להוריד מודלים שאומנו על ידי מנוע ה-AI למחשב המקומי שלך.")
 
     if st.button("🔄 רענן מודלים מהדיסק"):
@@ -528,4 +577,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
