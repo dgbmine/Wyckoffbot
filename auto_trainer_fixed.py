@@ -463,7 +463,6 @@ def process_sector(slot, tickers, base_threshold=50):
         log_message(msg)
         excluded_dict[col] = "Zero/near-zero variance (nunique <= 1)"
 
-    # --- FIX B: Explicit Pre-Train Variance Checking ---
     for col in X.columns:
         try:
             unique_vals = X[col].nunique()
@@ -478,7 +477,6 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
 
-    # --- FIX A: OOB Score evaluation activated ---
     model = RandomForestClassifier(
         n_estimators=100,
         max_depth=4, 
@@ -521,7 +519,6 @@ def process_sector(slot, tickers, base_threshold=50):
         log_exception(f"Threshold calculation failed for {slot}", e)
         opt_th = 0.5
         
-    # --- FIX D: Log Top 4 Features ---
     try:
         importances = model.feature_importances_
         feature_names = model.feature_names_in_
