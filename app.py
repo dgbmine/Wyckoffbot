@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.2
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.3
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -66,7 +66,8 @@ try:
         FactorEngine,
         run_wyckoff_anchored_backtest,
         explain_score,
-        calculate_advanced_metrics
+        calculate_advanced_metrics,
+        calculate_phase_follow_through
     )
     SCOUT_CORE_AVAILABLE = True
 except ImportError as _imp_exc:
@@ -80,6 +81,9 @@ except ImportError as _imp_exc:
         )
         
     def calculate_advanced_metrics(trades, initial_capital=100000.0):
+        return {}
+    
+    def calculate_phase_follow_through(df, horizon=30, threshold_pct=0.04):
         return {}
 
 st.set_page_config(
@@ -151,7 +155,7 @@ def render_explain_score(df: pd.DataFrame, phase: str, cis: float, context: str 
             st.warning(f"לא ניתן לחשב הסבר: {exc}")
 
 def render_monitor_metrics(metrics: dict):
-    st.markdown("### 📊 ביצועי מערכת מתקדמים (Advanced System Metrics)")
+    st.markdown("### 📊 ביצועי מסחר (מערכת Backtest כספית)")
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -321,28 +325,6 @@ def screen_backtest() -> None:
         if audit_df is not None and not audit_df.empty:
             st.dataframe(audit_df)
 
-def screen_scanner() -> None:
-    st.markdown("### 🔎 Market Scanner")
-    sector_name = st.selectbox("בחר סקטור לסריקה", list(SECTOR_MAP.keys()))
-    scan_limit = st.slider("כמות מניות לסריקה", 5, 50, 10)
-    scan_th = st.slider("סף מינימלי לתוצאה", 40, 95, 60)
-
-    if st.button("🚀 התחל סריקה מוסדית", type="primary"):
-        results = []
-        engine = FactorEngine(BacktestConfig())
-        for ticker in SECTOR_MAP[sector_name][:scan_limit]:
-            row = _run_scan_row(engine, ticker, scan_th)
-            if row:
-                results.append(row)
-        if results:
-            top = sorted(results, key=lambda r: r["Score"], reverse=True)[0]
-            st.success(f"נמצאו {len(results)} מניות")
-            st.dataframe(pd.DataFrame([{k: v for k, v in r.items() if k != "_df"} for r in results]))
-            st.markdown(f"#### המובילה: {top['Ticker']}")
-            render_explain_score(top["_df"], top["Phase"], top["Score"])
-        else:
-            st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
-
 def screen_monitor() -> None:
     st.markdown("### 👁️ Institutional Performance Monitor")
     
@@ -354,12 +336,27 @@ def screen_monitor() -> None:
     
     if col_b.button("📈 חלץ מטריקות מתקדמות", use_container_width=True):
         with st.spinner(f"מחשב מדדים היסטוריים ל-{test_ticker}..."):
-            from scout_core import run_wyckoff_anchored_backtest, calculate_advanced_metrics
+            from scout_core import run_wyckoff_anchored_backtest, calculate_advanced_metrics, calculate_phase_follow_through
             df, audit_df = run_wyckoff_anchored_backtest(test_ticker, use_ai=st.session_state.use_ml, threshold=65, period=monitor_period)
             if audit_df is not None and not audit_df.empty:
                 trades = audit_df.to_dict('records')
                 metrics = calculate_advanced_metrics(trades)
                 render_monitor_metrics(metrics)
+                
+                # תיקון D: הוספת תצוגת דיוק זיהוי Wyckoff טהור בנפרד
+                st.markdown("---")
+                st.markdown("#### 🎯 דיוק זיהוי Wyckoff טהור (Phase Follow-Through)")
+                st.caption("מודד האם זיהוי השלב הוביל לתנועת מחיר מצופה (יעד מעל 4% ב-30 ימים), במנותק מרווח כספי או פגיעה ב-Stop-Loss.")
+                
+                follow_through_stats = calculate_phase_follow_through(df, horizon=30, threshold_pct=0.04)
+                if follow_through_stats:
+                    ft_df = pd.DataFrame([
+                        {"שלב שזוהה": k, "סה״כ זיהויים": v["total"], "זיהויים מוצלחים": v["success"], "אחוז דיוק פולו-ת'רו": f"{v['rate']:.1f}%"}
+                        for k, v in follow_through_stats.items()
+                    ])
+                    st.dataframe(ft_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("אין מספיק נתוני פאזות לחישוב מדד זה בטווח הזמן שנבחר.")
                 
                 with st.expander("📝 יומן עסקאות מלא (Audit Log)", expanded=False):
                     st.dataframe(audit_df, use_container_width=True)
