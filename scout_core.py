@@ -158,8 +158,7 @@ def calculate_phase_followthrough(df: pd.DataFrame, horizon: int = 20, threshold
         curr_phase = str(phases[i])
         prev_phase = str(phases[i-1]) if i > 0 else ""
         
-        # התיקון הקריטי: סינון לאיתותים אמיתיים (מעבר פאזה בלבד)
-        # זה מונע את הניפוח הסטטיסטי והאוטו-קורלציה שעליהם הצביע היועץ
+        # סינון לאיתותים אמיתיים (מעבר פאזה בלבד) למניעת אוטו-קורלציה
         if curr_phase == prev_phase:
             continue
             
@@ -177,7 +176,7 @@ def calculate_phase_followthrough(df: pd.DataFrame, horizon: int = 20, threshold
             success = ret >= threshold_pct
         else:
             min_price = np.min(future_closes)
-            ret = (closes[i] - min_price) / closes[i] # ערך חיובי אם המחיר ירד
+            ret = (closes[i] - min_price) / closes[i] 
             success = ret >= threshold_pct
             
         records.append({
@@ -269,7 +268,15 @@ class FactorEngine:
         close_diff = df["Close"].diff()
         midpoint = (df["High"] + df["Low"]) / 2
 
-        f["f04_absorption"] = (((df["Volume"] > vol_ma20 * 1.5) & (rng < spread_ma20 * 0.8)) & (df["Close"] <= df["Low"].rolling(20).min() * 1.05)).astype(float)
+        # --- תיקון: f04_absorption הפך למדד רציף במקום בינארי קיצוני ---
+        vol_ratio = (df["Volume"] / vol_ma20.replace(0, 1e-5)).clip(0, 5)
+        spread_ratio = (rng / spread_ma20.replace(0, 1e-5)).clip(0.1, 5)
+        recent_min = df["Low"].rolling(20).min()
+        recent_max = df["High"].rolling(20).max()
+        price_pos_inv = 1.0 - ((df["Close"] - recent_min) / (recent_max - recent_min + 1e-5)).clip(0, 1)
+        f["f04_absorption"] = (vol_ratio / spread_ratio) * price_pos_inv
+        # ---------------------------------------------------------------
+
         f["f36_wyckoff_score"] = self._compute_quick_wyckoff(df)
         
         obv_raw = np.sign(close_diff) * df["Volume"]
@@ -482,6 +489,7 @@ def run_wyckoff_anchored_backtest(
     entry_atr = 0
     entry_phase = ""
     entry_date = None
+    entry_index_int = 0
     peak_price = 0
     cis_at_entry = 0
     stop_loss_level = 0
@@ -501,6 +509,7 @@ def run_wyckoff_anchored_backtest(
                 entry_price = df['Close'].iloc[i]
                 entry_phase = current_phase
                 entry_date = df.index[i]
+                entry_index_int = i
                 peak_price = entry_price
                 cis_at_entry = current_cis
                 entry_atr = atr_series.iloc[i] if not pd.isna(atr_series.iloc[i]) else 0
@@ -524,6 +533,20 @@ def run_wyckoff_anchored_backtest(
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
+                # --- חישוב פולו-ת'רו עתידי עבור ה-ML Label ---
+                horizon = 20
+                phase_success = False
+                if entry_index_int + 1 < len(df):
+                    end_idx = min(entry_index_int + 1 + horizon, len(df))
+                    future_closes = df['Close'].iloc[entry_index_int + 1 : end_idx]
+                    is_bull = any(p in entry_phase for p in ["Phase C", "Spring", "Phase D", "Re-accumulation", "Phase E", "Markup", "SOS", "LPS"])
+                    is_bear = any(p in entry_phase for p in ["Markdown", "Distribution", "Heavy Supply"])
+                    if is_bull:
+                        phase_success = bool(((future_closes.max() - entry_price) / entry_price) >= 0.04)
+                    elif is_bear:
+                        phase_success = bool(((entry_price - future_closes.min()) / entry_price) >= 0.04)
+                # -----------------------------------------------
+
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
                     "exit_date": df.index[i].strftime("%Y-%m-%d"),
@@ -534,6 +557,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
+                    "phase_success": phase_success, # Label חדש לאימון מוסדי
                     "wyckoff_confirmed": True, 
                     "exit_type": "Stop_Loss",
                     "phase_at_exit": current_phase,
@@ -551,6 +575,20 @@ def run_wyckoff_anchored_backtest(
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
+                # --- חישוב פולו-ת'רו עתידי עבור ה-ML Label ---
+                horizon = 20
+                phase_success = False
+                if entry_index_int + 1 < len(df):
+                    end_idx = min(entry_index_int + 1 + horizon, len(df))
+                    future_closes = df['Close'].iloc[entry_index_int + 1 : end_idx]
+                    is_bull = any(p in entry_phase for p in ["Phase C", "Spring", "Phase D", "Re-accumulation", "Phase E", "Markup", "SOS", "LPS"])
+                    is_bear = any(p in entry_phase for p in ["Markdown", "Distribution", "Heavy Supply"])
+                    if is_bull:
+                        phase_success = bool(((future_closes.max() - entry_price) / entry_price) >= 0.04)
+                    elif is_bear:
+                        phase_success = bool(((entry_price - future_closes.min()) / entry_price) >= 0.04)
+                # -----------------------------------------------
+
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
                     "exit_date": df.index[i].strftime("%Y-%m-%d"),
@@ -561,6 +599,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
+                    "phase_success": phase_success, # Label חדש לאימון מוסדי
                     "wyckoff_confirmed": True, 
                     "exit_type": "Phase_Change",
                     "phase_at_exit": current_phase,
