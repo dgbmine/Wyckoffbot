@@ -361,7 +361,6 @@ def process_sector(slot, tickers, base_threshold=50):
     sector_failed = 0
     sector_skipped = 0
     
-    # תיקון 2: איסוף נתוני Phase Follow-Through ברמת הסקטור
     sector_ft_stats = {}
 
     for i, ticker in enumerate(tickers, start=1):
@@ -454,7 +453,6 @@ def process_sector(slot, tickers, base_threshold=50):
                 extra=f"checkpoint {i}/{len(tickers)} | הצלחות={sector_success} | שגיאות={sector_failed}",
             )
 
-    # השלמת חישובי אחוזי הפולו-ת'רו והדפסה ללוג
     for p_name in sector_ft_stats:
         tot = sector_ft_stats[p_name]["total"]
         suc = sector_ft_stats[p_name]["success"]
