@@ -477,7 +477,6 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra="אין מספיק גיוון בתוויות לאימון")
         return
 
-    # תיקון 3 - בדיקת קורלציה דיאגנוסטית ל-f36_wyckoff_score אם הוא בפיצ'רים
     try:
         if "f36_wyckoff_score" in X.columns and X.shape[1] > 1:
             corr_matrix = X.corr(method="pearson")
@@ -489,7 +488,6 @@ def process_sector(slot, tickers, base_threshold=50):
     except Exception as e:
         log_exception(f"[{slot}] Failed to calculate f36_wyckoff_score correlation", e)
 
-    # תיקון 5 - אזהרת מדגם קטן
     sample_size = len(data)
     small_sample_warning = False
     if sample_size < 150:
@@ -525,7 +523,6 @@ def process_sector(slot, tickers, base_threshold=50):
     except Exception:
         oob_acc = float("nan")
 
-    # תיקון 2 - שמירת Confusion Matrix
     cm_dict = {}
     try:
         preds = model.predict(X)
@@ -550,13 +547,17 @@ def process_sector(slot, tickers, base_threshold=50):
         top_4_features_names = [feature_names[i] for i in top_4_idx]
         top_features_str = ", ".join([f"{feature_names[i]} ({importances[i]:.1%})" for i in top_4_idx])
         log_message(f"Top 4 Features for {slot}: {top_features_str}")
+        
+        # תיקון E (השלמה דיאגנוסטית בטריינר): אזהרה אם הציון הקשיח לא מיוצג בטופ של ה-ML
+        if "f36_wyckoff_score" not in top_4_features_names:
+             log_message(f"[{slot}] DIAGNOSTIC WARNING: f36_wyckoff_score is NOT in Top 4 ML features, but receives a hardcoded 18x boost in composite_cis (scout_core.py). Consider revisiting this discrepancy.")
+             
     except Exception as e:
         log_exception("Failed to extract top features", e)
 
     safe_slot = clean_filename(slot)
     model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
 
-    # תיקון 4 - בדיקת יציבות פיצ'רים עם ריצה קודמת
     try:
         if os.path.exists(model_path):
             with open(model_path, "rb") as f_old:
