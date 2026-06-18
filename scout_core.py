@@ -4,6 +4,7 @@ import yfinance as yf
 from dataclasses import dataclass
 import warnings
 import streamlit as st
+from datetime import datetime
 
 warnings.filterwarnings("ignore")
 
@@ -46,6 +47,59 @@ def get_data(ticker, period="1y", start=None, end=None):
         return df
     except Exception:
         return None
+
+def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) -> dict:
+    if not trades:
+        return {
+            "max_drawdown": 0.0,
+            "total_profit": 0.0,
+            "total_trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "annual_pnl": {},
+            "wyckoff_success_rate": 0.0
+        }
+
+    total_trades = len(trades)
+    winning_trades = sum(1 for t in trades if t.get('is_win', t.get('profit', 0) > 0))
+    losing_trades = total_trades - winning_trades
+    total_profit = sum(t.get('profit', 0) for t in trades)
+    
+    wyckoff_trades = [t for t in trades if t.get('wyckoff_confirmed', False)]
+    wyckoff_wins = sum(1 for t in wyckoff_trades if t.get('is_win', t.get('profit', 0) > 0))
+    wyckoff_success_rate = (wyckoff_wins / len(wyckoff_trades) * 100) if wyckoff_trades else 0.0
+
+    equity = initial_capital
+    peak = equity
+    max_drawdown = 0.0
+    annual_profit = {}
+    
+    sorted_trades = sorted(trades, key=lambda x: pd.to_datetime(x.get('exit_date', x.get('entry_date'))))
+    
+    for t in sorted_trades:
+        profit = t.get('profit', 0)
+        equity += profit
+        if equity > peak:
+            peak = equity
+        drawdown = ((peak - equity) / peak * 100) if peak > 0 else 0.0
+        if drawdown > max_drawdown:
+            max_drawdown = drawdown
+            
+        exit_date = pd.to_datetime(t.get('exit_date'))
+        year = exit_date.year
+        if year not in annual_profit:
+            annual_profit[year] = 0.0
+        annual_profit[year] += profit
+
+    return {
+        "max_drawdown": max_drawdown,
+        "total_profit": total_profit,
+        "total_trades": total_trades,
+        "winning_trades": winning_trades,
+        "losing_trades": losing_trades,
+        "annual_pnl": annual_profit,
+        "wyckoff_success_rate": wyckoff_success_rate
+    }
 
 def calculate_optimal_threshold(model, X, y):
     try:
@@ -155,13 +209,18 @@ class FactorEngine:
         obv_cum = obv_raw.cumsum()
         f["f07_obv_velocity"] = (obv_cum.diff(10) / obv_cum.abs().rolling(10).mean().replace(0, np.nan)).clip(-3, 3)
         
-        f["f20_liquidity_sweep"] = ((df["Low"] < df["Low"].rolling(20).min().shift(1)) & (df["Close"] > df["Low"].rolling(20).min().shift(1)) & (df["Close"] > df["Open"])).astype(float)
+        # Variance Fixes applied here
+        rolling_low_10 = df["Low"].shift(1).rolling(10).min()
+        f["f20_liquidity_sweep"] = ((df["Low"] < rolling_low_10) & (df["Close"] > rolling_low_10)).astype(float)
+        
         f["f26_accept_reject"] = ((df["Close"] > midpoint) & (df["Volume"] > vol_ma20)).astype(float).rolling(5).mean() - ((df["Close"] < midpoint) & (df["Volume"] > vol_ma20)).astype(float).rolling(5).mean()
         f["f35_struct_break"] = (df["Close"] > df["High"].rolling(20).max().shift(1)).astype(float) - (df["Close"] < df["Low"].rolling(20).min().shift(1)).astype(float)
         f["f14_inst_intent"] = (f["f04_absorption"] * 0.3 + f["f07_obv_velocity"].clip(0, 1) * 0.3 + f["f20_liquidity_sweep"] * 0.4).clip(0, 1)
 
         f["f_effort_vs_result"] = ((df["Volume"] / vol_ma20) / ((rng / spread_ma20).replace(0, 1e-5))).clip(0, 5)
-        f["f_stopping_volume"] = ((close_diff < 0) & (df["Volume"] > vol_ma20 * 1.5) & (df["Close"] > df["Low"] + rng * 0.6)).astype(float)
+        
+        vol_std = df["Volume"].rolling(20).std().fillna(0)
+        f["f_stopping_volume"] = ((close_diff < 0) & (df["Volume"] > (vol_ma20 + vol_std)) & (df["Close"] > df["Low"] + rng * 0.5)).astype(float)
         
         sma50 = df["Close"].rolling(50).mean()
         f["f_reaccumulation"] = ((df["Close"] > sma50) & (close_diff < 0) & (df["Volume"] < vol_ma20 * 0.8)).astype(float).rolling(5).sum() / 5.0
@@ -227,7 +286,6 @@ class FactorEngine:
         else:
             rs_spy = pd.Series(0.0, index=df.index)
 
-        # STRICT LOGIC GATE: Price + Volume + Momentum constraints.
         for i in range(60, len(df)):
             c = close.iloc[i]
             v = vol.iloc[i]
@@ -245,31 +303,26 @@ class FactorEngine:
             
             prev_phase = phases.iloc[i-1]
 
-            # Phase E: Markup (Strong trend)
             if c > s20 and s20 > s50 and s50 > s200 and c >= h60 * 0.95:
                 if o_diff > 0 and rs > 0:
                     phases.iloc[i] = "Phase E (Markup)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            # Re-accumulation (Pause in Markup)
             elif "Markup" in prev_phase and c > s200 and c < h60 * 0.95 and v < v_ma:
                 if o_diff >= 0:
                     phases.iloc[i] = "Re-accumulation (LPS/BUEC)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            # Phase D: SOS (Sign of Strength) / Breakout from TR
             elif c > s50 and v > v_ma * 1.5 and c >= h60 * 0.90 and c > df['Open'].iloc[i]:
                 if o_diff > 0:
                     phases.iloc[i] = "Phase D (SOS / Breakout)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            # Phase C: Spring / Shakeout (Liquidity sweep below TR)
             elif df['Low'].iloc[i] < l60 + a and c > df['Open'].iloc[i] and c < s50:
                 if v > v_ma * 1.2:
                     phases.iloc[i] = "Phase C (Spring / Liquidity Sweep)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            # LPS (Last Point of Support in TR)
             elif "Spring" in prev_phase or "Accumulation" in prev_phase:
                 if c > l60 + a * 2 and c < s50 and v < v_ma * 0.8:
                     if o_diff >= 0:
@@ -280,10 +333,8 @@ class FactorEngine:
                     phases.iloc[i] = "Phase B (Accumulation)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            # Phase A: Selling Climax
             elif c < l60 * 1.05 and v > v_ma * 2.5 and df['Close'].iloc[i] > df['Low'].iloc[i] + (df['High'].iloc[i] - df['Low'].iloc[i]) * 0.5:
                 phases.iloc[i] = "Phase A (Selling Climax)"
-            # Markdown / Distribution
             elif c < s20 and s20 < s50 and c < s200:
                 if o_diff < 0:
                     phases.iloc[i] = "Markdown (Institutional Distribution)"
@@ -298,7 +349,6 @@ class FactorEngine:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
                 
         return phases
-
 
 def run_wyckoff_anchored_backtest(
     ticker,
@@ -328,7 +378,6 @@ def run_wyckoff_anchored_backtest(
     df['cis_score'] = engine.composite_cis(factors, df)
     df['Daily_Return'] = df['Close'].pct_change().fillna(0)
     
-    # Overfitting RS Filter enforcement
     df['rs_spy_factor'] = factors['f_rs_spy'] if 'f_rs_spy' in factors.columns else 0.0
 
     if use_ai and st is not None and getattr(st, "session_state", None) and getattr(st.session_state, "ml_model", None) is not None:
@@ -362,13 +411,13 @@ def run_wyckoff_anchored_backtest(
     peak_price = 0
     cis_at_entry = 0
     stop_loss_level = 0
+    position_size = 10000.0  # Normalized $ amount for metrics 
 
     for i in range(len(df)):
         current_phase = df['wyckoff_phase'].iloc[i]
         current_cis = df['cis_score'].iloc[i]
         
         phase_allowed = check_phase_entry_allowed(current_phase, risk_profile)
-        # RS Momentum filter: Only enter if RS > 0 (prevents taking trades against the market trend)
         score_allowed = (current_cis >= threshold) and (df['rs_spy_factor'].iloc[i] > 0)
 
         if not in_position:
@@ -396,8 +445,8 @@ def run_wyckoff_anchored_backtest(
                 positions.append(0)
                 exit_px = stop_loss_level
                 ret = (exit_px - entry_price) / entry_price
+                profit_dollars = position_size * ret
                 
-                # Strict Labeling: Trade is a WIN only if return exceeds 1.2x ATR or 2% min
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
@@ -408,7 +457,10 @@ def run_wyckoff_anchored_backtest(
                     "entry_price": round(entry_price, 2),
                     "exit_price": round(exit_px, 2),
                     "return_pct": round(ret * 100, 2),
+                    "profit": round(profit_dollars, 2),
                     "win": is_win,
+                    "is_win": is_win,
+                    "wyckoff_confirmed": phase_allowed,
                     "exit_type": "Stop_Loss",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
@@ -420,8 +472,8 @@ def run_wyckoff_anchored_backtest(
                 positions.append(0)
                 exit_px = df['Close'].iloc[i]
                 ret = (exit_px - entry_price) / entry_price
+                profit_dollars = position_size * ret
                 
-                # Strict Labeling: Trade is a WIN only if return exceeds 1.2x ATR or 2% min
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
@@ -432,7 +484,10 @@ def run_wyckoff_anchored_backtest(
                     "entry_price": round(entry_price, 2),
                     "exit_price": round(exit_px, 2),
                     "return_pct": round(ret * 100, 2),
+                    "profit": round(profit_dollars, 2),
                     "win": is_win,
+                    "is_win": is_win,
+                    "wyckoff_confirmed": phase_allowed,
                     "exit_type": "Phase_Change",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
@@ -454,13 +509,7 @@ def run_wyckoff_anchored_backtest(
 
     return df, pd.DataFrame(audit_logs)
 
-
 def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str:
-    """
-    STRICT INSTITUTIONAL EXPLANATION RULE:
-    No assumptions, no empty language. Must detail exactly what the 3 core pillars are doing.
-    Evidence Ledger format required.
-    """
     if df is None or df.empty:
         return "אין מספיק נתונים לאנליזה מוסדית. נדרשים נתונים היסטוריים נוספים."
 
@@ -490,7 +539,6 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
     neg_factors = []
     neutral_mixed = []
 
-    # 1. Price Structure Core
     if close > sma20 and sma20 > sma50 and sma50 > sma200:
         pos_factors.append("Price Structure: מבנה שוורי מלא (Close > 20 > 50 > 200)")
         trend_text = "תמיכה מלאה במגמת עלייה מוסדית."
@@ -501,7 +549,6 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
         neutral_mixed.append("Price Structure: ממוצעים מעורבים או דשדוש")
         trend_text = "דשדוש מבני ללא כיוון מובהק."
 
-    # 2. Volume & OBV Core
     if obv_diff > 0 and vol_ratio >= 1.2 and close > df['Open'].iloc[-1]:
         pos_factors.append(f"Volume/OBV: התרחבות חיובית וכניסת הון מתמשכת (Vol Ratio: {vol_ratio:.1f}x)")
         obv_text = "חיובית (הון נטו זורם פנימה בעשרת הימים האחרונים)."
@@ -512,7 +559,6 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
         neutral_mixed.append("Volume/OBV: זרימת הון שטוחה או נפח שאינו תומך באופן מובהק")
         obv_text = "ניטרלית או ללא אישור נפח חזק."
 
-    # 3. Momentum & Trend Strength Core
     if rs_spy > 0.02:
         pos_factors.append(f"Momentum: עוצמה יחסית חיובית משמעותית ({rs_spy:.2%} מול השוק)")
         mom_text = "מייצר אלפא מובהקת, המוסדיים רודפים אחרי הנכס."
@@ -523,7 +569,6 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
         neutral_mixed.append("Momentum: עוצמה יחסית שולית או שטוחה ביחס לשוק")
         mom_text = "מייצר תשואה דומה למדד הרחב ללא יתרון תחרותי."
 
-    # Supplementary Factors
     if effort_result > 1.8 and close > df['Open'].iloc[-1]:
         pos_factors.append("Liquidity/Absorption: מאמץ גבוה מול תוצאה נמוכה כלפי מטה (ספיגת היצע אקטיבית)")
     if spring_cond and vol_ratio > 1.2:
@@ -531,7 +576,6 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
     if vol_ratio < 0.7:
         neg_factors.append("Liquidity Behavior: יובש נזילות מוחלט, היעדר נוכחות של כסף חכם")
 
-    # Decision Gate Consistency Logic
     is_bullish = len(pos_factors) >= 3 and len(neg_factors) == 0
     is_bearish = len(neg_factors) >= 3 and len(pos_factors) == 0
 
