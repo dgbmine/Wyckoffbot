@@ -180,7 +180,6 @@ def render_monitor_metrics(metrics: dict):
         st.info("אין נתוני מסחר שנתיים להצגה.")
 
 def inject_css() -> None:
-    # תוקנה תצוגת הקוביות ב-CSS. הקוביות כעת יהיו בצבע שקוף/כהה עם פונטים בולטים בצבע תכלת ולבן שלא נבלעים ברקע!
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&display=swap');
@@ -351,7 +350,6 @@ def screen_monitor() -> None:
     col_t, col_p, col_b = st.columns([2, 1, 1])
     test_ticker = col_t.text_input("הזן סימול (Ticker) לחילוץ מטריקות ודרואו-דאון:", value="NVDA", key="monitor_ticker").strip().upper()
     
-    # הוספת הבחירה של 10 שנים לעסקאות
     monitor_period = col_p.selectbox("בחר תקופת היסטוריה לאנליזה:", ["2y", "5y", "10y", "max"], index=2)
     
     if col_b.button("📈 חלץ מטריקות מתקדמות", use_container_width=True):
@@ -381,20 +379,47 @@ def screen_monitor() -> None:
         for i, slot in enumerate(list(archive.keys())):
             safe_slot = clean_filename(str(slot))
             model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
-            num_trades = archive[slot].get("metadata", {}).get("num_trades", "?")
-            acc = archive[slot].get("metadata", {}).get("train_acc", 0.0)
-            oob = archive[slot].get("metadata", {}).get("oob_acc", None)
+            
+            meta = archive[slot].get("metadata", {})
+            num_trades = meta.get("num_trades", "?")
+            acc = meta.get("train_acc", 0.0)
+            oob = meta.get("oob_acc", None)
+            cm = meta.get("cm", {})
+            exc_feat = meta.get("excluded_features", {})
+            is_small = meta.get("small_sample_warning", False)
+            
             oob_str = f" | OOB: {oob:.0%}" if oob is not None else ""
+            
             if os.path.exists(model_path):
                 with open(model_path, "rb") as f:
                     data = f.read()
-                cols[i % 3].download_button(
-                    label=f"⬇️ הורד {slot} | Acc: {acc:.0%}{oob_str}",
-                    data=data,
-                    file_name=f"model_{safe_slot}.pkl",
-                    mime="application/octet-stream",
-                    use_container_width=True,
-                )
+                
+                with cols[i % 3]:
+                    st.download_button(
+                        label=f"⬇️ הורד {slot} | Acc: {acc:.0%}{oob_str}",
+                        data=data,
+                        file_name=f"model_{safe_slot}.pkl",
+                        mime="application/octet-stream",
+                        use_container_width=True,
+                    )
+                    
+                    if acc and oob is not None:
+                        gap = acc - oob
+                        if gap >= 0.10:
+                            st.caption("⚠️ חשש ל-Overfitting (פער Train/OOB מעל 10%)")
+                        if 0.45 <= oob <= 0.55:
+                            st.caption("⚠️ מודל לא מובהק סטטיסטית — קרוב לאקראיות (OOB סביב 50%)")
+                            
+                    if is_small:
+                        st.caption(f"⚠️ אזהרת מדגם קטן ({num_trades} עסקאות)")
+                        
+                    with st.expander("📌 דיאגנוסטיקה", expanded=False):
+                        if cm and "tn" in cm:
+                            st.markdown(f"**Confusion Matrix:**<br>TN={cm['tn']} | FP={cm['fp']}<br>FN={cm['fn']} | TP={cm['tp']}", unsafe_allow_html=True)
+                        if exc_feat:
+                            st.markdown("**Excluded Features:**")
+                            for ef_name, ef_rsn in exc_feat.items():
+                                st.markdown(f"- `{ef_name}`: {ef_rsn}")
     else:
         st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
