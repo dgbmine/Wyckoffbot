@@ -65,7 +65,6 @@ def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) 
     losing_trades = total_trades - winning_trades
     total_profit = sum(t.get('profit', 0) for t in trades)
     
-    # חישוב אחוזי הצלחה נכון (לוקח את כל מי שנכנס לפי וואיקוף)
     wyckoff_trades = [t for t in trades if t.get('wyckoff_confirmed', False)]
     wyckoff_wins = sum(1 for t in wyckoff_trades if t.get('is_win', t.get('profit', 0) > 0))
     wyckoff_success_rate = (wyckoff_wins / len(wyckoff_trades) * 100) if wyckoff_trades else 0.0
@@ -303,9 +302,8 @@ class FactorEngine:
             
             prev_phase = phases.iloc[i-1]
 
-            # הגמשת תנאי ה-Markup כדי לאפשר למניות צמיחה כמו אנבידיה "לנשום" ולא להיזרק על תיקון קל
-            if c > s50 and s50 > s200 and c >= h60 * 0.85:
-                if o_diff > 0 and rs > -0.02:
+            if c > s20 and s20 > s50 and s50 > s200 and c >= h60 * 0.95:
+                if o_diff > 0 and rs > 0:
                     phases.iloc[i] = "Phase E (Markup)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
@@ -419,7 +417,6 @@ def run_wyckoff_anchored_backtest(
         current_cis = df['cis_score'].iloc[i]
         
         phase_allowed = check_phase_entry_allowed(current_phase, risk_profile)
-        # הוספנו מרווח נשימה לתנאי ה-RS (מעל מינוס 2%)
         score_allowed = (current_cis >= threshold) and (df['rs_spy_factor'].iloc[i] > -0.02)
 
         if not in_position:
@@ -462,7 +459,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
-                    "wyckoff_confirmed": True, # תוקן: מאחר ונכנסנו לעסקה, היה אישור בוודאות.
+                    "wyckoff_confirmed": True, 
                     "exit_type": "Stop_Loss",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
@@ -470,7 +467,6 @@ def run_wyckoff_anchored_backtest(
                 in_position = False
                 continue
 
-            # תוקן: הסרנו את "TRANSITION" כתנאי ליציאה מהירה! כעת המערכת נותנת לרווחים לרוץ.
             if "Markdown" in current_phase or "Distribution" in current_phase or current_cis < threshold - 20:
                 positions.append(0)
                 exit_px = df['Close'].iloc[i]
@@ -490,7 +486,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
-                    "wyckoff_confirmed": True, # תוקן: מאחר ונכנסנו לעסקה, היה אישור בוודאות.
+                    "wyckoff_confirmed": True, 
                     "exit_type": "Phase_Change",
                     "phase_at_exit": current_phase,
                     "cis_at_entry": cis_at_entry,
