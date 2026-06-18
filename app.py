@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.1
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.2
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -180,6 +180,7 @@ def render_monitor_metrics(metrics: dict):
         st.info("אין נתוני מסחר שנתיים להצגה.")
 
 def inject_css() -> None:
+    # תוקנה תצוגת הקוביות ב-CSS. הקוביות כעת יהיו בצבע שקוף/כהה עם פונטים בולטים בצבע תכלת ולבן שלא נבלעים ברקע!
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&display=swap');
@@ -195,8 +196,25 @@ def inject_css() -> None:
     }
     .main-header h1 { margin: 0; font-size: 2.1rem; color: #eaf4ff; font-weight: 700; }
     .main-header p { color: #9db0c9; font-size: 1.05rem; }
-    .stMetric { background: rgba(10,18,33,0.88); border: 1px solid rgba(59,130,246,0.3);
-                border-radius: 16px; padding: 0.75rem 0.9rem; }
+    
+    /* CSS Fix for Metrics text visibility in dark background */
+    [data-testid="stMetric"] {
+        background: rgba(15, 23, 42, 0.95) !important;
+        border: 1px solid rgba(56, 189, 248, 0.3) !important;
+        border-radius: 12px;
+        padding: 1rem;
+    }
+    [data-testid="stMetricValue"] {
+        color: #38bdf8 !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #f1f5f9 !important;
+        font-weight: 500 !important;
+    }
+    [data-testid="stMetricDelta"] {
+        color: #34d399 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -282,13 +300,15 @@ def screen_wyckoff() -> None:
 
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
-    ticker = st.text_input("Ticker לבדיקה", value="COST").strip().upper()
+    col1, col2 = st.columns([1,1])
+    ticker = col1.text_input("Ticker לבדיקה", value="COST").strip().upper()
+    bt_period = col2.selectbox("תקופת Backtest:", ["1y", "2y", "5y", "10y", "max"], index=1)
     bt_threshold = st.slider("סף כניסה (CIS Threshold)", 40, 95, 65)
 
     if st.button("▶ הרץ סימולציה", type="primary"):
         with st.spinner("מריץ Backtest היסטורי..."):
             df, audit_df = run_wyckoff_anchored_backtest(
-                ticker, st.session_state.use_ml, bt_threshold, period="2y"
+                ticker, st.session_state.use_ml, bt_threshold, period=bt_period
             )
         if df is None or df.empty:
             st.error("אין נתונים.")
@@ -328,16 +348,23 @@ def screen_monitor() -> None:
     st.markdown("### 👁️ Institutional Performance Monitor")
     
     st.markdown("#### ניתוח עומק לנכס (Performance Analytics)")
-    col_t, col_b = st.columns([3, 1])
+    col_t, col_p, col_b = st.columns([2, 1, 1])
     test_ticker = col_t.text_input("הזן סימול (Ticker) לחילוץ מטריקות ודרואו-דאון:", value="NVDA", key="monitor_ticker").strip().upper()
+    
+    # הוספת הבחירה של 10 שנים לעסקאות
+    monitor_period = col_p.selectbox("בחר תקופת היסטוריה לאנליזה:", ["2y", "5y", "10y", "max"], index=2)
+    
     if col_b.button("📈 חלץ מטריקות מתקדמות", use_container_width=True):
         with st.spinner(f"מחשב מדדים היסטוריים ל-{test_ticker}..."):
             from scout_core import run_wyckoff_anchored_backtest, calculate_advanced_metrics
-            df, audit_df = run_wyckoff_anchored_backtest(test_ticker, use_ai=st.session_state.use_ml, threshold=65, period="2y")
+            df, audit_df = run_wyckoff_anchored_backtest(test_ticker, use_ai=st.session_state.use_ml, threshold=65, period=monitor_period)
             if audit_df is not None and not audit_df.empty:
                 trades = audit_df.to_dict('records')
                 metrics = calculate_advanced_metrics(trades)
                 render_monitor_metrics(metrics)
+                
+                with st.expander("📝 יומן עסקאות מלא (Audit Log)", expanded=False):
+                    st.dataframe(audit_df, use_container_width=True)
             else:
                 st.warning("לא נמצאו מספיק עסקאות להפקת מדדים באסטרטגיה הנוכחית עבור נכס זה.")
                 
