@@ -327,7 +327,7 @@ def _prepare_training_frame(all_features):
     if "label" not in data.columns:
         return None, None, None, []
 
-    drop_cols = [c for c in ["label", "ticker", "entry_date", "exit_date"] if c in data.columns]
+    drop_cols = [c for c in ["label", "ticker", "entry_date", "exit_date", "is_win", "phase_success"] if c in data.columns]
     X = data.drop(columns=drop_cols, errors="ignore")
     y = data["label"].astype(int)
 
@@ -353,7 +353,8 @@ def process_sector(slot, tickers, base_threshold=50):
         log_message(f"Sector {slot} is empty after dedupe. Skipping.")
         return
 
-    log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers.")
+    # עודכן הלוג כדי לשקף את מטרת האימון החדשה: מדד הצלחת פאזה
+    log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers. Target Label: Phase Follow-Through.")
     _update_progress(slot, extra=f"מתחיל אצווה עם {len(tickers)} נכסים")
 
     all_features = []
@@ -412,7 +413,9 @@ def process_sector(slot, tickers, base_threshold=50):
                     continue
 
                 feat = factors.loc[entry_date].to_dict()
-                feat["label"] = 1 if bool(row.get("win")) else 0
+                # --- תיקון מהותי (Label Shift): ה-ML מתאמן על פולו-ת'רו במקום רווח פיננסי ---
+                feat["label"] = 1 if bool(row.get("phase_success", row.get("win"))) else 0
+                # -------------------------------------------------------------------------
                 feat["ticker"] = ticker
                 if "exit_date" in row.index:
                     feat["exit_date"] = row.get("exit_date")
@@ -568,9 +571,6 @@ def process_sector(slot, tickers, base_threshold=50):
         top_4_features_names = [feature_names[i] for i in top_4_idx]
         top_features_str = ", ".join([f"{feature_names[i]} ({importances[i]:.1%})" for i in top_4_idx])
         log_message(f"Top 4 Features for {slot}: {top_features_str}")
-        
-        if "f36_wyckoff_score" not in top_4_features_names:
-             log_message(f"[{slot}] DIAGNOSTIC WARNING: f36_wyckoff_score is NOT in Top 4 ML features, but receives a hardcoded 18x boost in composite_cis (scout_core.py). Consider revisiting this discrepancy.")
              
     except Exception as e:
         log_exception("Failed to extract top features", e)
