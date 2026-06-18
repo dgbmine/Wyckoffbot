@@ -86,6 +86,7 @@ try:
         FactorEngine,
         BacktestConfig,
         run_wyckoff_anchored_backtest,
+        calculate_phase_followthrough
     )
 except Exception as e:
     log_exception("CRITICAL ERROR: Failed to import scout_core", e)
@@ -359,6 +360,9 @@ def process_sector(slot, tickers, base_threshold=50):
     sector_success = 0
     sector_failed = 0
     sector_skipped = 0
+    
+    # תיקון 2: איסוף נתוני Phase Follow-Through ברמת הסקטור
+    sector_ft_stats = {}
 
     for i, ticker in enumerate(tickers, start=1):
         TRAINING_STATE["overall_done"] += 1
@@ -376,6 +380,14 @@ def process_sector(slot, tickers, base_threshold=50):
                 TRAINING_STATE["overall_skipped"] += 1
                 _update_progress(slot, extra=f"{ticker} ללא דאטה")
                 continue
+                
+            if 'wyckoff_phase' in df.columns:
+                tk_ft = calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04)
+                for p_name, p_stats in tk_ft.items():
+                    if p_name not in sector_ft_stats:
+                        sector_ft_stats[p_name] = {"total": 0, "success": 0}
+                    sector_ft_stats[p_name]["total"] += p_stats["total"]
+                    sector_ft_stats[p_name]["success"] += p_stats["success"]
 
             if audit_df is None or getattr(audit_df, "empty", True):
                 sector_skipped += 1
@@ -441,6 +453,17 @@ def process_sector(slot, tickers, base_threshold=50):
                 slot,
                 extra=f"checkpoint {i}/{len(tickers)} | הצלחות={sector_success} | שגיאות={sector_failed}",
             )
+
+    # השלמת חישובי אחוזי הפולו-ת'רו והדפסה ללוג
+    for p_name in sector_ft_stats:
+        tot = sector_ft_stats[p_name]["total"]
+        suc = sector_ft_stats[p_name]["success"]
+        sector_ft_stats[p_name]["rate"] = float((suc / tot) * 100) if tot > 0 else 0.0
+
+    if sector_ft_stats:
+        log_message(f"[{slot}] Phase Follow-Through Stats:")
+        for p_name, s_data in sector_ft_stats.items():
+            log_message(f"   - {p_name}: {s_data['success']}/{s_data['total']} ({s_data['rate']:.1f}%)")
 
     if len(all_features) < MIN_TRADES_FOR_ML:
         msg = (
@@ -548,7 +571,6 @@ def process_sector(slot, tickers, base_threshold=50):
         top_features_str = ", ".join([f"{feature_names[i]} ({importances[i]:.1%})" for i in top_4_idx])
         log_message(f"Top 4 Features for {slot}: {top_features_str}")
         
-        # תיקון E (השלמה דיאגנוסטית בטריינר): אזהרה אם הציון הקשיח לא מיוצג בטופ של ה-ML
         if "f36_wyckoff_score" not in top_4_features_names:
              log_message(f"[{slot}] DIAGNOSTIC WARNING: f36_wyckoff_score is NOT in Top 4 ML features, but receives a hardcoded 18x boost in composite_cis (scout_core.py). Consider revisiting this discrepancy.")
              
@@ -588,7 +610,8 @@ def process_sector(slot, tickers, base_threshold=50):
             "timestamp": datetime.now().isoformat(),
             "cm": cm_dict,
             "small_sample_warning": small_sample_warning,
-            "top_features": top_4_features_names
+            "top_features": top_4_features_names,
+            "phase_followthrough": sector_ft_stats
         },
     }
 
