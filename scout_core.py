@@ -156,7 +156,13 @@ def calculate_phase_followthrough(df: pd.DataFrame, horizon: int = 20, threshold
     n = len(df)
     for i in range(n - horizon):
         curr_phase = str(phases[i])
+        prev_phase = str(phases[i-1]) if i > 0 else ""
         
+        # התיקון הקריטי: סינון לאיתותים אמיתיים (מעבר פאזה בלבד)
+        # זה מונע את הניפוח הסטטיסטי והאוטו-קורלציה שעליהם הצביע היועץ
+        if curr_phase == prev_phase:
+            continue
+            
         is_bull = any(p in curr_phase for p in bullish_phases)
         is_bear = any(p in curr_phase for p in bearish_phases)
         
@@ -316,8 +322,6 @@ class FactorEngine:
         norm_score = (score / total_w.replace(0, np.nan).fillna(1) * 100 + 50).clip(0, 100).round(1)
         
         if "f36_wyckoff_score" in factors.columns:
-            # אזהרה: f36_wyckoff_score מקבל חשיבות סטטיסטית אפסית באימון מודל ה-ML,
-            # אך כאן הוא מקבל Boost קשיח של פי 18. דבר זה יוצר פער.
             boost = factors["f36_wyckoff_score"] * 18 
             norm_score = (norm_score + boost).clip(0, 100)
             
