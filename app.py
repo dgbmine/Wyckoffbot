@@ -325,6 +325,28 @@ def screen_backtest() -> None:
         if audit_df is not None and not audit_df.empty:
             st.dataframe(audit_df)
 
+def screen_scanner() -> None:
+    st.markdown("### 🔎 Market Scanner")
+    sector_name = st.selectbox("בחר סקטור לסריקה", list(SECTOR_MAP.keys()))
+    scan_limit = st.slider("כמות מניות לסריקה", 5, 50, 10)
+    scan_th = st.slider("סף מינימלי לתוצאה", 40, 95, 60)
+
+    if st.button("🚀 התחל סריקה מוסדית", type="primary"):
+        results = []
+        engine = FactorEngine(BacktestConfig())
+        for ticker in SECTOR_MAP[sector_name][:scan_limit]:
+            row = _run_scan_row(engine, ticker, scan_th)
+            if row:
+                results.append(row)
+        if results:
+            top = sorted(results, key=lambda r: r["Score"], reverse=True)[0]
+            st.success(f"נמצאו {len(results)} מניות")
+            st.dataframe(pd.DataFrame([{k: v for k, v in r.items() if k != "_df"} for r in results]))
+            st.markdown(f"#### המובילה: {top['Ticker']}")
+            render_explain_score(top["_df"], top["Phase"], top["Score"])
+        else:
+            st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
+
 def screen_monitor() -> None:
     st.markdown("### 👁️ Institutional Performance Monitor")
     
@@ -343,7 +365,6 @@ def screen_monitor() -> None:
                 metrics = calculate_advanced_metrics(trades)
                 render_monitor_metrics(metrics)
                 
-                # תיקון D: הוספת תצוגת דיוק זיהוי Wyckoff טהור בנפרד
                 st.markdown("---")
                 st.markdown("#### 🎯 דיוק זיהוי Wyckoff טהור (Phase Follow-Through)")
                 st.caption("מודד האם זיהוי השלב הוביל לתנועת מחיר מצופה (יעד מעל 4% ב-30 ימים), במנותק מרווח כספי או פגיעה ב-Stop-Loss.")
