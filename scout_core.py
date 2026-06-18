@@ -130,19 +130,18 @@ def check_phase_entry_allowed(phase, risk_profile):
     if risk_profile == "Aggressive":
         return any(p in phase for p in ["Phase C", "Phase D", "Phase E", "Spring", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
     elif risk_profile == "Balanced":
-        # תיקון B: הוספת Phase C / Spring לפרופיל המאוזן כדי לאפשר למערכת לזהות שלב קריטי זה.
-        # מוסר מ-Conservative בלבד בגלל סיכון השבירות כוזבות בשלב מוקדם זה.
         return any(p in phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
     elif risk_profile == "Conservative":
         return any(p in phase for p in ["Phase E", "Markup"])
     return False
 
 # ---------- New Diagnostic Function (Phase Follow-Through) ----------
-def calculate_phase_follow_through(df: pd.DataFrame, horizon: int = 30, threshold_pct: float = 0.04) -> dict:
+def calculate_phase_followthrough(df: pd.DataFrame, horizon: int = 20, threshold_pct: float = 0.04) -> dict:
     """
-    תיקון A: מודד האם זיהוי פאזת Wyckoff מוביל לתנועת המשך עקבית (ללא קשר לרווח כספי או Stop Loss).
-    horizon: אופק הבדיקה (ברירת מחדל 30 ימי מסחר).
-    threshold_pct: סף מינימלי לתנועה מאשרת (ברירת מחדל 4%).
+    מודד דיוק זיהוי Wyckoff טהור (Phase Follow-Through). 
+    בוחן האם זיהוי פאזה הוביל לתנועת מחיר מצופה בתוך חלון הזמן הנתון (horizon), 
+    ללא תלות ב-ATR, Stop-Loss או מדדים כלכליים. 
+    מחזיר מילון מפורק לפי פאזות.
     """
     if df is None or df.empty or 'wyckoff_phase' not in df.columns:
         return {}
@@ -151,34 +150,32 @@ def calculate_phase_follow_through(df: pd.DataFrame, horizon: int = 30, threshol
     phases = df['wyckoff_phase'].values
     closes = df['Close'].values
     
-    bullish_phases = ["Spring", "SOS", "Breakout", "LPS", "Re-accumulation", "Phase E", "Markup"]
-    bearish_phases = ["Distribution", "Markdown", "Heavy Supply"]
+    bullish_phases = ["Phase C (Spring", "Spring", "Phase D (SOS", "Phase D (LPS", "Re-accumulation", "Phase E (Markup)"]
+    bearish_phases = ["Markdown", "Distribution", "Heavy Supply"]
     
     n = len(df)
     for i in range(n - horizon):
         curr_phase = str(phases[i])
+        
         is_bull = any(p in curr_phase for p in bullish_phases)
         is_bear = any(p in curr_phase for p in bearish_phases)
         
         if not is_bull and not is_bear:
             continue
             
-        # בדיקת תנועה עתידית באופק הזמן
         future_closes = closes[i+1 : i+1+horizon]
+        
         if is_bull:
             max_price = np.max(future_closes)
             ret = (max_price - closes[i]) / closes[i]
             success = ret >= threshold_pct
-            phase_type = "Bullish (Accumulation/Markup)"
         else:
             min_price = np.min(future_closes)
-            ret = (closes[i] - min_price) / closes[i] # חיובי אומר שהמחיר אכן ירד
+            ret = (closes[i] - min_price) / closes[i] # ערך חיובי אם המחיר ירד
             success = ret >= threshold_pct
-            phase_type = "Bearish (Distribution/Markdown)"
             
         records.append({
             "Phase": curr_phase,
-            "Type": phase_type,
             "Success": success
         })
     
@@ -191,7 +188,7 @@ def calculate_phase_follow_through(df: pd.DataFrame, horizon: int = 30, threshol
         stats[phase] = {
             "total": len(group),
             "success": int(group["Success"].sum()),
-            "rate": group["Success"].mean() * 100
+            "rate": float(group["Success"].mean() * 100)
         }
     return stats
 
@@ -319,9 +316,8 @@ class FactorEngine:
         norm_score = (score / total_w.replace(0, np.nan).fillna(1) * 100 + 50).clip(0, 100).round(1)
         
         if "f36_wyckoff_score" in factors.columns:
-            # תיקון E: חוסר עקביות דיאגנוסטי
-            # אזהרה: f36_wyckoff_score מוכח שמקבל חשיבות סטטיסטית אפסית באימון מודל ה-ML,
-            # אך כאן הוא מקבל Boost קשיח של פי 18. דבר זה יוצר פער בין הציון הידני ליעילות הסטטיסטית האמיתית.
+            # אזהרה: f36_wyckoff_score מקבל חשיבות סטטיסטית אפסית באימון מודל ה-ML,
+            # אך כאן הוא מקבל Boost קשיח של פי 18. דבר זה יוצר פער.
             boost = factors["f36_wyckoff_score"] * 18 
             norm_score = (norm_score + boost).clip(0, 100)
             
@@ -352,7 +348,7 @@ class FactorEngine:
         else:
             rs_spy = pd.Series(0.0, index=df.index)
 
-        streak = 0  # מונה לשלילת "תקיעות" דיאגנוסטית
+        streak = 0
         for i in range(60, len(df)):
             c = close.iloc[i]
             v = vol.iloc[i]
@@ -415,10 +411,9 @@ class FactorEngine:
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             
-            # תיקון C: דיאגנוסטיקה לשרשרת פאזות חשודה
             if phases.iloc[i] == prev_phase and phases.iloc[i] not in ["TRANSITION / UNCERTAIN STATE", "לא בתהליך איסוף"]:
                 streak += 1
-                if streak == 100:  # 100 ימי מסחר רצופים באותה פאזת מעבר
+                if streak == 100:
                     logger.warning(f"Suspicious Phase Chain Detected: '{phases.iloc[i]}' persisted for {streak} consecutive trading days.")
             else:
                 streak = 0
