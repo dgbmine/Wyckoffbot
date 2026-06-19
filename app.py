@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V14.4
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.0
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -58,33 +58,34 @@ AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
 
 try:
     from scout_core import (
-        clean_filename,
-        get_data,
-        calculate_optimal_threshold,
-        check_phase_entry_allowed,
-        BacktestConfig,
-        FactorEngine,
-        run_wyckoff_anchored_backtest,
-        explain_score,
-        calculate_advanced_metrics,
-        calculate_phase_followthrough
+        clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
+        BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
+        calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple
     )
     SCOUT_CORE_AVAILABLE = True
-except ImportError as _imp_exc:
-    SCOUT_CORE_AVAILABLE = False
-    logger.warning("scout_core not available: %s", _imp_exc)
-
-    def explain_score(df: pd.DataFrame, phase: str, cis: float) -> str:
-        return (
-            f"ציון CIS: {cis:.1f}\nשלב Wyckoff: {phase}\n\n"
-            "המערכת מזהה התנהגות שוק אך הרכיב הלוגי חסר. טען את scout_core.py המלא לקבלת Evidence Ledger."
+except ImportError:
+    try:
+        from scout import (
+            clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
+            BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
+            calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple
         )
+        SCOUT_CORE_AVAILABLE = True
+    except ImportError as _imp_exc:
+        SCOUT_CORE_AVAILABLE = False
+        logger.warning("scout module not available: %s", _imp_exc)
+
+        def explain_score(df: pd.DataFrame, phase: str, cis: float) -> str:
+            return "מערכת ניתוח חסרה. טען את הקובץ המתאים."
+            
+        def explain_score_simple(df: pd.DataFrame, phase: str, cis: float, allowed: bool) -> str:
+            return "חסר מודול."
+            
+        def calculate_advanced_metrics(trades, initial_capital=100000.0):
+            return {}
         
-    def calculate_advanced_metrics(trades, initial_capital=100000.0):
-        return {}
-    
-    def calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04):
-        return {}
+        def calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04):
+            return {}
 
 st.set_page_config(
     layout="wide",
@@ -145,9 +146,9 @@ def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
         pass
     return loaded
 
-def render_explain_score(df: pd.DataFrame, phase: str, cis: float, context: str = "") -> None:
-    expander_label = f"🧑‍🏫 ניתוח Wyckoff אנושי (ציון {cis:.1f})"
-    with st.expander(expander_label, expanded=True):
+def render_explain_score(df: pd.DataFrame, phase: str, cis: float, expanded: bool = False) -> None:
+    expander_label = f"🧑‍🏫 ניתוח Wyckoff מקצועי מלא (CIS: {cis:.1f})"
+    with st.expander(expander_label, expanded=expanded):
         try:
             explanation_md = explain_score(df, phase, cis)
             st.markdown(explanation_md)
@@ -274,32 +275,92 @@ def init_session_state() -> None:
 
 def screen_wyckoff() -> None:
     st.markdown("### ⬛ Wyckoff Institutional Analyst")
-    ticker = st.text_input("Ticker לניתוח", value="NVDA").strip().upper()
+    ticker = st.text_input("Ticker לניתוח (לדוגמה NVDA, TSLA, SPY)", value="NVDA").strip().upper()
 
     if st.button("▶ הרץ ניתוח מוסדי", use_container_width=True, type="primary"):
         with st.spinner("מחשב מנוע Wyckoff מתקדם..."):
             result = _compute_wyckoff(ticker)
+            
         if result is None:
             st.error("אין נתונים זמינים או נדרש לפחות 60 ימי מסחר.")
             return
-        left, right = st.columns([1.15, 1])
+            
+        # 1. חיווי תקציר להדיוט: "האם להיכנס?"
+        if result["allowed"] and result["current_cis"] >= 65:
+            st.success("🟢 **סיכום כניסה:** השלב הנוכחי חיובי מאוד ותומך בכניסה לעסקה לפי שיטת Wyckoff.")
+        elif result["allowed"]:
+            st.warning("🟡 **סיכום כניסה:** השלב הטכני מתאים, אך המומנטום עדיין חלש (ציון נמוך מ-65). כדאי להמתין לאישור כוח.")
+        else:
+            st.error("🔴 **סיכום כניסה:** לא מומלץ. הנכס אינו נמצא כעת בשלב שמתאים לכניסה (מגמת ירידה או חוסר ודאות).")
+
+        st.markdown("<hr style='border-color: rgba(255,255,255,0.1); margin:10px 0;'>", unsafe_allow_html=True)
+            
+        left, right = st.columns([1, 1.3])
+        
         with left:
-            m1, m2 = st.columns(2)
-            m1.metric("Ticker", ticker)
-            m2.metric("Phase (Decision Gate)", result["current_phase"])
-            render_explain_score(result["df"], result["current_phase"], result["current_cis"])
+            # Gauge מד-ציון חזותי ל-CIS
+            fig_gauge = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=result["current_cis"],
+                title={'text': "ציון כוח מוסדי (CIS)", 'font': {'color': "#d9e6f2", 'size': 18}},
+                number={'font': {'color': "#d9e6f2"}},
+                gauge={
+                    'axis': {'range': [0, 100], 'tickcolor': "white"},
+                    'bar': {'color': "rgba(255,255,255,0.4)"},
+                    'steps': [
+                        {'range': [0, 40], 'color': "#dc2626"},   # אדום מסוכן
+                        {'range': [40, 65], 'color': "#eab308"},  # צהוב ממתין
+                        {'range': [65, 100], 'color': "#16a34a"}  # ירוק כניסה
+                    ],
+                }
+            ))
+            fig_gauge.update_layout(height=230, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_gauge, use_container_width=True)
+
         with right:
-            st.markdown("### מפת שוק (Price & Volume)")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=result["df"].index, y=result["df"]["Close"],
-                                     name="Close", line=dict(color='#7dd3fc')))
-            fig.update_layout(
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                font=dict(color="#d9e6f2"),
-                margin=dict(l=0, r=0, t=10, b=0)
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
+            cp = result["current_phase"]
+            
+            # בניית הויזואליזציה של השלבים
+            is_bearish = any(x in cp for x in ["Distribution", "Markdown", "Supply"])
+            
+            def get_bg(phase_marker):
+                if phase_marker in cp:
+                    return "background:#38bdf8; color:#0f172a; font-weight:bold; border:2px solid #fff; transform:scale(1.05);"
+                return "background:rgba(255,255,255,0.05); color:#64748b;"
+                
+            if is_bearish:
+                html = f"""
+                <div style="display:flex; justify-content:space-around; align-items:center; background:#1e293b; padding:20px; border-radius:12px; margin-top:10px;">
+                    <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Distribution')}">הפצה (Distribution)<br><span style="font-size:0.85em">מוסדיים מוכרים</span></div>
+                    <div style="color:#475569; font-size:1.8em;">➔</div>
+                    <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Markdown')}">ירידות (Markdown)<br><span style="font-size:0.85em">פיזור סחורה</span></div>
+                </div>
+                """
+            else:
+                html = f"""
+                <div style="display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:15px 10px; border-radius:12px; margin-top:10px; font-size:0.9em;">
+                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase A')}">שלב A<br><span style="font-size:0.8em">בלימה</span></div>
+                    <div style="color:#475569;">➔</div>
+                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase B')}">שלב B<br><span style="font-size:0.8em">בניית כוח</span></div>
+                    <div style="color:#475569;">➔</div>
+                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase C')}">שלב C<br><span style="font-size:0.8em">ניעור מוסדי</span></div>
+                    <div style="color:#475569;">➔</div>
+                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase D')}">שלב D<br><span style="font-size:0.8em">פריצה</span></div>
+                    <div style="color:#475569;">➔</div>
+                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase E')}">שלב E<br><span style="font-size:0.8em">מגמה</span></div>
+                </div>
+                """
+            st.markdown(html, unsafe_allow_html=True)
+            st.caption(f"**זיהוי מלא:** `{cp}`")
+            
+        st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
+            
+        # הסברים
+        with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=True):
+            st.markdown(explain_score_simple(result["df"], result["current_phase"], result["current_cis"], result["allowed"]))
+            
+        render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
 
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
@@ -321,7 +382,8 @@ def screen_backtest() -> None:
         engine = FactorEngine(BacktestConfig())
         cis_series = engine.composite_cis(engine.compute(df), df)
         phases = engine.get_wyckoff_phase(df)
-        render_explain_score(df, str(phases.iloc[-1]), float(cis_series.iloc[-1]))
+        
+        render_explain_score(df, str(phases.iloc[-1]), float(cis_series.iloc[-1]), expanded=True)
         if audit_df is not None and not audit_df.empty:
             st.dataframe(audit_df)
 
@@ -343,7 +405,7 @@ def screen_scanner() -> None:
             st.success(f"נמצאו {len(results)} מניות")
             st.dataframe(pd.DataFrame([{k: v for k, v in r.items() if k != "_df"} for r in results]))
             st.markdown(f"#### המובילה: {top['Ticker']}")
-            render_explain_score(top["_df"], top["Phase"], top["Score"])
+            render_explain_score(top["_df"], top["Phase"], top["Score"], expanded=True)
         else:
             st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
 
@@ -365,7 +427,6 @@ def screen_monitor() -> None:
                 metrics = calculate_advanced_metrics(trades)
                 render_monitor_metrics(metrics)
                 
-                # תצוגה מפורשת וברורה של מדד הדיוק הטהור
                 st.markdown("---")
                 st.markdown("#### 🎯 דיוק זיהוי Wyckoff (ללא תלות ברווח)")
                 st.caption("מדד Phase Follow-Through: בוחן האם זיהוי השלב הוביל לתנועת מחיר מצופה (יעד של 4% תוך 20 ימי מסחר), במנותק מניהול עסקאות כלכלי או Stop-Loss.")
@@ -387,7 +448,7 @@ def screen_monitor() -> None:
                 
     st.markdown("---")
     st.markdown("#### הורדת מודלים (Cloud Models Archive)")
-    st.caption("כאן תוכל להוריד מודלים שאומנו על ידי מנוע ה-AI למחשב המקומי שלך.")
+    st.caption("כאן תוכל להוריד מודלים שאומנו על ידי מנוע ה-AI למחשב המקומי שלך ולראות מדדי דיאגנוסטיקה.")
 
     if st.button("🔄 רענן מודלים מהדיסק"):
         st.session_state.model_archive = load_all_models_from_disk()
@@ -409,6 +470,7 @@ def screen_monitor() -> None:
             ft_meta = meta.get("phase_followthrough", {})
             label_src = meta.get("label_source", "לא ידוע / win (legacy)")
             config_snap = meta.get("model_config_snapshot", {})
+            ml_value = meta.get("ml_value_added", {})
             
             oob_str = f" | OOB: {oob:.0%}" if oob is not None else ""
             
@@ -425,33 +487,38 @@ def screen_monitor() -> None:
                         use_container_width=True,
                     )
                     
-                    st.caption(f"🎯 **Label Source:** `{label_src}`")
+                    st.caption(f"🎯 **Label:** `{label_src}`")
+                    
+                    if ml_value:
+                        imp = ml_value.get('improvement', 0)
+                        if imp > 3.0:
+                            st.caption(f"⚡ **ערך מוסף ל-ML:** {imp:+.1f} נקודות")
+                        else:
+                            st.caption(f"⚠️ **אין ערך מוסף ברור ל-ML:** ({imp:+.1f} נק')")
                     
                     if acc and oob is not None:
                         gap = acc - oob
                         if gap >= 0.10:
                             st.caption("⚠️ חשש ל-Overfitting (פער Train/OOB מעל 10%)")
-                        if 0.45 <= oob <= 0.55:
-                            st.caption("⚠️ מודל לא מובהק סטטיסטית — קרוב לאקראיות (OOB סביב 50%)")
                             
                     if is_small:
                         st.caption(f"⚠️ אזהרת מדגם קטן ({num_trades} עסקאות)")
                         
                     with st.expander("📌 דיאגנוסטיקה", expanded=False):
+                        if ml_value:
+                            st.markdown(f"**ML Value Diagnostic:**<br>Baseline (Naive): {ml_value.get('baseline_rate', 0):.1%}<br>ML OOB Acc: {ml_value.get('oob_acc', 0):.1%}<br>Value Added: **{ml_value.get('improvement', 0):+.2f}** pts", unsafe_allow_html=True)
+                            st.markdown("---")
+                            
                         if cm and "tn" in cm:
                             st.markdown(f"**Confusion Matrix:**<br>TN={cm['tn']} | FP={cm['fp']}<br>FN={cm['fn']} | TP={cm['tp']}", unsafe_allow_html=True)
                         if config_snap:
-                            st.markdown("**Model Config Snapshot:**")
+                            st.markdown("**Model Config:**")
                             for c_key, c_val in config_snap.items():
                                 st.markdown(f"- `{c_key}`: {c_val}")
                         if exc_feat:
                             st.markdown("**Excluded Features:**")
                             for ef_name, ef_rsn in exc_feat.items():
                                 st.markdown(f"- `{ef_name}`: {ef_rsn}")
-                        if ft_meta:
-                            st.markdown("**Phase Follow-Through:**")
-                            for p_name, p_stats in ft_meta.items():
-                                st.markdown(f"- `{p_name}`: {p_stats['success']}/{p_stats['total']} ({p_stats['rate']:.1f}%)")
     else:
         st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
