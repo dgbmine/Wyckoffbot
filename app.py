@@ -430,7 +430,7 @@ def screen_wyckoff() -> None:
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
     
-    st.info("ℹ️ **מה זה בעצם Backtest (בדיקת עבר)?**\n\nמסך זה מאפשר לך 'לחזור בזמן' ולבדוק איך שיטת Wyckoff הייתה עובדת בפועל על המניה שבחרת. המערכת מריצה סימולציה ממוחשבת שבה היא קונה ומוכרת באופן אוטומטי את המניה בכל פעם שהתנאים של כניסת כסף מוסדי (ציון CIS ופאזות איסוף) מתקיימים.\n\n**התוצאות שתראה כאן יעזרו לך להבין:**\n- האם המניה הזו נוטה 'להקשיב' לכללי Wyckoff לאורך זמן?\n- כמה עסקאות מורווחות היו לעומת מופסדות?\n- מה ההפסד הכי גדול שהיה קורה בדרך (Drawdown)?\n\n**חשוב מאוד:** סימולציה זו היא תיאורטית, וביצועים טובים בעבר לעולם אינם מבטיחים רווחים בעתיד. יש להתייחס לנתונים ככלי עזר לימודי בלבד.")
+    st.info("ℹ️ **מה עושה מסך ה-Backtest?**\n\nמערכת זו בודקת כיצד אסטרטגיית ההשקעה לפי שיטת Wyckoff הייתה מתפקדת בעבר על המניה הנבחרת. היא מסמלת קניות ומכירות אוטומטיות לפי הציון והפאזות ומציגה את הביצועים ההיסטוריים. **חשוב לזכור:** ביצועי העבר אינם מובטחים בעתיד והתוצאות הן תיאורטיות להמחשה בלבד.")
     
     col1, col2 = st.columns([1,1])
     ticker = col1.text_input("Ticker לבדיקה", value="COST").strip().upper()
@@ -457,21 +457,14 @@ def screen_backtest() -> None:
                 drawdown = ((1 + df['Cum_Strategy']) - roll_max) / roll_max
                 max_dd_pct = drawdown.min() * 100
                 
-            profit_color = "🟢 רווח" if total_profit_pct > 0 else "🔴 הפסד"
-            meaning_text = "תוצאות יפות שמראות כי המניה מגיבה היטב לדפוסי איסוף מוסדיים בסבירות גבוהה." if total_profit_pct > 0 and win_rate >= 50 else "התוצאות מצביעות על קושי לייצר רווח עקבי במניה זו באמצעות השיטה, ייתכן שכדאי לחפש נכסים שקופים יותר לפעילות מוסדית."
-            
-            st.success(f"""### 📊 סיכום תוצאות הסימולציה מילולית:
-הסימולציה הסתיימה! להלן מה שהיה קורה אם היית סוחר לפי שיטת Wyckoff על המניה הזו בתקופה שבחרת:
-
-* 💰 **שורה תחתונה:** האסטרטגיה סיימה ב{profit_color} מצטבר של **{total_profit_pct:.2f}%**.
-* 🤝 **פעילות:** המערכת מצאה **{t_count}** הזדמנויות כניסה (עסקאות) שעמדו בתנאים המחמירים של Wyckoff.
-* 🎯 **אחוזי הצלחה (Win Rate):** מתוך כל העסקאות, **{win_rate:.1f}%** הסתיימו ברווח לעומת השאר שהסתיימו בהפסד (לרוב בעקבות הפעלת הגנת Stop-Loss מובנית).
-* 📉 **רגעים קשים (Max Drawdown):** במהלך התקופה, ההפסד המקסימלי הרצוף (מנקודת השיא לנקודת השפל בתיק) עמד על **{max_dd_pct:.2f}%**. נתון זה חשוב כדי להבין את רמת הסיכון והלחץ הנפשי שהיית חווה בדרך.
-
-**💡 המשמעות עבורך:** {meaning_text}
+            st.success(f"""**סיכום אסטרטגיה מקיף:**
+האסטרטגיה הניבה תשואה מצטברת של **{total_profit_pct:.2f}%** בתקופה זו.
+* **סה״כ עסקאות פוטנציאליות:** {t_count} עסקאות.
+* **אחוזי הצלחה (Win Rate):** {win_rate:.1f}%.
+* **דרואו-דאון מקסימלי (Max DD):** {max_dd_pct:.2f}%.
 """)
         else:
-            st.warning("לא בוצעו עסקאות שעמדו בתנאים בתקופה זו. כנראה שהמניה לא חוותה איסוף מוסדי שעמד בסף הנדרש.")
+            st.warning("לא בוצעו עסקאות שעמדו בתנאים בתקופה זו.")
             
         st.metric("עסקאות סה״כ", t_count)
         engine = FactorEngine(BacktestConfig())
@@ -806,6 +799,61 @@ def screen_ml_trainer() -> None:
         time.sleep(3.5)
         st.rerun()
 
+def screen_trading_scout() -> None:
+    st.markdown("### 📈 Trading Scout - המלצת מסחר חכמה")
+    st.info("⚠️ **הבהרה קריטית:** זהו כלי עזר אנליטי אוטומטי בלבד ואינו בשום אופן תחליף לייעוץ השקעות מוסמך. כל החלטת מסחר באחריותך הבלעדית.")
+    
+    col1, col2 = st.columns([1, 2])
+    ticker = col1.text_input("הזן סימול (Ticker) לקבלת המלצה (לדוגמה: AAPL, NVDA):", value="AAPL").strip().upper()
+    
+    if col1.button("💡 קבל המלצה", type="primary", use_container_width=True):
+        if not SCOUT_CORE_AVAILABLE:
+            st.error("מודול הליבה חסר, לא ניתן לייצר המלצה.")
+            return
+            
+        with st.spinner(f"מנתח נתונים ומפיק המלצה עבור {ticker}..."):
+            try:
+                from trading_scout import get_trading_recommendation
+                rec_data = get_trading_recommendation(ticker)
+            except Exception as e:
+                st.error(f"שגיאה בהפעלת מודול ההמלצות: {e}")
+                return
+            
+        if rec_data.get("recommendation") == "ERROR":
+            st.error(rec_data.get("reason"))
+            return
+            
+        rec = rec_data["recommendation"]
+        
+        color_map = {
+            "STRONG BUY": "#16a34a",
+            "BUY": "#22c55e",
+            "HOLD": "#eab308",
+            "SELL": "#f97316",
+            "STRONG SELL": "#dc2626"
+        }
+        
+        color = color_map.get(rec, "#94a3b8")
+        
+        st.markdown(f"""
+        <div style="background-color: rgba(0,0,0,0.2); border: 2px solid {color}; border-radius: 12px; padding: 25px; text-align: center; margin-bottom: 25px;">
+            <h2 style="margin: 0; color: {color}; font-size: 2.8rem; font-weight: bold;">{rec}</h2>
+            <p style="font-size: 1.3rem; color: #d9e6f2; margin-top: 15px;">{rec_data['reason']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric("ציון מוסדי (CIS)", f'{rec_data["cis_score"]:.1f}')
+        with m2:
+            st.metric("שלב Wyckoff", rec_data["current_phase"])
+        with m3:
+            st.metric("יעד רווח משוער", f'+{rec_data["suggested_target"]}%')
+        with m4:
+            st.metric("הגנת הפסד (Stop Loss)", f'-{rec_data["suggested_stop_loss"]}%')
+            
+        st.caption(f"מחיר סגירה לחישוב: ${rec_data.get('close_price', 0):.2f}")
+
 def main() -> None:
     init_session_state()
     inject_css()
@@ -816,8 +864,8 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    tabs = st.tabs(["⬛ Wyckoff", "📊 Backtest", "🔎 Scanner", "🧠 ML Trainer", "👁️ Monitor"])
-    screen_fns = [screen_wyckoff, screen_backtest, screen_scanner, screen_ml_trainer, screen_monitor]
+    tabs = st.tabs(["⬛ Wyckoff", "📊 Backtest", "🔎 Scanner", "🧠 ML Trainer", "👁️ Monitor", "📈 Trading Scout"])
+    screen_fns = [screen_wyckoff, screen_backtest, screen_scanner, screen_ml_trainer, screen_monitor, screen_trading_scout]
     for tab, fn in zip(tabs, screen_fns):
         with tab:
             fn()
