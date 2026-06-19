@@ -16,40 +16,66 @@ logger = logging.getLogger("scout_core")
 def clean_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in (' ', '_', '-')).replace(' ', '_')
 
-def get_data(ticker, period="1y", start=None, end=None):
+def get_data(ticker, period="2y", start=None, end=None):
     try:
+        tkr = yf.Ticker(ticker)
+        
+        # ניסיון ראשון - הגישה המועדפת
         if start is not None and end is not None:
-            df = yf.Ticker(ticker).history(start=start, end=end, auto_adjust=False)
+            df = tkr.history(start=start, end=end, auto_adjust=False)
+            if df is None or df.empty or len(df) < 40:
+                df = tkr.history(start=start, end=end)  # גיבוי לספריות yfinance חדשות
         else:
-            df = yf.Ticker(ticker).history(period=period, auto_adjust=False)
+            df = tkr.history(period=period, auto_adjust=False)
+            if df is None or df.empty or len(df) < 40:
+                df = tkr.history(period=period)  # גיבוי לספריות yfinance חדשות
 
         if df is None or df.empty or len(df) < 40:
             return None
 
-        df.index = pd.to_datetime(df.index).tz_localize(None)
+        # מנגנון קילוף אזורי זמן בטוח לקריסות TypeError
+        def _safe_tz_drop(idx):
+            idx = pd.to_datetime(idx)
+            if getattr(idx, 'tz', None) is not None:
+                return idx.tz_convert(None)
+            return idx
+
+        df.index = _safe_tz_drop(df.index)
         df = df.sort_index()
 
+        # הורדת נתוני עזר (SPY ו-VIX)
         if start is not None and end is not None:
             spy_df = yf.Ticker("SPY").history(start=start, end=end, auto_adjust=False)
+            if spy_df is None or spy_df.empty:
+                spy_df = yf.Ticker("SPY").history(start=start, end=end)
+                
             vix_df = yf.Ticker("^VIX").history(start=start, end=end, auto_adjust=False)
+            if vix_df is None or vix_df.empty:
+                vix_df = yf.Ticker("^VIX").history(start=start, end=end)
         else:
             spy_df = yf.Ticker("SPY").history(period=period, auto_adjust=False)
+            if spy_df is None or spy_df.empty:
+                spy_df = yf.Ticker("SPY").history(period=period)
+
             vix_df = yf.Ticker("^VIX").history(period=period, auto_adjust=False)
+            if vix_df is None or vix_df.empty:
+                vix_df = yf.Ticker("^VIX").history(period=period)
 
         if spy_df is not None and not spy_df.empty:
-            spy_df.index = pd.to_datetime(spy_df.index).tz_localize(None)
+            spy_df.index = _safe_tz_drop(spy_df.index)
             df = df.join(spy_df[["Close"]].rename(columns={"Close": "spy_close"}), how="left")
         else:
             df["spy_close"] = np.nan
 
         if vix_df is not None and not vix_df.empty:
-            vix_df.index = pd.to_datetime(vix_df.index).tz_localize(None)
+            vix_df.index = _safe_tz_drop(vix_df.index)
             df = df.join(vix_df[["Close"]].rename(columns={"Close": "vix_close"}), how="left")
         else:
             df["vix_close"] = np.nan
 
         return df
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error in get_data for {ticker}: {e}")
         return None
 
 def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) -> dict:
@@ -268,8 +294,6 @@ class FactorEngine:
         close_diff = df["Close"].diff()
         midpoint = (df["High"] + df["Low"]) / 2
 
-        # גרסה זו (רציפה) הוחלפה מגרסה בינארית קודמת ששימשה בסבבים 1-5,
-        # על מנת לפתור אזהרות near-zero-variance עקביות; אם בעתיד נדרשת השוואה לגרסה הבינארית, יש לשמור הפניה לכך.
         vol_ratio = (df["Volume"] / vol_ma20.replace(0, 1e-5)).clip(0, 5)
         spread_ratio = (rng / spread_ma20.replace(0, 1e-5)).clip(0.1, 5)
         recent_min = df["Low"].rolling(20).min()
@@ -290,7 +314,7 @@ class FactorEngine:
         f["f35_struct_break"] = (df["Close"] > df["High"].rolling(20).max().shift(1)).astype(float) - (df["Close"] < df["Low"].rolling(20).min().shift(1)).astype(float)
         f["f14_inst_intent"] = (f["f04_absorption"] * 0.3 + f["f07_obv_velocity"].clip(0, 1) * 0.3 + f["f20_liquidity_sweep"] * 0.4).clip(0, 1)
 
-        f["f_effort_vs_result"] = ((df["Volume"] / vol_ma20) / ((rng / spread_ma20).replace(0, 1e-5))).clip(0, 5)
+        f["f_effort_vs_result"] = ((df["Volume"] / vol_ma20) / ((rng / spread_ma20).replace(0, 1e-5)).replace(np.inf, 5)).clip(0, 5)
         
         vol_std = df["Volume"].rolling(20).std().fillna(0)
         f["f_stopping_volume"] = ((close_diff < 0) & (df["Volume"] > (vol_ma20 + vol_std)) & (df["Close"] > df["Low"] + rng * 0.5)).astype(float)
@@ -619,7 +643,68 @@ def run_wyckoff_anchored_backtest(
 
     return df, pd.DataFrame(audit_logs)
 
+
+def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float, allowed: bool) -> str:
+    """
+    פונקציית הסבר מפושטת למשתמש הדיוט. מתרגמת מונחים פיננסיים לעברית יומיומית.
+    """
+    if df is None or df.empty:
+        return "אין לנו כרגע מספיק נתונים כדי להפיק הסבר פשוט על הנכס הזה."
+
+    close = df['Close'].iloc[-1]
+    vol = df['Volume'].iloc[-1]
+    vol_ma20 = df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else 1.0
+    
+    sma20 = df['Close'].rolling(20).mean().iloc[-1] if len(df) >= 20 else close
+    sma50 = df['Close'].rolling(50).mean().iloc[-1] if len(df) >= 50 else sma20
+    sma200 = df['Close'].rolling(200).mean().iloc[-1] if len(df) >= 200 else sma50
+    
+    rs_spy = 0.0
+    if "spy_close" in df.columns:
+        rs_spy = (df["Close"].pct_change(20).iloc[-1] - df["spy_close"].pct_change(20).iloc[-1])
+    
+    text = []
+    
+    # מה קורה למחיר
+    text.append(f"**📈 מה קורה למחיר?**")
+    if close > sma20 and sma20 > sma50 and sma50 > sma200:
+        text.append("המניה נמצאת כרגע במגמת עלייה חזקה ובריאה. המחיר שומר על יציבות מעל כל הממוצעים החשובים.")
+    elif close > sma20 and sma20 > sma50:
+        text.append("המניה נמצאת במגמת עלייה טובה בטווח הקצר-בינוני, ומתאוששת.")
+    elif close < sma20 and sma20 < sma50:
+        text.append("המניה חלשה ונמצאת במגמת ירידה. כרגע קשה לה לטפס למעלה כי יש הרבה מוכרים.")
+    else:
+        text.append("המניה מדשדשת (הולכת הצידה) - היא לא עולה ולא יורדת בצורה מובהקת, אלא 'אוספת כוח' או 'מפזרת סחורה'.")
+        
+    text.append("")
+    
+    # מה קורה לקונים
+    text.append(f"**👥 מה קורה להתעניינות הקונים (נפח מסחר)?**")
+    if vol > vol_ma20 * 1.2:
+        text.append("יש היום התעניינות גבוהה מהרגיל במניה! הרבה קניות או מכירות מתבצעות, מה שמרמז שכסף גדול (משקיעים מוסדיים) מעורב כאן.")
+    elif vol < vol_ma20 * 0.8:
+        text.append("די שקט היום במניה הזו. אין הרבה קונים או מוכרים פעילים כרגע, מה שמראה שאין 'כסף חכם' שדוחף אותה כרגע לשום כיוון.")
+    else:
+        text.append("כמות הקניות והמכירות כרגע ממוצעת ורגילה לחלוטין.")
+        
+    text.append("")
+        
+    # כוח מול השוק
+    text.append(f"**💪 איך היא מתנהגת לעומת השוק הכללי (הבורסה)?**")
+    if rs_spy > 0.02:
+        text.append("המניה הזו חזקה מהשוק! גם כשקשה מסביב, המשקיעים בוחרים לשים את הכסף שלהם דווקא כאן.")
+    elif rs_spy < -0.02:
+        text.append("המניה חלשה יותר מהשוק הכללי. נראה שמשקיעים מעדיפים לשים את הכסף שלהם במקומות אחרים עכשיו.")
+    else:
+        text.append("המניה מתנהגת בערך כמו רוב השוק, בלי להראות יתרון או חסרון מיוחד.")
+        
+    return "\n".join(text)
+
+
 def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str:
+    """
+    פונקציית ההסבר המקצועית המקורית (Evidence Ledger). משמשת את Backtest ו-Scanner.
+    """
     if df is None or df.empty:
         return "אין מספיק נתונים לאנליזה מוסדית. נדרשים נתונים היסטוריים נוספים."
 
