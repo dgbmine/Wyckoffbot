@@ -268,7 +268,8 @@ class FactorEngine:
         close_diff = df["Close"].diff()
         midpoint = (df["High"] + df["Low"]) / 2
 
-        # f04_absorption כמדד רציף משופר
+        # גרסה זו (רציפה) הוחלפה מגרסה בינארית קודמת ששימשה בסבבים 1-5,
+        # על מנת לפתור אזהרות near-zero-variance עקביות; אם בעתיד נדרשת השוואה לגרסה הבינארית, יש לשמור הפניה לכך.
         vol_ratio = (df["Volume"] / vol_ma20.replace(0, 1e-5)).clip(0, 5)
         spread_ratio = (rng / spread_ma20.replace(0, 1e-5)).clip(0.1, 5)
         recent_min = df["Low"].rolling(20).min()
