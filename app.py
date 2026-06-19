@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.3
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.0
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -148,7 +148,7 @@ def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
     return loaded
 
 def render_explain_score(df: pd.DataFrame, phase: str, cis: float, expanded: bool = False) -> None:
-    expander_label = f"🧑‍🏫 ניתוח Wyckoff מקצועי מלא (CIS: {cis:.1f})"
+    expander_label = f"🔬 מידע למקצוענים - Evidence Ledger ונתונים גולמיים (CIS: {cis:.1f})"
     with st.expander(expander_label, expanded=expanded):
         try:
             explanation_md = explain_score(df, phase, cis)
@@ -202,7 +202,6 @@ def inject_css() -> None:
     .main-header h1 { margin: 0; font-size: 2.1rem; color: #eaf4ff; font-weight: 700; }
     .main-header p { color: #9db0c9; font-size: 1.05rem; }
     
-    /* CSS Fix for Metrics text visibility in dark background */
     [data-testid="stMetric"] {
         background: rgba(15, 23, 42, 0.95) !important;
         border: 1px solid rgba(56, 189, 248, 0.3) !important;
@@ -220,6 +219,17 @@ def inject_css() -> None:
     [data-testid="stMetricDelta"] {
         color: #34d399 !important;
     }
+    
+    /* Cards for Trading Scout */
+    .scout-card {
+        background: rgba(15, 23, 42, 0.8);
+        border: 1px solid rgba(56, 189, 248, 0.2);
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .scout-title { color: #e0f2fe; font-size: 1.5rem; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; margin-bottom: 15px;}
+    .scout-prob { font-size: 2.2rem; font-weight: bold; color: #38bdf8; text-align: center; margin: 10px 0; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -275,9 +285,16 @@ def init_session_state() -> None:
 # Screens
 # ============================================================
 
-def screen_wyckoff() -> None:
-    st.markdown("### ⬛ Wyckoff Institutional Analyst")
+def screen_home() -> None:
+    st.markdown("### 🏠 Wyckoff Analyst - רדאר הכסף החכם")
+    
+    st.markdown("""
+    **ברוכים הבאים למערכת המוסדית!** המטרה העיקרית של המערכת היא לענות על שאלה אחת פשוטה: **"מה ההסתברות שגוף מוסדי אוסף כעת את המניה?"** (Institutional Accumulation Probability).
+    
+    על פי שיטת ריצ'רד וואיקוף (Wyckoff), כסף חכם (בנקים, קרנות גידור) אינו קונה בבת אחת, אלא "אוסף" סחורה בתהליך מתמשך מתחת לרדאר. המערכת מנתחת מחזורי מסחר, שינויי מבנה, ומדדי זרימת הון כדי לזהות את עקבות הכסף החכם ולהתריע מתי כדאי להצטרף אליהם (שלבי Spring ו-Markup), ומתי לברוח (Distribution).
+    """)
     st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
+    
     ticker = st.text_input("Ticker לניתוח (לדוגמה NVDA, TSLA, SPY)", value="NVDA").strip().upper()
 
     if st.button("▶ הרץ ניתוח מוסדי", use_container_width=True, type="primary"):
@@ -288,38 +305,36 @@ def screen_wyckoff() -> None:
             st.error("אין נתונים זמינים או נדרש לפחות 60 ימי מסחר.")
             return
             
-        # 1. חיווי תקציר להדיוט: "האם להיכנס?"
         if result["allowed"] and result["current_cis"] >= 65:
-            st.success("🟢 **סיכום כניסה:** השלב הנוכחי חיובי מאוד ותומך בכניסה לעסקה לפי שיטת Wyckoff.")
+            st.success("🟢 **סיכום כניסה:** השלב הנוכחי חיובי מאוד ותומך בכניסה לעסקה. ההסתברות לצבירה מוסדית אמיתית גבוהה.")
         elif result["allowed"]:
-            st.warning("🟡 **סיכום כניסה:** השלב הטכני מתאים, אך המומנטום עדיין חלש (ציון נמוך מ-65). כדאי להמתין לאישור כוח.")
+            st.warning("🟡 **סיכום כניסה:** השלב הטכני מתאים, אך המומנטום עדיין חלש (ציון נמוך מ-65). המתן לאישור.")
         else:
-            st.error("🔴 **סיכום כניסה:** לא מומלץ. הנכס אינו נמצא כעת בשלב שמתאים לכניסה (מגמת ירידה או חוסר ודאות).")
+            st.error("🔴 **סיכום כניסה:** לא מומלץ. הנכס אינו נמצא כעת בשלב שמתאים לכניסה. סיכוי נמוך לצבירה מוסדית.")
 
         st.markdown("<hr style='border-color: rgba(255,255,255,0.1); margin:10px 0;'>", unsafe_allow_html=True)
             
         left, right = st.columns([1, 1.3])
         
         with left:
-            # Gauge מד-ציון חזותי ל-CIS
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number",
                 value=result["current_cis"],
-                title={'text': "ציון כוח מוסדי (CIS)", 'font': {'color': "#d9e6f2", 'size': 18}},
+                title={'text': "הסתברות לצבירה (CIS)", 'font': {'color': "#d9e6f2", 'size': 18}},
                 number={'font': {'color': "#d9e6f2"}},
                 gauge={
                     'axis': {'range': [0, 100], 'tickcolor': "white"},
                     'bar': {'color': "rgba(255,255,255,0.4)"},
                     'steps': [
-                        {'range': [0, 40], 'color': "#dc2626"},   # אדום מסוכן
-                        {'range': [40, 65], 'color': "#eab308"},  # צהוב ממתין
-                        {'range': [65, 100], 'color': "#16a34a"}  # ירוק כניסה
+                        {'range': [0, 40], 'color': "#dc2626"},
+                        {'range': [40, 65], 'color': "#eab308"},
+                        {'range': [65, 100], 'color': "#16a34a"}
                     ],
                 }
             ))
             fig_gauge.update_layout(height=230, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_gauge, use_container_width=True)
-            st.caption("ציון מ-0 עד 100 המודד את עוצמת כניסת הכספים המוסדיים. מעל 65 - אזור כניסה פוטנציאלי.")
+            st.caption("ציון מ-0 עד 100 המודד את עוצמת כניסת הכספים המוסדיים (Institutional Accumulation Probability).")
 
         with right:
             st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
@@ -355,7 +370,7 @@ def screen_wyckoff() -> None:
                         <div style="color:#475569;">➔</div>
                         <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase B', 'Accumulation'])}">שלב B<br><span style="font-size:0.8em">בניית כוח</span></div>
                         <div style="color:#475569;">➔</div>
-                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase C', 'Spring'])}">שלב C<br><span style="font-size:0.8em">ניעור מוסדי</span></div>
+                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase C', 'Spring'])}">שלב C<br><span style="font-size:0.8em">ניעור</span></div>
                         <div style="color:#475569;">➔</div>
                         <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase D', 'Re-accumulation'])}">שלב D<br><span style="font-size:0.8em">פריצה</span></div>
                         <div style="color:#475569;">➔</div>
@@ -364,7 +379,6 @@ def screen_wyckoff() -> None:
                     """
                 st.markdown(html, unsafe_allow_html=True)
                 st.caption(f"**זיהוי מלא:** `{cp}`")
-                st.markdown("<div style='font-size:0.9em; color:#9db0c9; margin-top:5px;'>התרשים מדגיש את המיקום המשוער של הנכס במחזור הכספים המוסדי.</div>", unsafe_allow_html=True)
             
         st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
         
@@ -385,14 +399,13 @@ def screen_wyckoff() -> None:
         last_date = chart_df.index[-1]
         last_low = chart_df['Low'].iloc[-1]
         
-        # קביעת צבע לפי הפאזה עבור ה-marker
         cp_marker = result['current_phase']
         if any(x in cp_marker for x in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "Accumulation", "Re-accumulation"]):
-            marker_color = "#16a34a"  # ירוק - כניסה או פאזה חיובית
+            marker_color = "#16a34a" 
         elif any(x in cp_marker for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"]):
-            marker_color = "#eab308"  # צהוב - מעבר או חוסר ודאות
+            marker_color = "#eab308"
         else:
-            marker_color = "#dc2626"  # אדום - סכנה, הפצה, פאזות שליליות
+            marker_color = "#dc2626"
 
         fig_chart.add_annotation(
             x=last_date, y=last_low,
@@ -418,19 +431,15 @@ def screen_wyckoff() -> None:
         )
         st.plotly_chart(fig_chart, use_container_width=True)
             
-        # הסברים
         with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=True):
             st.markdown(explain_score_simple(result["df"], result["current_phase"], result["current_cis"], result["allowed"]))
             
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
 
-        st.markdown("---")
-        st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
-
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
     
-    st.info("ℹ️ **מה עושה מסך ה-Backtest?**\n\nמערכת זו בודקת כיצד אסטרטגיית ההשקעה לפי שיטת Wyckoff הייתה מתפקדת בעבר על המניה הנבחרת. היא מסמלת קניות ומכירות אוטומטיות לפי הציון והפאזות ומציגה את הביצועים ההיסטוריים. **חשוב לזכור:** ביצועי העבר אינם מובטחים בעתיד והתוצאות הן תיאורטיות להמחשה בלבד.")
+    st.info("ℹ️ **מה זה בעצם Backtest (בדיקת עבר)?**\n\nמסך זה מאפשר לך 'לחזור בזמן' ולבדוק איך שיטת Wyckoff הייתה עובדת בפועל על המניה שבחרת. המערכת מריצה סימולציה ממוחשבת שבה היא קונה ומוכרת באופן אוטומטי את המניה בכל פעם שהתנאים של כניסת כסף מוסדי (ציון CIS ופאזות איסוף) מתקיימים.\n\n**התוצאות שתראה כאן יעזרו לך להבין:**\n- האם המניה הזו נוטה 'להקשיב' לכללי Wyckoff לאורך זמן?\n- מה ההסתברות שצבירה מוסדית תניב רווח בפועל בנכס הזה?")
     
     col1, col2 = st.columns([1,1])
     ticker = col1.text_input("Ticker לבדיקה", value="COST").strip().upper()
@@ -457,30 +466,29 @@ def screen_backtest() -> None:
                 drawdown = ((1 + df['Cum_Strategy']) - roll_max) / roll_max
                 max_dd_pct = drawdown.min() * 100
                 
-            st.success(f"""**סיכום אסטרטגיה מקיף:**
-האסטרטגיה הניבה תשואה מצטברת של **{total_profit_pct:.2f}%** בתקופה זו.
-* **סה״כ עסקאות פוטנציאליות:** {t_count} עסקאות.
-* **אחוזי הצלחה (Win Rate):** {win_rate:.1f}%.
-* **דרואו-דאון מקסימלי (Max DD):** {max_dd_pct:.2f}%.
+            profit_color = "🟢 רווח" if total_profit_pct > 0 else "🔴 הפסד"
+            
+            st.success(f"""### 📊 סיכום תוצאות הסימולציה מילולית:
+הסימולציה הסתיימה! להלן התוצאות בהתבסס על ההסתברות לצבירה מוסדית:
+
+* 💰 **שורה תחתונה:** האסטרטגיה סיימה ב{profit_color} מצטבר של **{total_profit_pct:.2f}%**.
+* 🤝 **פעילות:** המערכת מצאה **{t_count}** הזדמנויות איסוף מוסדי.
+* 🎯 **אחוזי הצלחה (Win Rate):** מתוך כל העסקאות, **{win_rate:.1f}%** הסתיימו ברווח.
+* 📉 **רגעים קשים (Max Drawdown):** במהלך התקופה, ההפסד המקסימלי הרצוף עמד על **{max_dd_pct:.2f}%**.
 """)
         else:
-            st.warning("לא בוצעו עסקאות שעמדו בתנאים בתקופה זו.")
+            st.warning("לא בוצעו עסקאות שעמדו בתנאים בתקופה זו. כנראה שהמניה לא חוותה איסוף מוסדי שעמד בסף הנדרש.")
             
         st.metric("עסקאות סה״כ", t_count)
-        engine = FactorEngine(BacktestConfig())
-        cis_series = engine.composite_cis(engine.compute(df), df)
-        phases = engine.get_wyckoff_phase(df)
-        
-        render_explain_score(df, str(phases.iloc[-1]), float(cis_series.iloc[-1]), expanded=True)
         if audit_df is not None and not audit_df.empty:
             st.dataframe(audit_df)
 
 def screen_scanner() -> None:
     st.markdown("### 🔎 Market Scanner")
-    st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
+    st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות. ממוקד באיתור הסתברות גבוהה לצבירה מוסדית.")
     sector_name = st.selectbox("בחר סקטור לסריקה", list(SECTOR_MAP.keys()))
     scan_limit = st.slider("כמות מניות לסריקה", 5, 50, 10)
-    scan_th = st.slider("סף מינימלי לתוצאה", 40, 95, 60)
+    scan_th = st.slider("סף מינימלי לתוצאה (CIS)", 40, 95, 60)
 
     if st.button("🚀 התחל סריקה מוסדית", type="primary"):
         results = []
@@ -493,8 +501,7 @@ def screen_scanner() -> None:
             top = sorted(results, key=lambda r: r["Score"], reverse=True)[0]
             st.success(f"נמצאו {len(results)} מניות")
             st.dataframe(pd.DataFrame([{k: v for k, v in r.items() if k != "_df"} for r in results]))
-            st.markdown(f"#### המובילה: {top['Ticker']}")
-            render_explain_score(top["_df"], top["Phase"], top["Score"], expanded=True)
+            st.markdown(f"#### המובילה בהסתברות לצבירה: {top['Ticker']}")
         else:
             st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
 
@@ -518,7 +525,7 @@ def screen_monitor() -> None:
                 
                 st.markdown("---")
                 st.markdown("#### 🎯 דיוק זיהוי Wyckoff (ללא תלות ברווח)")
-                st.caption("מדד Phase Follow-Through: בוחן האם זיהוי השלב הוביל לתנועת מחיר מצופה (יעד של 4% תוך 20 ימי מסחר), במנותק מניהול עסקאות כלכלי או Stop-Loss.")
+                st.caption("מדד Phase Follow-Through: בוחן האם זיהוי השלב הוביל לתנועת מחיר מצופה במונחי הסתברות מוסדית.")
                 
                 follow_through_stats = calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04)
                 if follow_through_stats:
@@ -537,8 +544,6 @@ def screen_monitor() -> None:
                 
     st.markdown("---")
     st.markdown("#### הורדת מודלים (Cloud Models Archive)")
-    st.caption("כאן תוכל להוריד מודלים שאומנו על ידי מנוע ה-AI למחשב המקומי שלך ולראות מדדי דיאגנוסטיקה.")
-
     if st.button("🔄 רענן מודלים מהדיסק"):
         st.session_state.model_archive = load_all_models_from_disk()
 
@@ -548,72 +553,24 @@ def screen_monitor() -> None:
         for i, slot in enumerate(list(archive.keys())):
             safe_slot = clean_filename(str(slot))
             model_path = os.path.join(MODEL_DIR, f"model_{safe_slot}.pkl")
-            
-            meta = archive[slot].get("metadata", {})
-            num_trades = meta.get("num_trades", "?")
-            acc = meta.get("train_acc", 0.0)
-            oob = meta.get("oob_acc", None)
-            cm = meta.get("cm", {})
-            exc_feat = meta.get("excluded_features", {})
-            is_small = meta.get("small_sample_warning", False)
-            ft_meta = meta.get("phase_followthrough", {})
-            label_src = meta.get("label_source", "לא ידוע / win (legacy)")
-            config_snap = meta.get("model_config_snapshot", {})
-            ml_value = meta.get("ml_value_added", {})
-            
-            oob_str = f" | OOB: {oob:.0%}" if oob is not None else ""
-            
             if os.path.exists(model_path):
                 with open(model_path, "rb") as f:
                     data = f.read()
                 
                 with cols[i % 3]:
                     st.download_button(
-                        label=f"⬇️ הורד {slot} | Acc: {acc:.0%}{oob_str}",
+                        label=f"⬇️ הורד {slot}",
                         data=data,
                         file_name=f"model_{safe_slot}.pkl",
                         mime="application/octet-stream",
                         use_container_width=True,
                     )
-                    
-                    st.caption(f"🎯 **Label:** `{label_src}`")
-                    
-                    if ml_value:
-                        imp = ml_value.get('improvement', 0)
-                        if imp > 3.0:
-                            st.caption(f"⚡ **ערך מוסף ל-ML:** {imp:+.1f} נקודות")
-                        else:
-                            st.caption(f"⚠️ **אין ערך מוסף ברור ל-ML:** ({imp:+.1f} נק')")
-                    
-                    if acc and oob is not None:
-                        gap = acc - oob
-                        if gap >= 0.10:
-                            st.caption("⚠️ חשש ל-Overfitting (פער Train/OOB מעל 10%)")
-                            
-                    if is_small:
-                        st.caption(f"⚠️ אזהרת מדגם קטן ({num_trades} עסקאות)")
-                        
-                    with st.expander("📌 דיאגנוסטיקה", expanded=False):
-                        if ml_value:
-                            st.markdown(f"**ML Value Diagnostic:**<br>Baseline (Naive): {ml_value.get('baseline_rate', 0):.1%}<br>ML OOB Acc: {ml_value.get('oob_acc', 0):.1%}<br>Value Added: **{ml_value.get('improvement', 0):+.2f}** pts", unsafe_allow_html=True)
-                            st.markdown("---")
-                            
-                        if cm and "tn" in cm:
-                            st.markdown(f"**Confusion Matrix:**<br>TN={cm['tn']} | FP={cm['fp']}<br>FN={cm['fn']} | TP={cm['tp']}", unsafe_allow_html=True)
-                        if config_snap:
-                            st.markdown("**Model Config:**")
-                            for c_key, c_val in config_snap.items():
-                                st.markdown(f"- `{c_key}`: {c_val}")
-                        if exc_feat:
-                            st.markdown("**Excluded Features:**")
-                            for ef_name, ef_rsn in exc_feat.items():
-                                st.markdown(f"- `{ef_name}`: {ef_rsn}")
     else:
         st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
 def screen_ml_trainer() -> None:
     st.markdown("### 🧠 Wyckoff Pattern AI Trainer (Institutional Grade)")
-    st.caption("אימון מודל Random Forest עם ניהול תהליכי רקע אסינכרוני. מותאם לסביבת הייצור ב-Google Cloud Run.")
+    st.caption("אימון מודל AI מבוסס על איתור הסתברויות לצבירה מוסדית. מותאם ל-Cloud Run.")
 
     status = "Waiting"
     progress_text = ""
@@ -628,8 +585,8 @@ def screen_ml_trainer() -> None:
             progress_text = status_data.get("progress", "")
             if status.lower() == "running":
                 is_running = True
-        except Exception as e:
-            logger.warning("Failed to read status file: %s", e)
+        except Exception:
+            pass
 
     if not is_running and os.path.exists(AUTO_TRAINER_PID_FILE):
         is_running = True
@@ -645,32 +602,13 @@ def screen_ml_trainer() -> None:
     if is_running:
         st.info(f"🟢 **סטטוס מערכת:** רץ כרגע ברקע | {progress_text}")
     elif status.lower() == "completed":
-        st.success("✅ **סטטוס מערכת:** האימון הסתיים בהצלחה. עבור למסך ה-Monitor להורדת המודלים.")
+        st.success("✅ **סטטוס מערכת:** האימון הסתיים בהצלחה.")
     elif status.lower() == "error":
-        st.error("🔴 **סטטוס מערכת:** תהליך נכשל. סקור את הלוגים למטה ונסה שוב.")
+        st.error("🔴 **סטטוס מערכת:** תהליך נכשל. סקור את הלוגים למטה.")
     else:
-        st.warning("⏳ **סטטוס מערכת:** בהמתנה להוראות ביצוע (Standby).")
+        st.warning("⏳ **סטטוס מערכת:** בהמתנה להוראות ביצוע.")
 
-    EXTENDED_SECTORS = {
-        "טכנולוגיה ומומנטום מוסדי (Tech & High Conviction)": [
-            "NVDA", "DELL", "PANW", "MSFT", "AAPL", "AMD", "CRWD", "AVGO",
-            "PLTR", "SMCI", "META", "GOOGL"
-        ],
-        "תשתיות ופיננסים (Infrastructure & Value)": [
-            "BN", "BRK-B", "JPM", "V", "MA", "COST", "WMT", "CAT", "BA",
-            "JNJ", "UNH"
-        ],
-        "סחורות ואנרגיה קשה (Hard Assets & Commodities)": [
-            "GLD", "SLV", "NEM", "GOLD", "PAAS", "XOM", "CVX", "FCX",
-            "WPM", "OXY", "COP"
-        ],
-        "קריפטו וטכנולוגיות חדשות (Crypto & Disruptive)": [
-            "BTC-USD", "ETH-USD", "COIN", "MSTR", "HOOD", "SQ", "PYPL",
-            "MARA", "RIOT"
-        ]
-    }
-
-    all_possible_tickers = [t for group in EXTENDED_SECTORS.values() for t in group]
+    all_possible_tickers = ["NVDA", "AAPL", "MSFT", "BN", "BTC-USD", "GLD", "TSLA"]
 
     for t in all_possible_tickers:
         chk_key = f"chk_{t}"
@@ -679,65 +617,37 @@ def screen_ml_trainer() -> None:
 
     if not is_running:
         st.markdown("#### 🎯 הקצאת נכסים לאימון")
-        for sector, tickers in EXTENDED_SECTORS.items():
-            with st.expander(f"📁 {sector} ({len(tickers)} נכסים)", expanded=False):
-                col1, col2, _ = st.columns([1, 1, 4])
-                if col1.button("בחר הכל", key=f"all_{sector}"):
-                    for t in tickers:
-                        st.session_state[f"chk_{t}"] = True
-                    st.rerun()
-                if col2.button("נקה הכל", key=f"clear_{sector}"):
-                    for t in tickers:
-                        st.session_state[f"chk_{t}"] = False
-                    st.rerun()
-
-                cols = st.columns(5)
-                for i, t in enumerate(tickers):
-                    cols[i % 5].checkbox(t, key=f"chk_{t}")
+        cols = st.columns(5)
+        for i, t in enumerate(all_possible_tickers):
+            cols[i % 5].checkbox(t, key=f"chk_{t}")
 
         st.session_state.selected_tickers = [
-            t for t in all_possible_tickers
-            if st.session_state.get(f"chk_{t}", False)
+            t for t in all_possible_tickers if st.session_state.get(f"chk_{t}", False)
         ]
-        st.markdown(f"**סה״כ הוקצו לאימון:** {len(st.session_state.selected_tickers)} נכסים")
 
         if st.button("🚀 הפעל אימון נתונים (Execute Script)", type="primary", use_container_width=True):
             if not st.session_state.selected_tickers:
-                st.error("פעולה נדחתה. יש לבחור לפחות מניה אחת לאימון.")
+                st.error("יש לבחור לפחות מניה אחת לאימון.")
                 return
 
             ensure_dirs()
-
             try:
                 with open(BATCH_CONFIG_FILE, "w", encoding="utf-8") as f:
                     json.dump({"tickers": list(st.session_state.selected_tickers)}, f)
             except Exception as e:
-                st.error(f"שגיאה בכתיבת קובץ קונפיגורציה: {e}")
+                st.error(f"שגיאה בכתיבת קונפיגורציה: {e}")
                 return
 
-            files_to_clean = [
-                AUTO_TRAINER_DONE_FLAG,
-                AUTO_TRAINER_STATUS_FILE,
-                AUTO_TRAINER_PID_FILE,
-                AUTO_TRAINER_LOG_FILE
-            ]
+            files_to_clean = [AUTO_TRAINER_DONE_FLAG, AUTO_TRAINER_STATUS_FILE, AUTO_TRAINER_PID_FILE, AUTO_TRAINER_LOG_FILE]
             for fp in files_to_clean:
                 if os.path.exists(fp):
                     try:
                         os.remove(fp)
                     except OSError:
-                        try:
-                            with open(fp, "w") as f:
-                                f.truncate(0)
-                        except Exception:
-                            pass
+                        pass
 
             trainer_path = os.path.join(BASE_DIR, "auto_trainer_fixed.py")
-            if not os.path.exists(trainer_path):
-                st.error(f"הקובץ {trainer_path} לא נמצא. ודא שהוא קיים ב-Deploy האחרון ל-Cloud Run.")
-                return
-
-            try:
+            if os.path.exists(trainer_path):
                 log_fd = open(AUTO_TRAINER_LOG_FILE, "a", encoding="utf-8")
                 subprocess.Popen(
                     [sys.executable, trainer_path],
@@ -748,20 +658,14 @@ def screen_ml_trainer() -> None:
                     start_new_session=True
                 )
                 log_fd.close() 
-                
-                st.success("הפקודה נשלחה בהצלחה לשרת! מתחיל במעקב ביצועים...")
+                st.success("הפקודה נשלחה לשרת!")
                 time.sleep(1.5)
                 st.rerun()
-            except Exception as e:
-                st.error(f"קריסת מערכת בהפעלת התהליך המוסדי: {e}")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("🔄 רענן סטטוס אימון (Refresh Status)", use_container_width=True):
+    if st.button("🔄 רענן סטטוס אימון"):
         st.rerun()
 
-    st.markdown("---")
-    st.markdown("#### 📜 לוגים מהשרת (Live Terminal Output)")
-
+    st.markdown("#### 📜 לוגים מהשרת")
     log_content = "ממתין לפקודות שרת..."
     if os.path.exists(AUTO_TRAINER_LOG_FILE):
         try:
@@ -769,90 +673,146 @@ def screen_ml_trainer() -> None:
                 lines = f.readlines()
             log_content = "".join(lines[-100:]) if lines else "קובץ הלוג ריק כרגע."
         except Exception:
-            log_content = "[שגיאה] לא ניתן לגשת לקובץ הלוג של המערכת."
-
-    st.text_area(
-        "auto_trainer_error.log",
-        value=log_content,
-        height=320,
-        disabled=True,
-        label_visibility="collapsed"
-    )
-
-    if st.button("♻️ ריבוט מערכת (נקה נתונים והפעל מחדש)", type="secondary", use_container_width=True):
-        files_to_clean = [
-            AUTO_TRAINER_DONE_FLAG,
-            AUTO_TRAINER_STATUS_FILE,
-            AUTO_TRAINER_PID_FILE,
-            AUTO_TRAINER_LOG_FILE
-        ]
-        for fp in files_to_clean:
-            if os.path.exists(fp):
-                try:
-                    os.remove(fp)
-                except OSError:
-                    pass
-        st.session_state.clear()
-        st.rerun()
-
-    if is_running:
-        time.sleep(3.5)
-        st.rerun()
+            pass
+    st.text_area("Log", value=log_content, height=300, disabled=True, label_visibility="collapsed")
 
 def screen_trading_scout() -> None:
-    st.markdown("### 📈 Trading Scout - המלצת מסחר חכמה")
-    st.info("⚠️ **הבהרה קריטית:** זהו כלי עזר אנליטי אוטומטי בלבד ואינו בשום אופן תחליף לייעוץ השקעות מוסמך. כל החלטת מסחר באחריותך הבלעדית.")
+    st.markdown("### 📈 Trading Scout - תכנון עסקאות ובדיקת הסתברויות")
+    st.info("⚠️ **הבהרה קריטית:** זהו כלי עזר אנליטי אוטומטי. הדגש הוא על ההסתברות לאיסוף מוסדי אמיתי. לא משמש ייעוץ.")
     
-    col1, col2 = st.columns([1, 2])
-    ticker = col1.text_input("הזן סימול (Ticker) לקבלת המלצה (לדוגמה: AAPL, NVDA):", value="AAPL").strip().upper()
-    
-    if col1.button("💡 קבל המלצה", type="primary", use_container_width=True):
+    # Mode selector
+    mode = st.radio("בחר פרופיל הסתברות (Risk Mode):", ["Conservative (שמרני)", "Balanced (מאוזן)", "Optimistic (אופטימי)"], index=1, horizontal=True)
+    mode_map = {"Conservative (שמרני)": "Conservative", "Balanced (מאוזן)": "Balanced", "Optimistic (אופטימי)": "Optimistic"}
+    selected_mode = mode_map[mode]
+
+    cols_input = st.columns(4)
+    tickers_input = []
+    default_tickers = ["NVDA", "AAPL", "META", "TSLA"]
+    for i in range(4):
+        val = cols_input[i].text_input(f"טיקר {i+1}", value=default_tickers[i], key=f"ts_ticker_{i}").strip().upper()
+        tickers_input.append(val)
+        
+    if st.button("💡 קבל המלצות לכל הטיקרים", type="primary", use_container_width=True):
         if not SCOUT_CORE_AVAILABLE:
             st.error("מודול הליבה חסר, לא ניתן לייצר המלצה.")
             return
             
-        with st.spinner(f"מנתח נתונים ומפיק המלצה עבור {ticker}..."):
-            try:
-                from trading_scout import get_trading_recommendation
-                rec_data = get_trading_recommendation(ticker)
-            except Exception as e:
-                st.error(f"שגיאה בהפעלת מודול ההמלצות: {e}")
-                return
+        from trading_scout import get_trading_recommendation
+        
+        # UI rendering 2x2 Grid
+        for i in range(0, 4, 2):
+            row_cols = st.columns(2)
+            for j in range(2):
+                idx = i + j
+                if idx < 4 and tickers_input[idx]:
+                    tkr = tickers_input[idx]
+                    with row_cols[j]:
+                        with st.spinner(f"מנתח {tkr}..."):
+                            try:
+                                rec_data = get_trading_recommendation(tkr, mode=selected_mode)
+                            except Exception as e:
+                                st.error(f"שגיאה ב-{tkr}: {e}")
+                                continue
+                                
+                        if rec_data.get("recommendation") == "ERROR":
+                            st.warning(f"**{tkr}:** {rec_data.get('reason')}")
+                            continue
+
+                        rec = rec_data["recommendation"]
+                        color_map = {
+                            "STRONG BUY": "#16a34a", "BUY": "#22c55e",
+                            "HOLD": "#eab308", "SELL": "#f97316", "STRONG SELL": "#dc2626"
+                        }
+                        color = color_map.get(rec, "#94a3b8")
+                        
+                        st.markdown(f"""
+                        <div class='scout-card'>
+                            <div class='scout-title'>
+                                {tkr} <span style='float:left; color:{color};'>{rec}</span>
+                            </div>
+                            <p style='text-align:center; margin-bottom:0;'>Institutional Accumulation Probability</p>
+                            <div class='scout-prob'>{rec_data['prob_engine']['accumulation_chance']}%</div>
+                            <p style='text-align:center; color:#9db0c9; font-size:0.9em; margin-top:-5px;'>Wyckoff Phase: {rec_data['current_phase']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        t_cols = st.columns(2)
+                        with t_cols[0]:
+                            st.markdown("**Wyckoff Probability Engine**")
+                            st.caption(f"🚀 פריצה ב-30 יום: **{rec_data['prob_engine']['breakout_30d']}%**")
+                            st.caption(f"📉 סיכון להפצה: **{rec_data['prob_engine']['distribution_risk']}%**")
+                        with t_cols[1]:
+                            st.markdown("**Smart Money Dashboard**")
+                            for k, v in rec_data['dashboard'].items():
+                                st.caption(f"{k}: {v}")
+                                
+                        st.markdown(f"**Failure Detection (הגנה ממלכודות):**")
+                        for warn in rec_data['failure_warnings']:
+                            st.caption(warn)
+                            
+                        with st.expander("📝 תוכנית מסחר מלאה (Trading Plan)", expanded=False):
+                            st.markdown(f"**פעולה נדרשת:** {rec_data['action']}")
+                            st.markdown(f"**מחיר נוכחי:** ${rec_data['entry_price']:.2f}")
+                            st.markdown(f"**Stop Loss:** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
+                            st.markdown(f"**Take Profit 1:** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
+                            st.markdown(f"**Take Profit 2:** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
+                            st.markdown(f"**יחס סיכוי/סיכון:** {rec_data['rr_ratio']}")
+                            st.markdown(f"**טווח זמן אופטימלי:** {rec_data['timeframe']}")
+                            st.markdown("---")
+                            st.markdown(f"**הסבר:** {rec_data['simple_explain']}")
+                            
+                        with st.expander("⏮️ Wyckoff Replay Engine (היסטוריה דומה)", expanded=False):
+                            st.markdown("מצאתי תרחישים מוסדיים דומים בעבר על סמך ציון האיסוף:")
+                            for rep in rec_data['replay']:
+                                st.markdown(f"- {rep}")
+
+def screen_institutional_map() -> None:
+    st.markdown("### 🗺️ Institutional Map - מפת כסף חכם סקטוריאלית")
+    st.markdown("מסך זה ממפה את הסקטורים המרכזיים בשוק ומציג את ממוצע ה-**Institutional Accumulation Probability** (הסתברות לצבירה מוסדית) שלהם בהתבסס על מניות מובילות בכל סקטור.")
+    
+    MAP_SECTORS = {
+        "טכנולוגיה (Technology)": ["AAPL", "MSFT", "NVDA", "AVGO", "CRM"],
+        "סמיקונדקטורס (Semiconductors)": ["AMD", "TXN", "QCOM", "INTC", "SMCI"],
+        "פיננסים (Financials)": ["JPM", "V", "MA", "BAC", "GS"],
+        "בריאות (Healthcare)": ["JNJ", "UNH", "LLY", "MRK", "ABBV"],
+        "אנרגיה וסחורות (Energy & Commodities)": ["XOM", "CVX", "GLD", "SLV", "COP"]
+    }
+    
+    if st.button("🗺️ טען מפה מוסדית", type="primary"):
+        with st.spinner("סורק מניות מובילות בכל סקטור לחילוץ נתוני איסוף..."):
+            engine = FactorEngine(BacktestConfig())
+            sector_results = {}
             
-        if rec_data.get("recommendation") == "ERROR":
-            st.error(rec_data.get("reason"))
-            return
+            for sector, tickers in MAP_SECTORS.items():
+                sector_cis = []
+                for t in tickers:
+                    df = get_cached_data(t, period="6mo")
+                    if df is not None and not df.empty and len(df) > 40:
+                        factors = engine.compute(df)
+                        cis = engine.composite_cis(factors, df)
+                        sector_cis.append(float(cis.iloc[-1]))
+                
+                if sector_cis:
+                    avg_cis = sum(sector_cis) / len(sector_cis)
+                    sector_results[sector] = avg_cis
             
-        rec = rec_data["recommendation"]
-        
-        color_map = {
-            "STRONG BUY": "#16a34a",
-            "BUY": "#22c55e",
-            "HOLD": "#eab308",
-            "SELL": "#f97316",
-            "STRONG SELL": "#dc2626"
-        }
-        
-        color = color_map.get(rec, "#94a3b8")
-        
-        st.markdown(f"""
-        <div style="background-color: rgba(0,0,0,0.2); border: 2px solid {color}; border-radius: 12px; padding: 25px; text-align: center; margin-bottom: 25px;">
-            <h2 style="margin: 0; color: {color}; font-size: 2.8rem; font-weight: bold;">{rec}</h2>
-            <p style="font-size: 1.3rem; color: #d9e6f2; margin-top: 15px;">{rec_data['reason']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.metric("ציון מוסדי (CIS)", f'{rec_data["cis_score"]:.1f}')
-        with m2:
-            st.metric("שלב Wyckoff", rec_data["current_phase"])
-        with m3:
-            st.metric("יעד רווח משוער", f'+{rec_data["suggested_target"]}%')
-        with m4:
-            st.metric("הגנת הפסד (Stop Loss)", f'-{rec_data["suggested_stop_loss"]}%')
-            
-        st.caption(f"מחיר סגירה לחישוב: ${rec_data.get('close_price', 0):.2f}")
+            if sector_results:
+                cols = st.columns(len(sector_results))
+                for i, (sector, avg_cis) in enumerate(sector_results.items()):
+                    with cols[i]:
+                        color = "#16a34a" if avg_cis >= 65 else ("#eab308" if avg_cis >= 50 else "#dc2626")
+                        st.markdown(f"""
+                        <div style='background:rgba(15, 23, 42, 0.8); border-top:4px solid {color}; padding:15px; border-radius:8px; text-align:center;'>
+                            <h4 style='margin:0; font-size:1.1rem; color:#e0f2fe;'>{sector}</h4>
+                            <p style='font-size:0.9rem; color:#9db0c9; margin-top:5px;'>Accumulation Index</p>
+                            <h2 style='color:{color}; margin:0;'>{avg_cis:.1f}%</h2>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                st.markdown("---")
+                st.info("💡 **תובנה:** סקטורים עם אינדקס מעל 65% נתונים כעת תחת איסוף מוסדי כבד ויש לחפש בהם הזדמנויות לונג.")
+            else:
+                st.error("לא ניתן היה לטעון נתונים עבור המפה.")
 
 def main() -> None:
     init_session_state()
@@ -864,8 +824,10 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    tabs = st.tabs(["⬛ Wyckoff", "📊 Backtest", "🔎 Scanner", "🧠 ML Trainer", "👁️ Monitor", "📈 Trading Scout"])
-    screen_fns = [screen_wyckoff, screen_backtest, screen_scanner, screen_ml_trainer, screen_monitor, screen_trading_scout]
+    # סדר הטאבים המבוקש
+    tabs = st.tabs(["🧠 ML Trainer", "👁️ Monitor", "📊 Backtest", "📈 Trading Scout", "🗺️ Institutional Map", "🏠 Home (Wyckoff Analyst)"])
+    screen_fns = [screen_ml_trainer, screen_monitor, screen_backtest, screen_trading_scout, screen_institutional_map, screen_home]
+    
     for tab, fn in zip(tabs, screen_fns):
         with tab:
             fn()
