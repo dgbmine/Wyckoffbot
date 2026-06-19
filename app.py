@@ -407,6 +407,8 @@ def screen_monitor() -> None:
             exc_feat = meta.get("excluded_features", {})
             is_small = meta.get("small_sample_warning", False)
             ft_meta = meta.get("phase_followthrough", {})
+            label_src = meta.get("label_source", "לא ידוע / win (legacy)")
+            config_snap = meta.get("model_config_snapshot", {})
             
             oob_str = f" | OOB: {oob:.0%}" if oob is not None else ""
             
@@ -423,6 +425,8 @@ def screen_monitor() -> None:
                         use_container_width=True,
                     )
                     
+                    st.caption(f"🎯 **Label Source:** `{label_src}`")
+                    
                     if acc and oob is not None:
                         gap = acc - oob
                         if gap >= 0.10:
@@ -436,6 +440,10 @@ def screen_monitor() -> None:
                     with st.expander("📌 דיאגנוסטיקה", expanded=False):
                         if cm and "tn" in cm:
                             st.markdown(f"**Confusion Matrix:**<br>TN={cm['tn']} | FP={cm['fp']}<br>FN={cm['fn']} | TP={cm['tp']}", unsafe_allow_html=True)
+                        if config_snap:
+                            st.markdown("**Model Config Snapshot:**")
+                            for c_key, c_val in config_snap.items():
+                                st.markdown(f"- `{c_key}`: {c_val}")
                         if exc_feat:
                             st.markdown("**Excluded Features:**")
                             for ef_name, ef_rsn in exc_feat.items():
