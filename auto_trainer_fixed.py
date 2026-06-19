@@ -14,6 +14,9 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import confusion_matrix
 
+# תיקון 1 + 2: משתנה קונפיגורציה גלובלי (מאפשר A/B Testing עתידי)
+LABEL_SOURCE = "phase_success" 
+
 try:
     import streamlit as _st  # type: ignore
     try:
@@ -353,7 +356,10 @@ def process_sector(slot, tickers, base_threshold=50):
         log_message(f"Sector {slot} is empty after dedupe. Skipping.")
         return
 
-    log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers. Target Label: Phase Follow-Through.")
+    # חותמת זהות של הריצה (תיקון 1)
+    log_message(f"RUN CONFIG: LabelSource={LABEL_SOURCE}, ModelParams={{'max_depth': 3, 'min_samples_split': 30, 'min_samples_leaf': 15}}")
+    log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers. Target Label: {LABEL_SOURCE}.")
+    
     _update_progress(slot, extra=f"מתחיל אצווה עם {len(tickers)} נכסים")
 
     all_features = []
@@ -412,7 +418,11 @@ def process_sector(slot, tickers, base_threshold=50):
                     continue
 
                 feat = factors.loc[entry_date].to_dict()
-                feat["label"] = 1 if bool(row.get("phase_success", row.get("win"))) else 0
+                
+                # קריאת יעד האימון דינמית בהתאם למשתנה LABEL_SOURCE
+                label_val = row.get(LABEL_SOURCE, row.get("win"))
+                feat["label"] = 1 if bool(label_val) else 0
+                
                 feat["ticker"] = ticker
                 if "exit_date" in row.index:
                     feat["exit_date"] = row.get("exit_date")
@@ -515,20 +525,17 @@ def process_sector(slot, tickers, base_threshold=50):
         small_sample_warning = True
         log_message(f"[{slot}] WARNING: Sample size is small ({sample_size} trades) — OOB/test accuracy estimates may carry high variance and should be interpreted with caution.")
 
-    # --- התיקון למניעת Overfitting ---
-    # הורדת מורכבות העץ כדי שיוכל להכליל טוב יותר על כמות קטנה של דגימות
     model = RandomForestClassifier(
         n_estimators=100,
-        max_depth=3,            # במקום 4 - עץ פשוט יותר
-        min_samples_split=30,   # במקום 20 - מונע פיצולים אקראיים
-        min_samples_leaf=15,    # במקום 10 - מחייב עדויות חזקות יותר בעלה הסופי
+        max_depth=3,            
+        min_samples_split=30,   
+        min_samples_leaf=15,    
         random_state=42,
         class_weight="balanced",
         n_jobs=-1,
         oob_score=True,
         bootstrap=True
     )
-    # --------------------------------
 
     try:
         model.fit(X, y)
@@ -589,6 +596,7 @@ def process_sector(slot, tickers, base_threshold=50):
     except Exception:
         pass
 
+    # שמירת המטא-דאטה כולל ה-snapshot למטרות שחזוריות
     payload = {
         "model": model,
         "metadata": {
@@ -609,7 +617,13 @@ def process_sector(slot, tickers, base_threshold=50):
             "cm": cm_dict,
             "small_sample_warning": small_sample_warning,
             "top_features": top_4_features_names,
-            "phase_followthrough": sector_ft_stats
+            "phase_followthrough": sector_ft_stats,
+            "label_source": LABEL_SOURCE,
+            "model_config_snapshot": {
+                "max_depth": 3,
+                "min_samples_split": 30,
+                "min_samples_leaf": 15
+            }
         },
     }
 
