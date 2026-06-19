@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.2
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.3
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
@@ -257,7 +258,8 @@ def _run_scan_row(engine, ticker: str, scan_th: float):
     score = float(cis.iloc[-1])
     if score < scan_th:
         return None
-    return {"Ticker": ticker, "Score": round(score, 1), "Phase": str(phase.iloc[-1]), "_df": df}
+    allowed = check_phase_entry_allowed(str(phase.iloc[-1]), "Balanced")
+    return {"Ticker": ticker, "Score": round(score, 1), "Phase": str(phase.iloc[-1]), "Allowed?": "✅ כן" if allowed else "❌ לא", "_df": df}
 
 def init_session_state() -> None:
     if "model_archive" not in st.session_state:
@@ -316,6 +318,7 @@ def screen_wyckoff() -> None:
             ))
             fig_gauge.update_layout(height=230, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_gauge, use_container_width=True)
+            st.caption("ציון מ-0 עד 100 המודד את עוצמת כניסת הכספים המוסדיים. מעל 65 - אזור כניסה פוטנציאלי.")
 
         with right:
             st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
@@ -360,8 +363,44 @@ def screen_wyckoff() -> None:
                     """
                 st.markdown(html, unsafe_allow_html=True)
                 st.caption(f"**זיהוי מלא:** `{cp}`")
+                st.markdown("<div style='font-size:0.9em; color:#9db0c9; margin-top:5px;'>התרשים מדגיש את המיקום המשוער של הנכס במחזור הכספים המוסדי.</div>", unsafe_allow_html=True)
             
         st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
+        
+        st.markdown("#### 📉 ניתוח ויזואלי של המחיר והנפח (Price & Volume Action)")
+        chart_df = result["df"].iloc[-150:] 
+        fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+        
+        fig_chart.add_trace(go.Candlestick(
+            x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], 
+            low=chart_df['Low'], close=chart_df['Close'], name="Price"), 
+            row=1, col=1)
+            
+        colors = ['#16a34a' if c >= o else '#dc2626' for c, o in zip(chart_df['Close'], chart_df['Open'])]
+        fig_chart.add_trace(go.Bar(
+            x=chart_df.index, y=chart_df['Volume'], marker_color=colors, name="Volume"), 
+            row=2, col=1)
+            
+        last_date = chart_df.index[-1]
+        last_low = chart_df['Low'].iloc[-1]
+        
+        fig_chart.add_annotation(
+            x=last_date, y=last_low,
+            text=f"📌 {result['current_phase']}",
+            showarrow=True,
+            arrowhead=1,
+            ax=0,
+            ay=40,
+            font=dict(color="white", size=11),
+            bgcolor="rgba(0,0,0,0.6)",
+            bordercolor="rgba(255,255,255,0.3)"
+        )
+            
+        fig_chart.update_layout(
+            height=450, margin=dict(l=20, r=20, t=20, b=20), 
+            xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+        )
+        st.plotly_chart(fig_chart, use_container_width=True)
             
         # הסברים
         with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=True):
@@ -369,8 +408,14 @@ def screen_wyckoff() -> None:
             
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
 
+        st.markdown("---")
+        st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
+
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
+    
+    st.info("ℹ️ **מה עושה מסך ה-Backtest?**\n\nמערכת זו בודקת כיצד אסטרטגיית ההשקעה לפי שיטת Wyckoff הייתה מתפקדת בעבר על המניה הנבחרת. היא מסמלת קניות ומכירות אוטומטיות לפי הציון והפאזות ומציגה את הביצועים ההיסטוריים. **חשוב לזכור:** ביצועי העבר אינם מובטחים בעתיד והתוצאות הן תיאורטיות להמחשה בלבד.")
+    
     col1, col2 = st.columns([1,1])
     ticker = col1.text_input("Ticker לבדיקה", value="COST").strip().upper()
     bt_period = col2.selectbox("תקופת Backtest:", ["1y", "2y", "5y", "10y", "max"], index=1)
@@ -384,7 +429,15 @@ def screen_backtest() -> None:
         if df is None or df.empty:
             st.error("אין נתונים.")
             return
+            
         t_count = len(audit_df)
+        if t_count > 0:
+            win_rate = audit_df['is_win'].mean() * 100
+            total_profit_pct = df['Cum_Strategy'].iloc[-1] * 100 if 'Cum_Strategy' in df.columns else 0.0
+            st.success(f"**סיכום אסטרטגיה:** האסטרטגיה הניבה תשואה של **{total_profit_pct:.2f}%** בתקופה זו, עם **{t_count}** עסקאות ו-**{win_rate:.1f}%** אחוזי הצלחה.")
+        else:
+            st.warning("לא בוצעו עסקאות שעמדו בתנאים בתקופה זו.")
+            
         st.metric("עסקאות סה״כ", t_count)
         engine = FactorEngine(BacktestConfig())
         cis_series = engine.composite_cis(engine.compute(df), df)
