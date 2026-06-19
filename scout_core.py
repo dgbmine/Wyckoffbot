@@ -428,14 +428,21 @@ class FactorEngine:
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             elif df['Low'].iloc[i] < l60 + a and c < s50:
-                # הבחנה מבוקרת וזהירה בין Spring חזק, Spring רגיל ל-False Spring
+                # הבחנה ברורה ומשופרת בין Spring חזק, Spring רגיל ל-False Sweep על בסיס דחיית המחיר
                 obv_min_prev = obv_min60.iloc[i-1] if i > 0 and not pd.isna(obv_min60.iloc[i-1]) else obv.iloc[i]
                 
-                if df['Low'].iloc[i] < l60 and v > v_ma * 1.5 and c > df['Open'].iloc[i] and obv.iloc[i] >= obv_min_prev:
+                is_new_low = df['Low'].iloc[i] < l60
+                positive_close = c > df['Open'].iloc[i]
+                # דרישה ל"דחייה" - סגירה בחצי העליון של הנר מעידה על קונים אגרסיביים
+                strong_rejection = c > df['Low'].iloc[i] + (df['High'].iloc[i] - df['Low'].iloc[i]) * 0.5
+                high_volume = v > v_ma * 1.5
+                obv_holds = obv.iloc[i] >= obv_min_prev
+
+                if is_new_low and high_volume and strong_rejection and obv_holds:
                     phases.iloc[i] = "Phase C (Strong Spring)"
-                elif df['Low'].iloc[i] < l60 and (c < df['Open'].iloc[i] or obv.iloc[i] < obv_min_prev):
+                elif is_new_low and (c < df['Low'].iloc[i] + (df['High'].iloc[i] - df['Low'].iloc[i]) * 0.3 or not obv_holds):
                     phases.iloc[i] = "Failed Sweep / Warning" 
-                elif c > df['Open'].iloc[i] and v > v_ma * 1.2:
+                elif positive_close and v > v_ma * 1.2:
                     phases.iloc[i] = "Phase C (Spring / Liquidity Sweep)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
