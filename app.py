@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.0
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.1
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -223,7 +223,8 @@ def inject_css() -> None:
     """, unsafe_allow_html=True)
 
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
-def get_cached_data(ticker: str, period: str = "1y", start: Optional[str] = None, end: Optional[str] = None):
+def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = None, end: Optional[str] = None):
+    # שונה ל-2y כדי להבטיח ממוצע נע 200 תמיד זמין
     return get_data(ticker, period, start, end) if SCOUT_CORE_AVAILABLE else None
 
 def _compute_wyckoff(ticker: str):
@@ -248,8 +249,9 @@ def _compute_wyckoff(ticker: str):
     }
 
 def _run_scan_row(engine, ticker: str, scan_th: float):
-    df = get_cached_data(ticker, period="6mo")
-    if df is None or len(df) <= 30:
+    # שונה ל-1y בסורק כדי למנוע היעדר נתונים במניות מסוימות עקב דרישת 200 ימים
+    df = get_cached_data(ticker, period="1y")
+    if df is None or len(df) <= 60:
         return None
     factors = engine.compute(df)
     cis = engine.composite_cis(factors, df)
