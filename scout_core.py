@@ -41,6 +41,10 @@ def get_data(ticker, period="2y", start=None, end=None):
             return idx
 
         df.index = _safe_tz_drop(df.index)
+        
+        # ניקוי רשומות כפולות וחסרות לשיפור יציבות הנתונים
+        df = df[~df.index.duplicated(keep='first')]
+        df.dropna(subset=['Close', 'Volume'], inplace=True)
         df = df.sort_index()
 
         # הורדת נתוני עזר (SPY ו-VIX)
@@ -63,13 +67,19 @@ def get_data(ticker, period="2y", start=None, end=None):
 
         if spy_df is not None and not spy_df.empty:
             spy_df.index = _safe_tz_drop(spy_df.index)
+            spy_df = spy_df[~spy_df.index.duplicated(keep='first')]
+            spy_df.dropna(subset=['Close'], inplace=True)
             df = df.join(spy_df[["Close"]].rename(columns={"Close": "spy_close"}), how="left")
+            df['spy_close'] = df['spy_close'].ffill()
         else:
             df["spy_close"] = np.nan
 
         if vix_df is not None and not vix_df.empty:
             vix_df.index = _safe_tz_drop(vix_df.index)
+            vix_df = vix_df[~vix_df.index.duplicated(keep='first')]
+            vix_df.dropna(subset=['Close'], inplace=True)
             df = df.join(vix_df[["Close"]].rename(columns={"Close": "vix_close"}), how="left")
+            df['vix_close'] = df['vix_close'].ffill()
         else:
             df["vix_close"] = np.nan
 
@@ -154,7 +164,7 @@ def check_phase_entry_allowed(phase, risk_profile):
     if "לא בתהליך" in phase or "Markdown" in phase or "Distribution" in phase or "TRANSITION" in phase or "UNCERTAIN" in phase:
         return False
     if risk_profile == "Aggressive":
-        return any(p in phase for p in ["Phase C", "Phase D", "Phase E", "Spring", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
+        return any(p in phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
     elif risk_profile == "Balanced":
         return any(p in phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
     elif risk_profile == "Conservative":
@@ -176,7 +186,7 @@ def calculate_phase_followthrough(df: pd.DataFrame, horizon: int = 20, threshold
     phases = df['wyckoff_phase'].values
     closes = df['Close'].values
     
-    bullish_phases = ["Phase C (Spring", "Spring", "Phase D (SOS", "Phase D (LPS", "Re-accumulation", "Phase E (Markup)"]
+    bullish_phases = ["Phase C", "Spring", "Phase D", "Re-accumulation", "Phase E (Markup)"]
     bearish_phases = ["Markdown", "Distribution", "Heavy Supply"]
     
     n = len(df)
@@ -353,7 +363,6 @@ class FactorEngine:
         norm_score = (score / total_w.replace(0, np.nan).fillna(1) * 100 + 50).clip(0, 100).round(1)
         
         if "f36_wyckoff_score" in factors.columns:
-            # ה-Boost של f36 הופחת מפי 18 לפי 5 כדי למנוע עיוות של שאר הפיצ'רים המוצלחים
             boost = factors["f36_wyckoff_score"] * 5 
             norm_score = (norm_score + boost).clip(0, 100)
             
@@ -378,6 +387,7 @@ class FactorEngine:
         close_diff = close.diff()
         obv = (np.sign(close_diff) * vol).cumsum()
         obv_diff = obv.diff(10)
+        obv_min60 = obv.rolling(60).min()
         
         if "spy_close" in df.columns:
             rs_spy = (close.pct_change(20) - df["spy_close"].pct_change(20)).fillna(0)
@@ -417,14 +427,21 @@ class FactorEngine:
                     phases.iloc[i] = "Phase D (SOS / Breakout)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            elif df['Low'].iloc[i] < l60 + a and c > df['Open'].iloc[i] and c < s50:
-                if v > v_ma * 1.2:
+            elif df['Low'].iloc[i] < l60 + a and c < s50:
+                # הבחנה מבוקרת וזהירה בין Spring חזק, Spring רגיל ל-False Spring
+                obv_min_prev = obv_min60.iloc[i-1] if i > 0 and not pd.isna(obv_min60.iloc[i-1]) else obv.iloc[i]
+                
+                if df['Low'].iloc[i] < l60 and v > v_ma * 1.5 and c > df['Open'].iloc[i] and obv.iloc[i] >= obv_min_prev:
+                    phases.iloc[i] = "Phase C (Strong Spring)"
+                elif df['Low'].iloc[i] < l60 and (c < df['Open'].iloc[i] or obv.iloc[i] < obv_min_prev):
+                    phases.iloc[i] = "Failed Sweep / Warning" 
+                elif c > df['Open'].iloc[i] and v > v_ma * 1.2:
                     phases.iloc[i] = "Phase C (Spring / Liquidity Sweep)"
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            elif "Spring" in prev_phase or "Accumulation" in prev_phase:
+            elif "Spring" in prev_phase or "Accumulation" in prev_phase or "Phase C" in prev_phase:
                 if c > l60 + a * 2 and c < s50 and v < v_ma * 0.8:
-                    if o_diff >= 0:
+                    if o_diff >= 0 and df['Low'].iloc[i] >= df['Low'].iloc[i-1]:
                         phases.iloc[i] = "Phase D (LPS)"
                     else:
                         phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
