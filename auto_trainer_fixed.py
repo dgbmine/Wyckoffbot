@@ -14,7 +14,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import confusion_matrix
 
-# תיקון 1 + 2: משתנה קונפיגורציה גלובלי (מאפשר A/B Testing עתידי)
+# קביעת ה-Label עליו יתאמן מודל ה-ML (לצורך שחזור מבוקר ומדידת A/B)
 LABEL_SOURCE = "phase_success" 
 
 try:
@@ -91,9 +91,19 @@ try:
         run_wyckoff_anchored_backtest,
         calculate_phase_followthrough
     )
-except Exception as e:
-    log_exception("CRITICAL ERROR: Failed to import scout_core", e)
-    _SCOUT_IMPORT_ERROR = str(e)
+except ImportError:
+    try:
+        from scout import (
+            clean_filename,
+            calculate_optimal_threshold,
+            FactorEngine,
+            BacktestConfig,
+            run_wyckoff_anchored_backtest,
+            calculate_phase_followthrough
+        )
+    except ImportError as e:
+        log_exception("CRITICAL ERROR: Failed to import scout/scout_core module", e)
+        _SCOUT_IMPORT_ERROR = str(e)
 
 TECH_TICKERS = [
     "AAPL","MSFT","NVDA","GOOGL","GOOG","AMZN","META","AVGO","CRM","ORCL",
@@ -356,7 +366,6 @@ def process_sector(slot, tickers, base_threshold=50):
         log_message(f"Sector {slot} is empty after dedupe. Skipping.")
         return
 
-    # חותמת זהות של הריצה (תיקון 1)
     log_message(f"RUN CONFIG: LabelSource={LABEL_SOURCE}, ModelParams={{'max_depth': 3, 'min_samples_split': 30, 'min_samples_leaf': 15}}")
     log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers. Target Label: {LABEL_SOURCE}.")
     
@@ -419,7 +428,6 @@ def process_sector(slot, tickers, base_threshold=50):
 
                 feat = factors.loc[entry_date].to_dict()
                 
-                # קריאת יעד האימון דינמית בהתאם למשתנה LABEL_SOURCE
                 label_val = row.get(LABEL_SOURCE, row.get("win"))
                 feat["label"] = 1 if bool(label_val) else 0
                 
@@ -488,6 +496,9 @@ def process_sector(slot, tickers, base_threshold=50):
         _update_progress(slot, extra="dataset ריק אחרי ניקוי")
         return
 
+    # חישוב אחוז ההצלחה הנאיבי (ללא ML) עבור הפאזות שעברו סינון
+    baseline_rate = float(y.mean()) if len(y) > 0 else 0.5
+
     excluded_dict = {}
     for col in excluded_cols:
         msg = f"WARNING: feature '{col}' has near-zero variance (unique <= 1). Likely uninformative. Removing from training."
@@ -554,6 +565,11 @@ def process_sector(slot, tickers, base_threshold=50):
     except Exception:
         oob_acc = float("nan")
 
+    val_diff = (oob_acc - baseline_rate) * 100.0 if not np.isnan(oob_acc) else 0.0
+    log_message(f"ML OOB Accuracy: {oob_acc:.2%} | Naive Phase-Based Baseline: {baseline_rate:.2%} | ערך מוסף: {val_diff:.2f} נקודות")
+    if val_diff < 3.0 and not np.isnan(oob_acc):
+        log_message("WARNING: ML model does not show meaningful improvement over naive phase-based baseline — consider whether additional features or a different modeling approach are needed.")
+
     cm_dict = {}
     try:
         preds = model.predict(X)
@@ -596,7 +612,6 @@ def process_sector(slot, tickers, base_threshold=50):
     except Exception:
         pass
 
-    # שמירת המטא-דאטה כולל ה-snapshot למטרות שחזוריות
     payload = {
         "model": model,
         "metadata": {
@@ -619,6 +634,11 @@ def process_sector(slot, tickers, base_threshold=50):
             "top_features": top_4_features_names,
             "phase_followthrough": sector_ft_stats,
             "label_source": LABEL_SOURCE,
+            "ml_value_added": {
+                "baseline_rate": baseline_rate,
+                "oob_acc": oob_acc,
+                "improvement": val_diff
+            },
             "model_config_snapshot": {
                 "max_depth": 3,
                 "min_samples_split": 30,
