@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.1
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V15.2
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -224,7 +224,6 @@ def inject_css() -> None:
 
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = None, end: Optional[str] = None):
-    # שונה ל-2y כדי להבטיח ממוצע נע 200 תמיד זמין
     return get_data(ticker, period, start, end) if SCOUT_CORE_AVAILABLE else None
 
 def _compute_wyckoff(ticker: str):
@@ -249,7 +248,6 @@ def _compute_wyckoff(ticker: str):
     }
 
 def _run_scan_row(engine, ticker: str, scan_th: float):
-    # שונה ל-1y בסורק כדי למנוע היעדר נתונים במניות מסוימות עקב דרישת 200 ימים
     df = get_cached_data(ticker, period="1y")
     if df is None or len(df) <= 60:
         return None
@@ -323,38 +321,45 @@ def screen_wyckoff() -> None:
             st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
             cp = result["current_phase"]
             
-            # בניית הויזואליזציה של השלבים
-            is_bearish = any(x in cp for x in ["Distribution", "Markdown", "Supply"])
+            is_transition = any(x in cp for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"])
             
-            def get_bg(phase_marker):
-                if phase_marker in cp:
-                    return "background:#38bdf8; color:#0f172a; font-weight:bold; border:2px solid #fff; transform:scale(1.05);"
-                return "background:rgba(255,255,255,0.05); color:#64748b;"
-                
-            if is_bearish:
-                html = f"""
-                <div style="display:flex; justify-content:space-around; align-items:center; background:#1e293b; padding:20px; border-radius:12px; margin-top:10px;">
-                    <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Distribution')}">הפצה (Distribution)<br><span style="font-size:0.85em">מוסדיים מוכרים</span></div>
-                    <div style="color:#475569; font-size:1.8em;">➔</div>
-                    <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Markdown')}">ירידות (Markdown)<br><span style="font-size:0.85em">פיזור סחורה</span></div>
-                </div>
-                """
+            if is_transition:
+                st.info("ℹ️ לא נמצא שלב Wyckoff מובהק רלוונטי לתהליך כרגע (הנכס בשלב מעבר או חוסר ודאות).")
+                st.caption(f"**זיהוי מלא:** `{cp}`")
             else:
-                html = f"""
-                <div style="display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:15px 10px; border-radius:12px; margin-top:10px; font-size:0.9em;">
-                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase A')}">שלב A<br><span style="font-size:0.8em">בלימה</span></div>
-                    <div style="color:#475569;">➔</div>
-                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase B')}">שלב B<br><span style="font-size:0.8em">בניית כוח</span></div>
-                    <div style="color:#475569;">➔</div>
-                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase C')}">שלב C<br><span style="font-size:0.8em">ניעור מוסדי</span></div>
-                    <div style="color:#475569;">➔</div>
-                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase D')}">שלב D<br><span style="font-size:0.8em">פריצה</span></div>
-                    <div style="color:#475569;">➔</div>
-                    <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg('Phase E')}">שלב E<br><span style="font-size:0.8em">מגמה</span></div>
-                </div>
-                """
-            st.markdown(html, unsafe_allow_html=True)
-            st.caption(f"**זיהוי מלא:** `{cp}`")
+                is_bearish = any(x in cp for x in ["Distribution", "Markdown", "Supply"])
+                
+                def get_bg(phase_markers):
+                    if isinstance(phase_markers, str):
+                        phase_markers = [phase_markers]
+                    if any(m in cp for m in phase_markers):
+                        return "background:#38bdf8; color:#0f172a; font-weight:bold; border:2px solid #fff; transform:scale(1.05);"
+                    return "background:rgba(255,255,255,0.05); color:#64748b;"
+                    
+                if is_bearish:
+                    html = f"""
+                    <div style="display:flex; justify-content:space-around; align-items:center; background:#1e293b; padding:20px; border-radius:12px; margin-top:10px;">
+                        <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg(['Distribution', 'Supply'])}">הפצה (Distribution)<br><span style="font-size:0.85em">מוסדיים מוכרים</span></div>
+                        <div style="color:#475569; font-size:1.8em;">➔</div>
+                        <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Markdown')}">ירידות (Markdown)<br><span style="font-size:0.85em">פיזור סחורה</span></div>
+                    </div>
+                    """
+                else:
+                    html = f"""
+                    <div style="display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:15px 10px; border-radius:12px; margin-top:10px; font-size:0.9em;">
+                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase A'])}">שלב A<br><span style="font-size:0.8em">בלימה</span></div>
+                        <div style="color:#475569;">➔</div>
+                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase B', 'Accumulation'])}">שלב B<br><span style="font-size:0.8em">בניית כוח</span></div>
+                        <div style="color:#475569;">➔</div>
+                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase C', 'Spring'])}">שלב C<br><span style="font-size:0.8em">ניעור מוסדי</span></div>
+                        <div style="color:#475569;">➔</div>
+                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase D', 'Re-accumulation'])}">שלב D<br><span style="font-size:0.8em">פריצה</span></div>
+                        <div style="color:#475569;">➔</div>
+                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase E', 'Markup'])}">שלב E<br><span style="font-size:0.8em">מגמה</span></div>
+                    </div>
+                    """
+                st.markdown(html, unsafe_allow_html=True)
+                st.caption(f"**זיהוי מלא:** `{cp}`")
             
         st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
             
