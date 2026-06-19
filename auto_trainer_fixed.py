@@ -353,7 +353,6 @@ def process_sector(slot, tickers, base_threshold=50):
         log_message(f"Sector {slot} is empty after dedupe. Skipping.")
         return
 
-    # עודכן הלוג כדי לשקף את מטרת האימון החדשה: מדד הצלחת פאזה
     log_message(f"Starting advanced Wyckoff training for {slot} with {len(tickers)} tickers. Target Label: Phase Follow-Through.")
     _update_progress(slot, extra=f"מתחיל אצווה עם {len(tickers)} נכסים")
 
@@ -413,9 +412,7 @@ def process_sector(slot, tickers, base_threshold=50):
                     continue
 
                 feat = factors.loc[entry_date].to_dict()
-                # --- תיקון מהותי (Label Shift): ה-ML מתאמן על פולו-ת'רו במקום רווח פיננסי ---
                 feat["label"] = 1 if bool(row.get("phase_success", row.get("win"))) else 0
-                # -------------------------------------------------------------------------
                 feat["ticker"] = ticker
                 if "exit_date" in row.index:
                     feat["exit_date"] = row.get("exit_date")
@@ -518,17 +515,20 @@ def process_sector(slot, tickers, base_threshold=50):
         small_sample_warning = True
         log_message(f"[{slot}] WARNING: Sample size is small ({sample_size} trades) — OOB/test accuracy estimates may carry high variance and should be interpreted with caution.")
 
+    # --- התיקון למניעת Overfitting ---
+    # הורדת מורכבות העץ כדי שיוכל להכליל טוב יותר על כמות קטנה של דגימות
     model = RandomForestClassifier(
         n_estimators=100,
-        max_depth=4, 
-        min_samples_split=20,
-        min_samples_leaf=10, 
+        max_depth=3,            # במקום 4 - עץ פשוט יותר
+        min_samples_split=30,   # במקום 20 - מונע פיצולים אקראיים
+        min_samples_leaf=15,    # במקום 10 - מחייב עדויות חזקות יותר בעלה הסופי
         random_state=42,
         class_weight="balanced",
         n_jobs=-1,
         oob_score=True,
         bootstrap=True
     )
+    # --------------------------------
 
     try:
         model.fit(X, y)
