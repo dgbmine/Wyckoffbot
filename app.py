@@ -277,6 +277,7 @@ def init_session_state() -> None:
 
 def screen_wyckoff() -> None:
     st.markdown("### ⬛ Wyckoff Institutional Analyst")
+    st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
     ticker = st.text_input("Ticker לניתוח (לדוגמה NVDA, TSLA, SPY)", value="NVDA").strip().upper()
 
     if st.button("▶ הרץ ניתוח מוסדי", use_container_width=True, type="primary"):
@@ -384,16 +385,31 @@ def screen_wyckoff() -> None:
         last_date = chart_df.index[-1]
         last_low = chart_df['Low'].iloc[-1]
         
+        # קביעת צבע לפי הפאזה עבור ה-marker
+        cp_marker = result['current_phase']
+        if any(x in cp_marker for x in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "Accumulation", "Re-accumulation"]):
+            marker_color = "#16a34a"  # ירוק - כניסה או פאזה חיובית
+        elif any(x in cp_marker for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"]):
+            marker_color = "#eab308"  # צהוב - מעבר או חוסר ודאות
+        else:
+            marker_color = "#dc2626"  # אדום - סכנה, הפצה, פאזות שליליות
+
         fig_chart.add_annotation(
             x=last_date, y=last_low,
-            text=f"📌 {result['current_phase']}",
+            text=f"📌 {cp_marker}",
             showarrow=True,
-            arrowhead=1,
+            arrowhead=2,
+            arrowsize=1.2,
+            arrowwidth=2,
+            arrowcolor=marker_color,
             ax=0,
-            ay=40,
-            font=dict(color="white", size=11),
-            bgcolor="rgba(0,0,0,0.6)",
-            bordercolor="rgba(255,255,255,0.3)"
+            ay=45,
+            font=dict(color="white", size=11, weight="bold"),
+            bgcolor=marker_color,
+            bordercolor="rgba(255,255,255,0.7)",
+            borderwidth=1,
+            borderpad=3,
+            opacity=0.95
         )
             
         fig_chart.update_layout(
@@ -414,7 +430,7 @@ def screen_wyckoff() -> None:
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
     
-    st.info("ℹ️ **מה עושה מסך ה-Backtest?**\n\nמערכת זו בודקת כיצד אסטרטגיית ההשקעה לפי שיטת Wyckoff הייתה מתפקדת בעבר על המניה הנבחרת. היא מסמלת קניות ומכירות אוטומטיות לפי הציון והפאזות ומציגה את הביצועים ההיסטוריים. **חשוב לזכור:** ביצועי העבר אינם מובטחים בעתיד והתוצאות הן תיאורטיות להמחשה בלבד.")
+    st.info("ℹ️ **מה זה בעצם Backtest (בדיקת עבר)?**\n\nמסך זה מאפשר לך 'לחזור בזמן' ולבדוק איך שיטת Wyckoff הייתה עובדת בפועל על המניה שבחרת. המערכת מריצה סימולציה ממוחשבת שבה היא קונה ומוכרת באופן אוטומטי את המניה בכל פעם שהתנאים של כניסת כסף מוסדי (ציון CIS ופאזות איסוף) מתקיימים.\n\n**התוצאות שתראה כאן יעזרו לך להבין:**\n- האם המניה הזו נוטה 'להקשיב' לכללי Wyckoff לאורך זמן?\n- כמה עסקאות מורווחות היו לעומת מופסדות?\n- מה ההפסד הכי גדול שהיה קורה בדרך (Drawdown)?\n\n**חשוב מאוד:** סימולציה זו היא תיאורטית, וביצועים טובים בעבר לעולם אינם מבטיחים רווחים בעתיד. יש להתייחס לנתונים ככלי עזר לימודי בלבד.")
     
     col1, col2 = st.columns([1,1])
     ticker = col1.text_input("Ticker לבדיקה", value="COST").strip().upper()
@@ -434,9 +450,28 @@ def screen_backtest() -> None:
         if t_count > 0:
             win_rate = audit_df['is_win'].mean() * 100
             total_profit_pct = df['Cum_Strategy'].iloc[-1] * 100 if 'Cum_Strategy' in df.columns else 0.0
-            st.success(f"**סיכום אסטרטגיה:** האסטרטגיה הניבה תשואה של **{total_profit_pct:.2f}%** בתקופה זו, עם **{t_count}** עסקאות ו-**{win_rate:.1f}%** אחוזי הצלחה.")
+            
+            max_dd_pct = 0.0
+            if 'Cum_Strategy' in df.columns:
+                roll_max = (1 + df['Cum_Strategy']).cummax()
+                drawdown = ((1 + df['Cum_Strategy']) - roll_max) / roll_max
+                max_dd_pct = drawdown.min() * 100
+                
+            profit_color = "🟢 רווח" if total_profit_pct > 0 else "🔴 הפסד"
+            meaning_text = "תוצאות יפות שמראות כי המניה מגיבה היטב לדפוסי איסוף מוסדיים בסבירות גבוהה." if total_profit_pct > 0 and win_rate >= 50 else "התוצאות מצביעות על קושי לייצר רווח עקבי במניה זו באמצעות השיטה, ייתכן שכדאי לחפש נכסים שקופים יותר לפעילות מוסדית."
+            
+            st.success(f"""### 📊 סיכום תוצאות הסימולציה מילולית:
+הסימולציה הסתיימה! להלן מה שהיה קורה אם היית סוחר לפי שיטת Wyckoff על המניה הזו בתקופה שבחרת:
+
+* 💰 **שורה תחתונה:** האסטרטגיה סיימה ב{profit_color} מצטבר של **{total_profit_pct:.2f}%**.
+* 🤝 **פעילות:** המערכת מצאה **{t_count}** הזדמנויות כניסה (עסקאות) שעמדו בתנאים המחמירים של Wyckoff.
+* 🎯 **אחוזי הצלחה (Win Rate):** מתוך כל העסקאות, **{win_rate:.1f}%** הסתיימו ברווח לעומת השאר שהסתיימו בהפסד (לרוב בעקבות הפעלת הגנת Stop-Loss מובנית).
+* 📉 **רגעים קשים (Max Drawdown):** במהלך התקופה, ההפסד המקסימלי הרצוף (מנקודת השיא לנקודת השפל בתיק) עמד על **{max_dd_pct:.2f}%**. נתון זה חשוב כדי להבין את רמת הסיכון והלחץ הנפשי שהיית חווה בדרך.
+
+**💡 המשמעות עבורך:** {meaning_text}
+""")
         else:
-            st.warning("לא בוצעו עסקאות שעמדו בתנאים בתקופה זו.")
+            st.warning("לא בוצעו עסקאות שעמדו בתנאים בתקופה זו. כנראה שהמניה לא חוותה איסוף מוסדי שעמד בסף הנדרש.")
             
         st.metric("עסקאות סה״כ", t_count)
         engine = FactorEngine(BacktestConfig())
@@ -449,6 +484,7 @@ def screen_backtest() -> None:
 
 def screen_scanner() -> None:
     st.markdown("### 🔎 Market Scanner")
+    st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
     sector_name = st.selectbox("בחר סקטור לסריקה", list(SECTOR_MAP.keys()))
     scan_limit = st.slider("כמות מניות לסריקה", 5, 50, 10)
     scan_th = st.slider("סף מינימלי לתוצאה", 40, 95, 60)
