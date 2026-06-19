@@ -268,14 +268,13 @@ class FactorEngine:
         close_diff = df["Close"].diff()
         midpoint = (df["High"] + df["Low"]) / 2
 
-        # --- תיקון: f04_absorption הפך למדד רציף במקום בינארי קיצוני ---
+        # f04_absorption כמדד רציף משופר
         vol_ratio = (df["Volume"] / vol_ma20.replace(0, 1e-5)).clip(0, 5)
         spread_ratio = (rng / spread_ma20.replace(0, 1e-5)).clip(0.1, 5)
         recent_min = df["Low"].rolling(20).min()
         recent_max = df["High"].rolling(20).max()
         price_pos_inv = 1.0 - ((df["Close"] - recent_min) / (recent_max - recent_min + 1e-5)).clip(0, 1)
         f["f04_absorption"] = (vol_ratio / spread_ratio) * price_pos_inv
-        # ---------------------------------------------------------------
 
         f["f36_wyckoff_score"] = self._compute_quick_wyckoff(df)
         
@@ -329,7 +328,8 @@ class FactorEngine:
         norm_score = (score / total_w.replace(0, np.nan).fillna(1) * 100 + 50).clip(0, 100).round(1)
         
         if "f36_wyckoff_score" in factors.columns:
-            boost = factors["f36_wyckoff_score"] * 18 
+            # ה-Boost של f36 הופחת מפי 18 לפי 5 כדי למנוע עיוות של שאר הפיצ'רים המוצלחים
+            boost = factors["f36_wyckoff_score"] * 5 
             norm_score = (norm_score + boost).clip(0, 100)
             
         return norm_score
@@ -533,7 +533,6 @@ def run_wyckoff_anchored_backtest(
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
-                # --- חישוב פולו-ת'רו עתידי עבור ה-ML Label ---
                 horizon = 20
                 phase_success = False
                 if entry_index_int + 1 < len(df):
@@ -545,7 +544,6 @@ def run_wyckoff_anchored_backtest(
                         phase_success = bool(((future_closes.max() - entry_price) / entry_price) >= 0.04)
                     elif is_bear:
                         phase_success = bool(((entry_price - future_closes.min()) / entry_price) >= 0.04)
-                # -----------------------------------------------
 
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
@@ -557,7 +555,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
-                    "phase_success": phase_success, # Label חדש לאימון מוסדי
+                    "phase_success": phase_success,
                     "wyckoff_confirmed": True, 
                     "exit_type": "Stop_Loss",
                     "phase_at_exit": current_phase,
@@ -575,7 +573,6 @@ def run_wyckoff_anchored_backtest(
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
-                # --- חישוב פולו-ת'רו עתידי עבור ה-ML Label ---
                 horizon = 20
                 phase_success = False
                 if entry_index_int + 1 < len(df):
@@ -587,7 +584,6 @@ def run_wyckoff_anchored_backtest(
                         phase_success = bool(((future_closes.max() - entry_price) / entry_price) >= 0.04)
                     elif is_bear:
                         phase_success = bool(((entry_price - future_closes.min()) / entry_price) >= 0.04)
-                # -----------------------------------------------
 
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
@@ -599,7 +595,7 @@ def run_wyckoff_anchored_backtest(
                     "profit": round(profit_dollars, 2),
                     "win": is_win,
                     "is_win": is_win,
-                    "phase_success": phase_success, # Label חדש לאימון מוסדי
+                    "phase_success": phase_success, 
                     "wyckoff_confirmed": True, 
                     "exit_type": "Phase_Change",
                     "phase_at_exit": current_phase,
