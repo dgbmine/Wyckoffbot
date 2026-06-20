@@ -40,6 +40,19 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     effort_vs_result = float(factors.get('f_effort_vs_result', pd.Series([1.0])).iloc[-1])
     stopping_vol = float(factors.get('f_stopping_volume', pd.Series([0.0])).iloc[-1])
 
+    # === תיקון #3: הנחתה (Penalty/Discount) על ה-CIS בפאזות שליליות ===
+    # ציון CIS גבוה בשלב הפצה/ירידה תוך OBV שלילי הוא "מטעה" - יש להנחית אותו בפועל,
+    # ולא רק להציג עליו אזהרה קוסמטית.
+    is_bearish_phase = ("Distribution" in current_phase) or ("Markdown" in current_phase) or ("Heavy Supply" in current_phase)
+    cis_penalty = 0.0
+    if is_bearish_phase:
+        cis_penalty += 20.0  # הנחתה בסיסית על עצם השהייה בפאזה שלילית
+        if obv_vel < 0:
+            cis_penalty += 15.0  # הנחתה נוספת אם זרימת ההון מאשרת את החולשה
+        if rs_spy < -0.02:
+            cis_penalty += 5.0   # חולשה יחסית מול השוק מחמירה את ההנחתה
+    cis_score_adjusted = max(1.0, cis_score - cis_penalty)
+
     # === חישוב הסתברות מוסדית משוקללת (Risk Mode) ===
     prob_modifier = 1.0
     if mode == "Conservative":
@@ -47,7 +60,7 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     elif mode == "Optimistic":
         prob_modifier = 1.15
 
-    accum_prob = min(99, max(1, int(cis_score * prob_modifier)))
+    accum_prob = min(99, max(1, int(cis_score_adjusted * prob_modifier)))
 
     # === חישוב ATR דינמי לניהול סיכונים (14 יום) ===
     high_low = df['High'] - df['Low']
@@ -56,8 +69,20 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = float(true_range.rolling(14).mean().iloc[-1]) if not pd.isna(true_range.rolling(14).mean().iloc[-1]) else close_price * 0.02
 
-    # יעדים וסטופים דינמיים לפי מרווחי תנודתיות
-    stop_loss_price = close_price - (atr * 2)
+    # === תיקון #1 (חלק ב'): Stop Loss דינמי לפי הפאזה הספציפית ===
+    # בפאזת ניעור (Spring/Phase C) הסטופ צמוד יותר מתחת לשפל הניעור (סיכון מבני קצר).
+    # בפאזת בנייה/פריצה (Phase D/LPS) מרווח בינוני. במגמה (Phase E/Markup) מרווח רחב יותר לתת לטרנד "לנשום".
+    if "Phase C" in current_phase or "Spring" in current_phase:
+        sl_multiplier = 1.3
+    elif "Phase D" in current_phase or "LPS" in current_phase:
+        sl_multiplier = 1.8
+    elif "Phase E" in current_phase or "Markup" in current_phase or "Re-accumulation" in current_phase:
+        sl_multiplier = 2.5
+    else:
+        sl_multiplier = 2.0
+
+    # יעדים וסטופים דינמיים לפי מרווחי תנודתיות (ATR) ולפי הפאזה הנוכחית
+    stop_loss_price = close_price - (atr * sl_multiplier)
     stop_loss_pct = ((stop_loss_price - close_price) / close_price) * 100
     tp1_price = close_price + (atr * 3.5)
     tp1_pct = ((tp1_price - close_price) / close_price) * 100
@@ -68,6 +93,31 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
 
     allowed = check_phase_entry_allowed(current_phase, "Balanced")
     is_positive_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
+
+    # === תיקון #2: Wyckoff Roadmap - השלב הקודם והשלב הבא המצופה ===
+    if "Phase A" in current_phase or "Selling Climax" in current_phase:
+        prev_phase_label, next_phase_label = "Markdown / טרום-איסוף", "Phase B (בניית בסיס)"
+    elif "Phase B" in current_phase or ("Accumulation" in current_phase and "Re-" not in current_phase):
+        prev_phase_label, next_phase_label = "Phase A (בלימה)", "Phase C (ניעור / Spring)"
+    elif "Phase C" in current_phase or "Spring" in current_phase:
+        prev_phase_label, next_phase_label = "Phase B (בניית בסיס)", "Phase D (פריצה / SOS)"
+    elif "Phase D" in current_phase or "LPS" in current_phase:
+        prev_phase_label, next_phase_label = "Phase C (ניעור / Spring)", "Phase E (מגמה / Markup)"
+    elif "Phase E" in current_phase or "Markup" in current_phase:
+        prev_phase_label, next_phase_label = "Phase D (פריצה / SOS)", "Re-accumulation או Distribution"
+    elif "Re-accumulation" in current_phase:
+        prev_phase_label, next_phase_label = "Phase E (מגמה / Markup)", "Phase D מחודש (המשך מגמה)"
+    elif "Distribution" in current_phase or "Heavy Supply" in current_phase:
+        prev_phase_label, next_phase_label = "Phase E (מגמה / Markup)", "Markdown (ירידות)"
+    elif "Markdown" in current_phase:
+        prev_phase_label, next_phase_label = "Distribution (הפצה)", "Phase A מחודש (בלימה)"
+    else:
+        prev_phase_label, next_phase_label = "לא ידוע / דשדוש", "ממתין לאיתות מובהק"
+
+    roadmap = {
+        "previous_phase": prev_phase_label,
+        "next_phase": next_phase_label,
+    }
 
     # === Smart Money Dashboard ===
     dashboard = {
@@ -205,5 +255,6 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
         "prob_engine": prob_engine,
         "dashboard": dashboard,
         "failure_warnings": failure_warnings,
-        "replay": replay
+        "replay": replay,
+        "roadmap": roadmap
     }
