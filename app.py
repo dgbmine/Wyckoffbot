@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.4
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.5
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -268,14 +268,14 @@ def inject_css() -> None:
     .scout-stat-box {
         flex: 1; background: rgba(255, 255, 255, 0.02);
         border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 16px; padding: 22px;
+        border-radius: 16px; padding: 22px; display: flex; flex-direction: column;
     }
     .scout-section-title {
         color: #e0f2fe; font-size: 1.15rem; font-weight: 700; 
         margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
     }
     .scout-list-item {
-        font-size: 1rem; color: #cbd5e1; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;
+        font-size: 1.05rem; color: #cbd5e1; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;
     }
     .scout-alert-box {
         padding: 20px 24px; border-radius: 14px; margin-top: 24px;
@@ -284,6 +284,26 @@ def inject_css() -> None:
     .scout-alert-title { font-size: 1.1rem; color:#f8fafc; font-weight:bold; margin-bottom:12px; display:block; }
     .scout-alert-text { font-size: 0.95rem; display:block; color:#cbd5e1; line-height: 1.6; margin-bottom: 6px; }
     
+    /* ======== Educational Box ======== */
+    .edu-box {
+        background: rgba(56, 189, 248, 0.05);
+        border-right: 4px solid #38bdf8;
+        padding: 16px;
+        margin-top: 20px;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        color: #e2e8f0;
+        line-height: 1.7;
+        flex-grow: 1; /* Helps box fill available space */
+    }
+    .edu-box-title {
+        color:#38bdf8; 
+        font-weight: 700;
+        display:block; 
+        margin-bottom:10px;
+        font-size: 1.05rem;
+    }
+
     /* ======== Institutional Map Visual Layout ======== */
     .map-card {
         background: linear-gradient(180deg, rgba(16, 24, 45, 0.95) 0%, rgba(12, 18, 36, 0.6) 100%);
@@ -598,125 +618,120 @@ def screen_trading_scout() -> None:
             
         from trading_scout import get_trading_recommendation
         
-        # UI rendering 2x2 Grid (for 4 items)
-        for i in range(0, 4, 2):
-            row_cols = st.columns(2)
-            for j in range(2):
-                idx = i + j
-                if idx < 4 and tickers_input[idx]:
-                    tkr = tickers_input[idx]
-                    with row_cols[j]:
-                        with st.spinner(f"מנתח טביעות אצבע מוסדיות עבור {tkr}..."):
-                            try:
-                                rec_data = get_trading_recommendation(tkr, mode=selected_mode)
-                            except Exception as e:
-                                st.error(f"שגיאה ב-{tkr}: {e}")
-                                continue
-                                
-                        if rec_data.get("recommendation") == "ERROR":
-                            st.warning(f"**{tkr}:** {rec_data.get('reason')}")
-                            continue
-
-                        rec = rec_data["recommendation"]
-                        color_map = {
-                            "STRONG BUY": "#22c55e", "BUY": "#4ade80",
-                            "HOLD": "#facc15", "SELL": "#fb923c", "STRONG SELL": "#ef4444"
-                        }
-                        color = color_map.get(rec, "#94a3b8")
+        # ביטול ה-Grid (עמודות נחתכות) ומעבר לתצוגה רציפה, כרטיסייה על כל הרוחב, אחת מתחת לשנייה.
+        for tkr in tickers_input:
+            if tkr:
+                with st.spinner(f"מנתח טביעות אצבע מוסדיות עבור {tkr}..."):
+                    try:
+                        rec_data = get_trading_recommendation(tkr, mode=selected_mode)
+                    except Exception as e:
+                        st.error(f"שגיאה ב-{tkr}: {e}")
+                        continue
                         
-                        is_safe = "Clear Skies" in "".join(rec_data['failure_warnings'])
-                        alert_border = "#22c55e" if is_safe else "#ef4444"
-                        alert_bg = "rgba(34, 197, 94, 0.05)" if is_safe else "rgba(239, 68, 68, 0.08)"
-                        
-                        smart_money_html = "".join([
-                            f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600; color:#f8fafc;'>{v}</span></div>"
-                            for k, v in rec_data['dashboard'].items()
-                        ])
-                        failure_html = "".join([
-                            f"<span class='scout-alert-text'>{warn}</span>"
-                            for warn in rec_data['failure_warnings']
-                        ])
-                        roadmap_prev = rec_data.get('roadmap', {}).get('previous_phase', '—')
-                        roadmap_next = rec_data.get('roadmap', {}).get('next_phase', '—')
+                if rec_data.get("recommendation") == "ERROR":
+                    st.warning(f"**{tkr}:** {rec_data.get('reason')}")
+                    continue
 
-                        card_parts = [
-                            "<div class='scout-card'>",
-                            "<div class='scout-header'>",
-                            f"<h3 class='scout-title'>{tkr} <span class='scout-title-sub'>| רדאר מוסדי</span></h3>",
-                            f"<span class='scout-badge' style='color:{color}; border-color: {color}50;'>{rec}</span>",
-                            "</div>",
-                            "<div class='scout-prob-container'>",
-                            "<p class='scout-prob-label'>Institutional Accumulation</p>",
-                            f"<div class='scout-prob' style='color: {color}; text-shadow: 0 0 40px {color}60;'>{rec_data['prob_engine']['accumulation_chance']}%</div>",
-                            "<div class='scout-phase-pill'>",
-                            "<span style='color:#94a3b8; font-size:0.95rem;'>Wyckoff Phase:</span> ",
-                            f"<span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{rec_data['current_phase']}</span>",
-                            "</div>",
-                            "<div style='margin-top:8px; font-size:0.85rem; color:#94a3b8;'>",
-                            f"🗺️ קודם: <span style='color:#cbd5e1;'>{roadmap_prev}</span>",
-                            "&nbsp;➔&nbsp;",
-                            f"הבא: <span style='color:#38bdf8; font-weight:600;'>{roadmap_next}</span>",
-                            "</div>",
-                            "</div>",
-                            "<hr class='scout-divider'>",
-                            "<div class='scout-stats-grid'>",
-                            "<div class='scout-stat-box'>",
-                            "<div class='scout-section-title'>📊 מנוע הסתברויות</div>",
-                            "<div class='scout-list-item'>",
-                            "<span>סיכוי פריצה (30 יום):</span> ",
-                            f"<span style='color:#34d399; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['breakout_30d']}% 🚀</span>",
-                            "</div>",
-                            "<div class='scout-list-item'>",
-                            "<span>סיכון הפצה/שבירה:</span> ",
-                            f"<span style='color:#ef4444; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['distribution_risk']}% 📉</span>",
-                            "</div>",
-                            "</div>",
-                            "<div class='scout-stat-box'>",
-                            "<div class='scout-section-title'>👁️ Smart Money Flow</div>",
-                            smart_money_html,
-                            "</div>",
-                            "</div>",
-                            f"<div class='scout-alert-box' style='border-color: {alert_border}; background: {alert_bg};'>",
-                            "<span class='scout-alert-title'>🛡️ מערכת הגנה ממלכודות (Failure Detection):</span>",
-                            failure_html,
-                            "</div>",
-                            "</div>",
-                        ]
-                        # מאוחד לשורה רציפה אחת (ללא שורות/הזחות) כדי שה-Markdown parser
-                        # לא יפרש את ה-HTML בטעות כבלוק קוד (code block).
-                        st.markdown("".join(card_parts), unsafe_allow_html=True)
-                        
-                        with st.expander(f"📝 Trading Plan & Replay Engine ל-{tkr}", expanded=False):
-                            st.markdown("#### 🗺️ Wyckoff Roadmap")
-                            roadmap = rec_data.get("roadmap", {})
-                            st.markdown(
-                                f"**השלב הקודם:** {roadmap.get('previous_phase', 'לא ידוע')} &nbsp;|&nbsp; "
-                                f"**השלב הבא המצופה:** {roadmap.get('next_phase', 'לא ידוע')}"
-                            )
+                rec = rec_data["recommendation"]
+                color_map = {
+                    "STRONG BUY": "#22c55e", "BUY": "#4ade80",
+                    "HOLD": "#facc15", "SELL": "#fb923c", "STRONG SELL": "#ef4444"
+                }
+                color = color_map.get(rec, "#94a3b8")
+                
+                is_safe = "Clear Skies" in "".join(rec_data['failure_warnings'])
+                alert_border = "#22c55e" if is_safe else "#ef4444"
+                alert_bg = "rgba(34, 197, 94, 0.05)" if is_safe else "rgba(239, 68, 68, 0.08)"
+                
+                smart_money_html = "".join([
+                    f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600; color:#f8fafc;'>{v}</span></div>"
+                    for k, v in rec_data['dashboard'].items()
+                ])
+                failure_html = "".join([
+                    f"<span class='scout-alert-text'>{warn}</span>"
+                    for warn in rec_data['failure_warnings']
+                ])
+                roadmap_prev = rec_data.get('roadmap', {}).get('previous_phase', '—')
+                roadmap_next = rec_data.get('roadmap', {}).get('next_phase', '—')
+                
+                edu_note = rec_data.get('prob_engine', {}).get('educational_note', 'אין נתונים נוספים.')
 
-                            st.markdown("---")
-                            st.markdown("#### 🎯 תוכנית מסחר (Trading Plan)")
-                            st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
-                            st.markdown(f"**מחיר סגירה (Close):** ${rec_data['entry_price']:.2f}")
+                card_parts = [
+                    "<div class='scout-card'>",
+                    "<div class='scout-header'>",
+                    f"<h3 class='scout-title'>{tkr} <span class='scout-title-sub'>| רדאר מוסדי</span></h3>",
+                    f"<span class='scout-badge' style='color:{color}; border-color: {color}50;'>{rec}</span>",
+                    "</div>",
+                    "<div class='scout-prob-container'>",
+                    "<p class='scout-prob-label'>Institutional Accumulation</p>",
+                    f"<div class='scout-prob' style='color: {color}; text-shadow: 0 0 40px {color}60;'>{rec_data['prob_engine']['accumulation_chance']}%</div>",
+                    "<div class='scout-phase-pill'>",
+                    "<span style='color:#94a3b8; font-size:0.95rem;'>Wyckoff Phase:</span> ",
+                    f"<span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{rec_data['current_phase']}</span>",
+                    "</div>",
+                    "<div style='margin-top:8px; font-size:0.9rem; color:#94a3b8;'>",
+                    f"🗺️ קודם: <span style='color:#cbd5e1;'>{roadmap_prev}</span>",
+                    "&nbsp;➔&nbsp;",
+                    f"הבא: <span style='color:#38bdf8; font-weight:600;'>{roadmap_next}</span>",
+                    "</div>",
+                    "</div>",
+                    "<hr class='scout-divider'>",
+                    "<div class='scout-stats-grid'>",
+                    "<div class='scout-stat-box'>",
+                    "<div class='scout-section-title'>📊 מנוע הסתברויות</div>",
+                    "<div class='scout-list-item'>",
+                    "<span>סיכוי פריצה (30 יום):</span> ",
+                    f"<span style='color:#34d399; font-weight:bold; font-size:1.15rem;'>{rec_data['prob_engine']['breakout_30d']}% 🚀</span>",
+                    "</div>",
+                    "<div class='scout-list-item'>",
+                    "<span>סיכון הפצה/שבירה:</span> ",
+                    f"<span style='color:#ef4444; font-weight:bold; font-size:1.15rem;'>{rec_data['prob_engine']['distribution_risk']}% 📉</span>",
+                    "</div>",
+                    f"<div class='edu-box'><span class='edu-box-title'>🎓 פינת הלמידה: מה המספרים אומרים?</span>{edu_note}</div>",
+                    "</div>",
+                    "<div class='scout-stat-box'>",
+                    "<div class='scout-section-title'>👁️ Smart Money Flow</div>",
+                    smart_money_html,
+                    "</div>",
+                    "</div>",
+                    f"<div class='scout-alert-box' style='border-color: {alert_border}; background: {alert_bg};'>",
+                    "<span class='scout-alert-title'>🛡️ מערכת הגנה ממלכודות (Failure Detection):</span>",
+                    failure_html,
+                    "</div>",
+                    "</div>",
+                ]
+                st.markdown("".join(card_parts), unsafe_allow_html=True)
+                
+                with st.expander(f"📝 Trading Plan & Replay Engine ל-{tkr}", expanded=False):
+                    st.markdown("#### 🗺️ Wyckoff Roadmap")
+                    roadmap = rec_data.get("roadmap", {})
+                    st.markdown(
+                        f"**השלב הקודם:** {roadmap.get('previous_phase', 'לא ידוע')} &nbsp;|&nbsp; "
+                        f"**השלב הבא המצופה:** {roadmap.get('next_phase', 'לא ידוע')}"
+                    )
 
-                            # תיקון #1: אין הצגת TP/SL ללונג כשההמלצה היא מכירה
-                            if rec in ("SELL", "STRONG SELL"):
-                                st.warning("🚫 לא קיימת תוכנית מסחר ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה מדי / הנכס בפאזת הפצה.")
-                            else:
-                                st.markdown(f"**הגנת הפסד דינמית לפי פאזה (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
-                                if rec in ("BUY", "STRONG BUY"):
-                                    st.markdown(f"**יעד ראשון (TP1 - שחרור חצי):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
-                                    st.markdown(f"**יעד שני (TP2 - שחרור מלא):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
-                                    st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
-                                    st.markdown(f"**טווח זמן אופטימלי (Timeframe):** {rec_data['timeframe']}")
-                                else:
-                                    st.info("ℹ️ ההמלצה היא HOLD - אין עדיין אישור מספק להצבת יעדי TP. מומלץ להמתין לאישור פריצה לפני קביעת יעדים.")
+                    st.markdown("---")
+                    st.markdown("#### 🎯 תוכנית מסחר (Trading Plan)")
+                    st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
+                    st.markdown(f"**מחיר סגירה (Close):** ${rec_data['entry_price']:.2f}")
 
-                            st.markdown("---")
-                            st.markdown("#### ⏮️ היסטוריית תבניות (Replay Engine)")
-                            st.markdown(f"חיפוש תרחישים מוסדיים אנלוגיים מן העבר המצליבים את נתוני הכסף החכם הנוכחיים של **{tkr}**:")
-                            for rep in rec_data['replay']:
-                                st.markdown(f"- {rep}")
+                    if rec in ("SELL", "STRONG SELL"):
+                        st.warning("🚫 לא קיימת תוכנית מסחר ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה מדי / הנכס בפאזת הפצה.")
+                    else:
+                        st.markdown(f"**הגנת הפסד דינמית לפי פאזה (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
+                        if rec in ("BUY", "STRONG BUY"):
+                            st.markdown(f"**יעד ראשון (TP1 - שחרור חצי):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
+                            st.markdown(f"**יעד שני (TP2 - שחרור מלא):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
+                            st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
+                            st.markdown(f"**טווח זמן אופטימלי (Timeframe):** {rec_data['timeframe']}")
+                        else:
+                            st.info("ℹ️ ההמלצה היא HOLD - אין עדיין אישור מספק להצבת יעדי TP. מומלץ להמתין לאישור פריצה לפני קביעת יעדים.")
+
+                    st.markdown("---")
+                    st.markdown("#### ⏮️ היסטוריית תבניות (Replay Engine)")
+                    st.markdown(f"חיפוש תרחישים מוסדיים אנלוגיים מן העבר המצליבים את נתוני הכסף החכם הנוכחיים של **{tkr}**:")
+                    for rep in rec_data['replay']:
+                        st.markdown(f"- {rep}")
 
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
@@ -946,7 +961,7 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    # סדר הטאבים נשמר במדויק על פי הוראת הברזל (אין לגעת!)
+    # סדר הטאבים נשמר במדויק
     tabs = st.tabs(["🏠 Home (Wyckoff Analyst)", "🗺️ Institutional Map", "📈 Trading Scout", "📊 Backtest", "👁️ Monitor", "🧠 ML Trainer"])
     screen_fns = [screen_home, screen_institutional_map, screen_trading_scout, screen_backtest, screen_monitor, screen_ml_trainer]
     
