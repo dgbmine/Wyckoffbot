@@ -15,6 +15,7 @@ import pickle
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 import traceback
 import gc
@@ -628,7 +629,7 @@ def screen_trading_scout() -> None:
                         alert_border = "#22c55e" if is_safe else "#ef4444"
                         alert_bg = "rgba(34, 197, 94, 0.05)" if is_safe else "rgba(239, 68, 68, 0.08)"
                         
-                        st.markdown(f"""
+                        card_html = f"""
                         <div class='scout-card'>
                             <div class='scout-header'>
                                 <h3 class='scout-title'>{tkr} <span class='scout-title-sub'>| רדאר מוסדי</span></h3>
@@ -674,7 +675,8 @@ def screen_trading_scout() -> None:
                                 {''.join([f"<span class='scout-alert-text'>{warn}</span>" for warn in rec_data['failure_warnings']])}
                             </div>
                         </div>
-                        """, unsafe_allow_html=True)
+                        """
+                        st.markdown(textwrap.dedent(card_html), unsafe_allow_html=True)
                         
                         with st.expander(f"📝 Trading Plan & Replay Engine ל-{tkr}", expanded=False):
                             st.markdown("#### 🗺️ Wyckoff Roadmap")
@@ -937,8 +939,8 @@ def main() -> None:
     )
 
     # סדר הטאבים נשמר במדויק על פי הוראת הברזל (אין לגעת!)
-    tabs = st.tabs(["🧠 ML Trainer", "👁️ Monitor", "📊 Backtest", "📈 Trading Scout", "🗺️ Institutional Map", "🏠 Home (Wyckoff Analyst)"])
-    screen_fns = [screen_ml_trainer, screen_monitor, screen_backtest, screen_trading_scout, screen_institutional_map, screen_home]
+    tabs = st.tabs(["🏠 Home (Wyckoff Analyst)", "🗺️ Institutional Map", "📈 Trading Scout", "📊 Backtest", "👁️ Monitor", "🧠 ML Trainer"])
+    screen_fns = [screen_home, screen_institutional_map, screen_trading_scout, screen_backtest, screen_monitor, screen_ml_trainer]
     
     for tab, fn in zip(tabs, screen_fns):
         with tab:
