@@ -642,6 +642,11 @@ def screen_trading_scout() -> None:
                                     <span style='color:#94a3b8; font-size:0.95rem;'>Wyckoff Phase:</span> 
                                     <span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{rec_data['current_phase']}</span>
                                 </div>
+                                <div style='margin-top:8px; font-size:0.85rem; color:#94a3b8;'>
+                                    🗺️ קודם: <span style='color:#cbd5e1;'>{rec_data.get('roadmap', {}).get('previous_phase', '—')}</span>
+                                    &nbsp;➔&nbsp;
+                                    הבא: <span style='color:#38bdf8; font-weight:600;'>{rec_data.get('roadmap', {}).get('next_phase', '—')}</span>
+                                </div>
                             </div>
                             
                             <hr class='scout-divider'>
@@ -672,15 +677,31 @@ def screen_trading_scout() -> None:
                         """, unsafe_allow_html=True)
                         
                         with st.expander(f"📝 Trading Plan & Replay Engine ל-{tkr}", expanded=False):
+                            st.markdown("#### 🗺️ Wyckoff Roadmap")
+                            roadmap = rec_data.get("roadmap", {})
+                            st.markdown(
+                                f"**השלב הקודם:** {roadmap.get('previous_phase', 'לא ידוע')} &nbsp;|&nbsp; "
+                                f"**השלב הבא המצופה:** {roadmap.get('next_phase', 'לא ידוע')}"
+                            )
+
+                            st.markdown("---")
                             st.markdown("#### 🎯 תוכנית מסחר (Trading Plan)")
                             st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
                             st.markdown(f"**מחיר סגירה (Close):** ${rec_data['entry_price']:.2f}")
-                            st.markdown(f"**הגנת הפסד מבוססת תנודתיות (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
-                            st.markdown(f"**יעד ראשון (TP1 - שחרור חצי):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
-                            st.markdown(f"**יעד שני (TP2 - שחרור מלא):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
-                            st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
-                            st.markdown(f"**טווח זמן אופטימלי (Timeframe):** {rec_data['timeframe']}")
-                            
+
+                            # תיקון #1: אין הצגת TP/SL ללונג כשההמלצה היא מכירה
+                            if rec in ("SELL", "STRONG SELL"):
+                                st.warning("🚫 לא קיימת תוכנית מסחר ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה מדי / הנכס בפאזת הפצה.")
+                            else:
+                                st.markdown(f"**הגנת הפסד דינמית לפי פאזה (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
+                                if rec in ("BUY", "STRONG BUY"):
+                                    st.markdown(f"**יעד ראשון (TP1 - שחרור חצי):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
+                                    st.markdown(f"**יעד שני (TP2 - שחרור מלא):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
+                                    st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
+                                    st.markdown(f"**טווח זמן אופטימלי (Timeframe):** {rec_data['timeframe']}")
+                                else:
+                                    st.info("ℹ️ ההמלצה היא HOLD - אין עדיין אישור מספק להצבת יעדי TP. מומלץ להמתין לאישור פריצה לפני קביעת יעדים.")
+
                             st.markdown("---")
                             st.markdown("#### ⏮️ היסטוריית תבניות (Replay Engine)")
                             st.markdown(f"חיפוש תרחישים מוסדיים אנלוגיים מן העבר המצליבים את נתוני הכסף החכם הנוכחיים של **{tkr}**:")
