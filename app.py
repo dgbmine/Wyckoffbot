@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.1
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.2
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -222,40 +222,66 @@ def inject_css() -> None:
     
     /* Enhanced Cards for Trading Scout */
     .scout-card {
-        background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(25, 35, 50, 0.9));
-        border: 1px solid rgba(56, 189, 248, 0.25);
+        background: linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
+        border: 1px solid rgba(56, 189, 248, 0.3);
         border-radius: 16px;
         padding: 24px;
         margin-bottom: 24px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
         transition: transform 0.2s ease, border-color 0.2s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    .scout-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; height: 4px;
+        background: linear-gradient(90deg, transparent, #38bdf8, transparent);
     }
     .scout-card:hover {
-        transform: translateY(-3px);
-        border-color: rgba(56, 189, 248, 0.6);
+        transform: translateY(-4px);
+        border-color: rgba(56, 189, 248, 0.7);
+        box-shadow: 0 15px 50px rgba(0, 0, 0, 0.4);
     }
     .scout-title { 
-        color: #f8fafc; font-size: 1.7rem; font-weight: 700; 
-        border-bottom: 1px solid rgba(255,255,255,0.08); 
-        padding-bottom: 12px; margin-bottom: 18px;
+        color: #f8fafc; font-size: 1.8rem; font-weight: 800; 
+        margin: 0; display: inline-block;
+    }
+    .scout-badge {
+        float: left; padding: 6px 14px; border-radius: 20px; 
+        font-size: 0.95rem; font-weight: 700; letter-spacing: 0.5px;
+        background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
     }
     .scout-prob { 
-        font-size: 3rem; font-weight: 800; color: #38bdf8; 
-        text-align: center; margin: 10px 0; 
-        text-shadow: 0 0 20px rgba(56,189,248,0.3); 
+        font-size: 3.5rem; font-weight: 800; color: #38bdf8; 
+        text-align: center; margin: 15px 0 5px 0; line-height: 1;
+        text-shadow: 0 0 25px rgba(56,189,248,0.35); 
+    }
+    .scout-section-title {
+        color: #e0f2fe; font-size: 1.05rem; font-weight: 700; 
+        margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px;
+    }
+    .scout-list-item {
+        font-size: 0.9rem; color: #cbd5e1; margin-bottom: 6px; display: flex; justify-content: space-between;
     }
     
     /* Institutional Map Cards */
     .map-card {
-        background: rgba(15, 23, 42, 0.85); 
-        padding: 20px; 
-        border-radius: 12px; 
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.9) 0%, rgba(15, 23, 42, 0.5) 100%);
+        padding: 24px; 
+        border-radius: 16px; 
         text-align: center;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-        margin-bottom: 20px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.25);
+        margin-bottom: 24px;
+        border: 1px solid rgba(255,255,255,0.05);
+        transition: transform 0.2s ease;
+    }
+    .map-card:hover {
+        transform: translateY(-3px);
+        background: linear-gradient(180deg, rgba(20, 30, 50, 0.95) 0%, rgba(15, 23, 42, 0.6) 100%);
     }
     .map-desc {
-        font-size: 0.85rem; color: #94a3b8; margin-top: 8px; line-height: 1.4;
+        font-size: 0.9rem; color: #94a3b8; margin-top: 12px; line-height: 1.5; padding-top: 12px; border-top: 1px dashed rgba(255,255,255,0.1);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -491,7 +517,7 @@ def screen_institutional_map() -> None:
     }
     
     if st.button("🗺️ טען מפה מוסדית מחושבת", type="primary"):
-        with st.spinner("סורק מניות מובילות בכל סקטור לחילוץ נתוני איסוף..."):
+        with st.spinner("סורק מניות מובילות בכל סקטור לחילוץ נתוני איסוף (Smart Money Flow)..."):
             engine = FactorEngine(BacktestConfig())
             sector_results = {}
             
@@ -509,7 +535,7 @@ def screen_institutional_map() -> None:
                     sector_results[sector] = {"score": avg_cis, "desc": data["desc"]}
             
             if sector_results:
-                # מיון סקטורים לפי הציון (מהגבוה לנמוך)
+                # Sorting sectors by highest institutional score
                 sorted_sectors = sorted(sector_results.items(), key=lambda item: item[1]["score"], reverse=True)
                 
                 cols = st.columns(3)
@@ -518,16 +544,16 @@ def screen_institutional_map() -> None:
                     with cols[i % 3]:
                         color = "#16a34a" if avg_cis >= 65 else ("#eab308" if avg_cis >= 50 else "#dc2626")
                         st.markdown(f"""
-                        <div class='map-card' style='border-top: 4px solid {color};'>
-                            <h4 style='margin:0; font-size:1.15rem; color:#e0f2fe;'>{sector}</h4>
-                            <p style='font-size:0.95rem; color:#9db0c9; margin-top:5px; margin-bottom: 5px;'>Accumulation Index</p>
-                            <h2 style='color:{color}; margin:0; font-size: 2.2rem;'>{avg_cis:.1f}%</h2>
+                        <div class='map-card' style='border-top: 5px solid {color};'>
+                            <h4 style='margin:0; font-size:1.25rem; color:#f8fafc; font-weight:700;'>{sector}</h4>
+                            <p style='font-size:0.95rem; color:#94a3b8; margin: 8px 0 2px 0; font-weight:500;'>Accumulation Index</p>
+                            <h2 style='color:{color}; margin:0; font-size: 2.8rem; font-weight:800; text-shadow: 0 0 15px {color}40;'>{avg_cis:.1f}%</h2>
                             <p class='map-desc'>{data['desc']}</p>
                         </div>
                         """, unsafe_allow_html=True)
                         
                 st.markdown("---")
-                st.info("💡 **תובנה מוסדית:** סקטורים עם אינדקס מעל 65% נתונים כעת תחת פעילות איסוף מוסדית קשה ויש לחפש בהם הזדמנויות מגמה (Long).")
+                st.info("💡 **תובנה מוסדית (Smart Money Insight):** סקטורים עם אינדקס מעל 65% נתונים כעת תחת פעילות איסוף מוסדית עקבית ויש לחפש בהם הזדמנויות למגמת עליה (Long). סקטורים מתחת ל-50% נמצאים תחת לחץ פיזור או התעלמות מוסדית.")
             else:
                 st.error("לא ניתן היה לטעון נתונים מספיקים עבור המפה.")
 
@@ -547,7 +573,7 @@ def screen_trading_scout() -> None:
         val = cols_input[i].text_input(f"טיקר {i+1}", value=default_tickers[i], key=f"ts_ticker_{i}").strip().upper()
         tickers_input.append(val)
         
-    if st.button("💡 קבל הסתברויות ותוכניות לכל הטיקרים", type="primary", use_container_width=True):
+    if st.button("💡 הפעל רדאר חכם - קבל הסתברויות ותוכניות", type="primary", use_container_width=True):
         if not SCOUT_CORE_AVAILABLE:
             st.error("מודול הליבה חסר, לא ניתן לייצר המלצה.")
             return
@@ -562,7 +588,7 @@ def screen_trading_scout() -> None:
                 if idx < 4 and tickers_input[idx]:
                     tkr = tickers_input[idx]
                     with row_cols[j]:
-                        with st.spinner(f"מנתח הסתברויות מוסדיות עבור {tkr}..."):
+                        with st.spinner(f"מנתח טביעות אצבע מוסדיות עבור {tkr}..."):
                             try:
                                 rec_data = get_trading_recommendation(tkr, mode=selected_mode)
                             except Exception as e:
@@ -582,46 +608,56 @@ def screen_trading_scout() -> None:
                         
                         st.markdown(f"""
                         <div class='scout-card'>
-                            <div class='scout-title'>
-                                {tkr} <span style='float:left; color:{color}; padding-left: 5px;'>{rec}</span>
+                            <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;'>
+                                <h3 class='scout-title'>{tkr}</h3>
+                                <span class='scout-badge' style='color:{color}; border-color: {color}40;'>{rec}</span>
                             </div>
-                            <p style='text-align:center; margin-bottom:0; color:#cbd5e1; font-weight: 500;'>Institutional Accumulation Probability</p>
+                            
+                            <p style='text-align:center; margin:0; color:#94a3b8; font-weight: 600; letter-spacing: 0.5px; font-size: 0.95rem;'>Institutional Accumulation Probability</p>
                             <div class='scout-prob'>{rec_data['prob_engine']['accumulation_chance']}%</div>
-                            <p style='text-align:center; color:#94a3b8; font-size:0.95em; margin-top:-5px;'>Wyckoff Phase: <b>{rec_data['current_phase']}</b></p>
-                            <hr style="border-color: rgba(255,255,255,0.05); margin: 15px 0;">
+                            <div style='text-align:center; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 8px; margin: 10px 0 20px 0; border: 1px solid rgba(255,255,255,0.05);'>
+                                <span style='color:#cbd5e1; font-size:0.9em;'>Wyckoff Phase:</span> 
+                                <span style='color:#f8fafc; font-weight:700; font-size:0.95em;'>{rec_data['current_phase']}</span>
+                            </div>
                             
-                            <div style="display:flex; justify-content: space-between; margin-bottom: 10px;">
-                                <div style="width: 48%;">
-                                    <span style="color:#e0f2fe; font-size: 0.9em; font-weight: bold;">Probability Engine</span><br>
-                                    <span style="font-size: 0.85em; color:#cbd5e1;">🚀 פריצה ב-30 יום: <b>{rec_data['prob_engine']['breakout_30d']}%</b></span><br>
-                                    <span style="font-size: 0.85em; color:#cbd5e1;">📉 סיכון להפצה: <b>{rec_data['prob_engine']['distribution_risk']}%</b></span>
+                            <div style="display:flex; justify-content: space-between; margin-bottom: 20px;">
+                                <div style="width: 48%; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 10px;">
+                                    <div class='scout-section-title'>📊 Probability Engine</div>
+                                    <div class='scout-list-item'>
+                                        <span>פריצה ב-30 יום:</span> 
+                                        <span style='color:#f8fafc; font-weight:bold;'>{rec_data['prob_engine']['breakout_30d']}% 🚀</span>
+                                    </div>
+                                    <div class='scout-list-item'>
+                                        <span>סיכון להפצה:</span> 
+                                        <span style='color:#f8fafc; font-weight:bold;'>{rec_data['prob_engine']['distribution_risk']}% 📉</span>
+                                    </div>
                                 </div>
-                                <div style="width: 48%;">
-                                    <span style="color:#e0f2fe; font-size: 0.9em; font-weight: bold;">Smart Money Dashboard</span><br>
-                                    {''.join([f"<span style='font-size: 0.8em; display:block; line-height:1.2; color:#cbd5e1;'>{v} | {k}</span>" for k, v in rec_data['dashboard'].items()])}
+                                <div style="width: 48%; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 10px;">
+                                    <div class='scout-section-title'>👁️ Smart Money Flow</div>
+                                    {''.join([f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600;'>{v}</span></div>" for k, v in rec_data['dashboard'].items()])}
                                 </div>
                             </div>
                             
-                            <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
-                                <span style="font-size: 0.85em; color:#cbd5e1;"><b>Failure Detection (מלכודות):</b></span><br>
-                                {''.join([f"<span style='font-size: 0.8em; display:block; color:#94a3b8;'>{warn}</span>" for warn in rec_data['failure_warnings']])}
+                            <div style="background: rgba(220, 38, 38, 0.08); border-right: 4px solid #dc2626; padding: 12px 15px; border-radius: 8px; margin-bottom: 10px;">
+                                <span style="font-size: 0.95em; color:#f8fafc; font-weight:bold; margin-bottom:5px; display:block;">🛡️ Failure Detection (מלכודות):</span>
+                                {''.join([f"<span style='font-size: 0.85em; display:block; color:#cbd5e1; line-height: 1.4;'>{warn}</span>" for warn in rec_data['failure_warnings']])}
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
                         
                         with st.expander(f"📝 תוכנית מסחר מלאה ל-{tkr}", expanded=False):
-                            st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
-                            st.markdown(f"**מחיר סגירה לחישוב:** ${rec_data['entry_price']:.2f}")
-                            st.markdown(f"**הגנת הפסד (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
-                            st.markdown(f"**יעד ראשון (TP1):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
-                            st.markdown(f"**יעד שני (TP2):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
+                            st.markdown(f"**פעולה מומלצת (Action):** {rec_data['action']}")
+                            st.markdown(f"**מחיר סגירה לחישוב (Close):** ${rec_data['entry_price']:.2f}")
+                            st.markdown(f"**הגנת הפסד מבוססת תנודתיות (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
+                            st.markdown(f"**יעד ראשון (TP1 - שחרור חצי):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
+                            st.markdown(f"**יעד שני (TP2 - שחרור מלא):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
                             st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
                             st.markdown(f"**טווח זמן אופטימלי להגעה ליעד:** {rec_data['timeframe']}")
                             st.markdown("---")
                             st.markdown(f"**הסבר מעשי:** {rec_data['simple_explain']}")
                             
                         with st.expander(f"⏮️ Wyckoff Replay Engine (היסטוריית תבניות)", expanded=False):
-                            st.markdown("איתרתי תרחישים מוסדיים זהים בעבר על סמך פאזה וזרימת הון דומה:")
+                            st.markdown("איתרתי תרחישים מוסדיים אנלוגיים בעבר על סמך חיתוך של הפאזה וזרימת ההון הנוכחית:")
                             for rep in rec_data['replay']:
                                 st.markdown(f"- {rep}")
 
@@ -853,7 +889,7 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    # סדר הטאבים מדויק כפי שהוגדר על ידך
+    # סדר הטאבים מדויק כפי שהוגדר
     tabs = st.tabs(["🧠 ML Trainer", "👁️ Monitor", "📊 Backtest", "📈 Trading Scout", "🗺️ Institutional Map", "🏠 Home (Wyckoff Analyst)"])
     screen_fns = [screen_ml_trainer, screen_monitor, screen_backtest, screen_trading_scout, screen_institutional_map, screen_home]
     
