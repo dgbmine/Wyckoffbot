@@ -1,7 +1,7 @@
 """
 ============================================================
-TRADING SCOUT PRO — PROBABILITY & REPLAY ENGINE V2.5
-מודול משלים ל-Wyckoff Institutional Analyst
+TRADING SCOUT PRO — PROBABILITY & REPLAY ENGINE V3.0
+מודול משלים ל-Wyckoff Institutional Analyst - רדאר כסף חכם
 ============================================================
 """
 
@@ -11,10 +11,10 @@ from scout_core import get_data, FactorEngine, BacktestConfig, check_phase_entry
 
 def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     """
-    מודול המלצות מסחר משודרג מבוסס Wyckoff וציון מוסדי (CIS).
+    מודול המלצות מסחר מבוסס Wyckoff וציון מוסדי (CIS).
     עונה על השאלה: "מה ההסתברות שזה צבירה מוסדית אמיתית?"
-    כולל Wyckoff Probability Engine דינמי, Failure Detection מחמיר,
-    Replay Engine מבוסס היסטוריה, ותוכנית מסחר מדויקת.
+    השדרוג כולל Probability Engine חכם יותר המושפע עמוקות מהפאזה ומה-OBV,
+    Failure Detection מדויק, ו-Replay דינמי התלוי לחלוטין בתבנית הנוכחית.
     """
     df = get_data(ticker, period="1y")
     if df is None or df.empty or len(df) < 60:
@@ -32,12 +32,14 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     cis_score = float(cis_series.iloc[-1])
     close_price = float(df['Close'].iloc[-1])
 
-    # === שליפת נתונים מתקדמים מהליבה ל-Probability Engine ===
-    obv_vel = float(factors['f07_obv_velocity'].iloc[-1])
-    struct_break = float(factors['f35_struct_break'].iloc[-1])
-    absorption = float(factors['f04_absorption'].iloc[-1])
-    rs_spy = float(factors['f_rs_spy'].iloc[-1])
-    effort_vs_result = float(factors['f_effort_vs_result'].iloc[-1])
+    # === שליפת נתונים מתקדמים מהליבה (בטיחותי) ===
+    obv_vel = float(factors.get('f07_obv_velocity', pd.Series([0.0])).iloc[-1])
+    struct_break = float(factors.get('f35_struct_break', pd.Series([0.0])).iloc[-1])
+    absorption = float(factors.get('f04_absorption', pd.Series([1.0])).iloc[-1])
+    rs_spy = float(factors.get('f_rs_spy', pd.Series([0.0])).iloc[-1])
+    
+    # שליפת Effort vs Result אם קיים, אחרת ממוצע נייטרלי
+    effort_vs_result = float(factors.get('f_effort_vs_result', pd.Series([1.0])).iloc[-1])
 
     # === חישוב הסתברות מוסדית משוקללת (Risk Mode) ===
     prob_modifier = 1.0
@@ -55,14 +57,12 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = float(true_range.rolling(14).mean().iloc[-1]) if not pd.isna(true_range.rolling(14).mean().iloc[-1]) else close_price * 0.02
 
-    # יעדים וסטופים דינמיים לפי ATR
+    # יעדים וסטופים דינמיים לפי מרווחי תנודתיות (ATR)
     stop_loss_price = close_price - (atr * 2)
     stop_loss_pct = ((stop_loss_price - close_price) / close_price) * 100
-    
-    tp1_price = close_price + (atr * 3)
+    tp1_price = close_price + (atr * 3.5)
     tp1_pct = ((tp1_price - close_price) / close_price) * 100
-    
-    tp2_price = close_price + (atr * 6)
+    tp2_price = close_price + (atr * 7)
     tp2_pct = ((tp2_price - close_price) / close_price) * 100
     
     rr_ratio = f"1:{round(abs((tp1_price - close_price) / (close_price - stop_loss_price)), 1)}"
@@ -72,25 +72,29 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
 
     # === Smart Money Dashboard ===
     dashboard = {
-        "OBV Flow": "✅ הון נכנס (Positive)" if obv_vel > 0 else "❌ הון יוצא (Negative)",
-        "Structure": "✅ שבירה לעלייה" if struct_break > 0 else "⚠️ דשדוש / ירידה",
-        "Absorption": "✅ ספיגה אקטיבית" if absorption > 1.2 else "⚠️ מינורית / חלשה",
-        "Rel. Strength": "✅ חזק מהשוק" if rs_spy > 0 else "❌ חלש מהשוק"
+        "OBV Flow": "✅ כניסת הון אגרסיבית" if obv_vel > 0.02 else ("❌ יציאת הון" if obv_vel < -0.02 else "⚠️ נייטרלי / מעורב"),
+        "Structure": "✅ שבירת מבנה (BOS)" if struct_break > 0 else "❌ דשדוש או ירידה",
+        "Absorption": "✅ ספיגת היצע מוכחת" if absorption > 1.2 else "⚠️ אין ספיגה משמעותית",
+        "Rel. Strength": "✅ מוביל על השוק" if rs_spy > 0 else "❌ מפגר אחרי השוק"
     }
 
-    # === Wyckoff Probability Engine מתקדם ===
+    # === Wyckoff Probability Engine - Smart Dynamics ===
     bo_modifier = 0
-    if "Phase C" in current_phase or "Phase D" in current_phase: bo_modifier += 20
+    # פאזות C ו-D מקפיצות את סיכויי הפריצה משמעותית אם יש תמיכה של כסף פנימי
+    if "Phase C" in current_phase or "Spring" in current_phase: bo_modifier += 25
+    if "Phase D" in current_phase or "LPS" in current_phase: bo_modifier += 20
     if struct_break > 0: bo_modifier += 15
     if obv_vel > 0: bo_modifier += 15
-    if absorption > 1.2: bo_modifier += 10
-    breakout_chance = min(95, int((accum_prob * 0.4) + bo_modifier))
+    if absorption > 1.3: bo_modifier += 10
+    
+    breakout_chance = min(98, int((accum_prob * 0.35) + bo_modifier))
 
     dist_modifier = 0
-    if "Distribution" in current_phase or "Markdown" in current_phase: dist_modifier += 40
-    if obv_vel < 0: dist_modifier += 20
-    if rs_spy < -0.01: dist_modifier += 15
-    distribution_risk = min(95, max(5, int((100 - accum_prob) * 0.4 + dist_modifier)))
+    if "Distribution" in current_phase or "Markdown" in current_phase: dist_modifier += 50
+    if obv_vel < 0: dist_modifier += 25
+    if rs_spy < -0.02: dist_modifier += 15
+    
+    distribution_risk = min(98, max(2, int((100 - accum_prob) * 0.45 + dist_modifier)))
 
     prob_engine = {
         "accumulation_chance": accum_prob,
@@ -98,58 +102,71 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
         "distribution_risk": distribution_risk,
     }
 
-    # === לוגיקת Failure Detection מחמירה ===
+    # === Failure Detection - High Precision Warnings ===
     failure_warnings = []
-    if accum_prob < 50 and "Spring" in current_phase:
-        failure_warnings.append("⚠️ Failed Spring Risk: ניעור סחורה ללא גיבוי פנימי של הון חכם.")
-    if ("Distribution" in current_phase or "Markdown" in current_phase) and accum_prob < 40:
-        failure_warnings.append("🔴 Distribution Confirmed: סכנה ממשית להמשך ירידות (פיזור מוסדי).")
-    if close_price > df['Close'].rolling(50).mean().iloc[-1] and accum_prob < 55 and rs_spy < 0:
-        failure_warnings.append("⚠️ Possible Upthrust (UTAD): מחיר גבוה ממוצעים, אך חולשה מוסדית יחסית לשוק.")
-    if effort_vs_result > 2.0 and close_price < df['Open'].iloc[-1]:
-        failure_warnings.append("⚠️ Supply Overhang: מאמץ גבוה של קונים נבלם על ידי היצע קשיח מלמעלה.")
+    
+    if "Spring" in current_phase and obv_vel < 0:
+        failure_warnings.append("🔴 Fake Spring Alert: המניה מייצרת תבנית 'ניעור' אך ה-OBV שלילי. כסף חכם *לא* מגבה את העלייה הזו.")
+        
+    if ("Distribution" in current_phase or "Markdown" in current_phase) and accum_prob < 45:
+        failure_warnings.append("🔴 Heavy Distribution Confirmed: סכנה ממשית. מוסדיים משחררים סחורה והמחיר לא עומד בלחץ.")
+        
+    if is_positive_phase and effort_vs_result > 2.5 and close_price < df['Open'].iloc[-1]:
+        failure_warnings.append("⚠️ Supply Overhang (מאמץ מול תוצאה): למרות העליות, קיימת התנגדות קשיחה מלמעלה. קונים מתאמצים ללא תוצאה הולמת.")
+        
+    if "Markup" in current_phase and rs_spy < -0.02:
+        failure_warnings.append("⚠️ Weak Leader: המניה בפייז חיובי, אבל חלשה משמעותית ממדד ה-S&P 500 (RS שלילי).")
+        
     if not failure_warnings:
-        failure_warnings.append("✅ Clear Skies: לא זוהו מלכודות ברורות. התנהגות השוק תקינה ואמינה.")
+        failure_warnings.append("✅ Clear Skies: לא זוהו אזהרות מוסדיות או מלכודות קלאסיות. זרימת ההון תקינה ועקבית.")
 
-    # === Replay Engine (היסטוריית פאזות) ===
+    # === Dynamic Replay Engine ===
     replay = []
-    if accum_prob >= 75:
-        if "Phase C" in current_phase:
-            replay.append("🔍 META (Nov 2022) - היפוך אגרסיבי מפייז C בליווי זרימת הון וספיגה זהה. פריצה עזה תוך 14 יום.")
-        elif "Phase D" in current_phase:
-            replay.append("🔍 NVDA (Q1 2023) - בניית כוח מסיבית מעל התמיכה (LPS) רגע לפני שלב ה-Markup. קלאסיקה של כסף חכם.")
+    if "Phase C" in current_phase or "Spring" in current_phase:
+        if accum_prob >= 70:
+            replay.append("🔍 BTC (Jan 2023) - ניעור נזילות חד למטה (Spring) מלווה מיד בקנייה מוסדית כבדה שהחלה את שוק השוורים.")
+            replay.append("🔍 META (Nov 2022) - ספיגת היצע מוחלטת בנמוכים, היפוך אלים כלפי מעלה.")
         else:
-            replay.append("🔍 AMD (Mid 2023) - המשכיות מגמה מוסדית עם דחיפה חזקה של הון.")
-    elif 50 <= accum_prob < 75:
-        if "Phase B" in current_phase or "Accumulation" in current_phase:
-            replay.append("🔍 AMZN (Mid 2023) - דשדוש ממושך (Phase B) טרם הכרעה. המוסדיים אוספים לאט ובשקט.")
+            replay.append("⚠️ DIS (2023) - תבנית Spring כושלת. המחיר ניסה לעלות ללא גיבוי של כסף חכם (OBV חלש) והמשיך לרדת.")
+            
+    elif "Phase D" in current_phase or "LPS" in current_phase:
+        if accum_prob >= 65:
+            replay.append("🔍 NVDA (Q1 2023) - בניית כוח מסיבית (LPS) צמוד להתנגדות לפני פריצה מעלה (SOS). קלאסיקה מוסדית.")
         else:
-            replay.append("🔍 AAPL (Late 2023) - התבססות מוסדית ברמות הנוכחיות. נדרש אישור טכני כדי להניע פריצה.")
-    else:
-        if "Distribution" in current_phase:
-            replay.append("🔍 TSLA (Late 2022) - שלב פיזור דומה שהוביל לגל ירידות חריף לאחר היחלשות ה-OBV.")
+            replay.append("⚠️ PYPL (Late 2021) - ניסיון פריצה כושל. היעדר מומנטום של כסף חכם הוביל למלכודת שוורים (Bull Trap).")
+            
+    elif "Phase E" in current_phase or "Markup" in current_phase:
+        if accum_prob >= 75:
+            replay.append("🔍 SMCI (2023) - מגמת Markup אגרסיבית עם זרימת הון שלא פוסקת (No Supply bars).")
         else:
-            replay.append("🔍 NFLX (Early 2022) - אישור חולשה, שבירת תמיכות מוסדיות ויציאת נזילות.")
+            replay.append("⚠️ הקיטור אוזל? היסטורית, כשהאיסוף המוסדי יורד במהלך Markup, זהו סימן מקדים ל-Distribution מתקרב.")
+            
+    elif "Distribution" in current_phase or "Markdown" in current_phase:
+        replay.append("🔍 TSLA (Late 2022) - פיזור סחורה שיטתי על ידי מוסדיים. ה-OBV ירד לפני שהמחיר קרס משמעותית.")
+        replay.append("🔍 NFLX (Early 2022) - לאחר אישור החולשה, הנזילות יצאה והמניה חוותה Markdown אלים.")
+        
+    else: # Transition / Phase A / Phase B
+        replay.append("🔍 AMZN (Mid 2023) - תהליך שחיקה ודשדוש ממושך. בניית בסיס (Cause) לפני שמוסדיים מחליטים על כיוון.")
 
-    # === לוגיקת המלצה חכמה ===
+    # === לוגיקת המלצה (Action Plan) ===
     if accum_prob >= 75 and is_positive_phase:
         rec = "STRONG BUY"
-        action = "כניסה מועדפת (High Probability). הסתברות גבוהה מאוד לצבירה מוסדית אמיתית. שקול כניסה מלאה."
+        action = "כניסה מועדפת (High Conviction). ההסתברות לצבירה מוסדית אמיתית גבוהה מאוד. שקול כניסה אגרסיבית."
     elif accum_prob >= 65 and allowed:
         rec = "BUY"
-        action = "פתח פוזיציה בהתאם לניהול הסיכונים. קיימת נוכחות חיובית של הון חכם."
+        action = "פתח פוזיציה בהתאם לניהול הסיכונים. קיימת טביעת אצבע ברורה של כסף חכם."
     elif (50 <= accum_prob < 65) or (accum_prob >= 65 and not is_positive_phase):
         rec = "HOLD"
-        action = "המתן. למרות קיומו של איסוף מסוים, השלב הטכני (Uncertain / Transition) לא מאשר תנועה מיידית."
+        action = "המתן. אמנם קיימת נוכחות של הון פנימי, אך הפאזה הטכנית אינה מספקת אישור מספק לפריצה מיידית."
     elif "Distribution" in current_phase or "Markdown" in current_phase:
         rec = "STRONG SELL"
-        action = "הסבירות לצבירה אפסית. זהו פיזור מוסדי (Distribution). שקול הגנות או יציאה מיידית."
+        action = "הסבירות לצבירה היא אפסית. זהו פיזור מוסדי מובהק (Distribution). שקול הגנות (שורט) או יציאה מיידית."
     else:
         rec = "SELL"
-        action = "הסתברות נמוכה לאיסוף. המומנטום שלילי. חפש נקודות יציאה בתיקון הקרוב מעלה."
+        action = "הסתברות נמוכה לאיסוף. מומנטום הכסף החכם שלילי. חפש נקודות יציאה טקטית בתיקון הקרוב מעלה."
 
-    reason = f"הסתברות מוסדית של {accum_prob}% מצביעה על החלטת {rec}. נתוני המומנטום חושבו יחד עם השלב הנוכחי: {current_phase}."
-    simple_explain = "לפי הנתונים, הכסף החכם כרגע " + ("קונה באופן מסיבי ודוחף את המחיר." if accum_prob >= 65 else ("עומד על הגדר וממתין." if accum_prob >= 50 else "מוכר ומפזר סחורה לציבור הרחב.")) + " פעל בהתאם לתוכנית המסחר."
+    reason = f"הסתברות מוסדית של {accum_prob}% מצביעה על {rec}. התוצאה משוקללת עם הפאזה הנוכחית ({current_phase}) וזרימת ה-OBV."
+    simple_explain = "לפי ניתוח הרדאר, הכסף החכם כרגע " + ("קונה באופן אגרסיבי ודוחף את המחיר כלפי מעלה (צבירה)." if accum_prob >= 65 else ("ממתין בצד, ללא החלטה ברורה כרגע." if accum_prob >= 50 else "מוכר ומפזר סחורה לציבור הרחב (הפצה).")) + " פעל בהתאם לתוכנית המסחר."
 
     return {
         "recommendation": rec,
