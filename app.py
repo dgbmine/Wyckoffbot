@@ -15,7 +15,6 @@ import pickle
 import signal
 import subprocess
 import sys
-import textwrap
 import time
 import traceback
 import gc
@@ -629,54 +628,63 @@ def screen_trading_scout() -> None:
                         alert_border = "#22c55e" if is_safe else "#ef4444"
                         alert_bg = "rgba(34, 197, 94, 0.05)" if is_safe else "rgba(239, 68, 68, 0.08)"
                         
-                        card_html = f"""
-                        <div class='scout-card'>
-                            <div class='scout-header'>
-                                <h3 class='scout-title'>{tkr} <span class='scout-title-sub'>| רדאר מוסדי</span></h3>
-                                <span class='scout-badge' style='color:{color}; border-color: {color}50;'>{rec}</span>
-                            </div>
-                            
-                            <div class='scout-prob-container'>
-                                <p class='scout-prob-label'>Institutional Accumulation</p>
-                                <div class='scout-prob' style='color: {color}; text-shadow: 0 0 40px {color}60;'>{rec_data['prob_engine']['accumulation_chance']}%</div>
-                                <div class='scout-phase-pill'>
-                                    <span style='color:#94a3b8; font-size:0.95rem;'>Wyckoff Phase:</span> 
-                                    <span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{rec_data['current_phase']}</span>
-                                </div>
-                                <div style='margin-top:8px; font-size:0.85rem; color:#94a3b8;'>
-                                    🗺️ קודם: <span style='color:#cbd5e1;'>{rec_data.get('roadmap', {}).get('previous_phase', '—')}</span>
-                                    &nbsp;➔&nbsp;
-                                    הבא: <span style='color:#38bdf8; font-weight:600;'>{rec_data.get('roadmap', {}).get('next_phase', '—')}</span>
-                                </div>
-                            </div>
-                            
-                            <hr class='scout-divider'>
-                            
-                            <div class='scout-stats-grid'>
-                                <div class='scout-stat-box'>
-                                    <div class='scout-section-title'>📊 מנוע הסתברויות</div>
-                                    <div class='scout-list-item'>
-                                        <span>סיכוי פריצה (30 יום):</span> 
-                                        <span style='color:#34d399; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['breakout_30d']}% 🚀</span>
-                                    </div>
-                                    <div class='scout-list-item'>
-                                        <span>סיכון הפצה/שבירה:</span> 
-                                        <span style='color:#ef4444; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['distribution_risk']}% 📉</span>
-                                    </div>
-                                </div>
-                                <div class='scout-stat-box'>
-                                    <div class='scout-section-title'>👁️ Smart Money Flow</div>
-                                    {''.join([f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600; color:#f8fafc;'>{v}</span></div>" for k, v in rec_data['dashboard'].items()])}
-                                </div>
-                            </div>
-                            
-                            <div class='scout-alert-box' style='border-color: {alert_border}; background: {alert_bg};'>
-                                <span class='scout-alert-title'>🛡️ מערכת הגנה ממלכודות (Failure Detection):</span>
-                                {''.join([f"<span class='scout-alert-text'>{warn}</span>" for warn in rec_data['failure_warnings']])}
-                            </div>
-                        </div>
-                        """
-                        st.markdown(textwrap.dedent(card_html), unsafe_allow_html=True)
+                        smart_money_html = "".join([
+                            f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600; color:#f8fafc;'>{v}</span></div>"
+                            for k, v in rec_data['dashboard'].items()
+                        ])
+                        failure_html = "".join([
+                            f"<span class='scout-alert-text'>{warn}</span>"
+                            for warn in rec_data['failure_warnings']
+                        ])
+                        roadmap_prev = rec_data.get('roadmap', {}).get('previous_phase', '—')
+                        roadmap_next = rec_data.get('roadmap', {}).get('next_phase', '—')
+
+                        card_parts = [
+                            "<div class='scout-card'>",
+                            "<div class='scout-header'>",
+                            f"<h3 class='scout-title'>{tkr} <span class='scout-title-sub'>| רדאר מוסדי</span></h3>",
+                            f"<span class='scout-badge' style='color:{color}; border-color: {color}50;'>{rec}</span>",
+                            "</div>",
+                            "<div class='scout-prob-container'>",
+                            "<p class='scout-prob-label'>Institutional Accumulation</p>",
+                            f"<div class='scout-prob' style='color: {color}; text-shadow: 0 0 40px {color}60;'>{rec_data['prob_engine']['accumulation_chance']}%</div>",
+                            "<div class='scout-phase-pill'>",
+                            "<span style='color:#94a3b8; font-size:0.95rem;'>Wyckoff Phase:</span> ",
+                            f"<span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{rec_data['current_phase']}</span>",
+                            "</div>",
+                            "<div style='margin-top:8px; font-size:0.85rem; color:#94a3b8;'>",
+                            f"🗺️ קודם: <span style='color:#cbd5e1;'>{roadmap_prev}</span>",
+                            "&nbsp;➔&nbsp;",
+                            f"הבא: <span style='color:#38bdf8; font-weight:600;'>{roadmap_next}</span>",
+                            "</div>",
+                            "</div>",
+                            "<hr class='scout-divider'>",
+                            "<div class='scout-stats-grid'>",
+                            "<div class='scout-stat-box'>",
+                            "<div class='scout-section-title'>📊 מנוע הסתברויות</div>",
+                            "<div class='scout-list-item'>",
+                            "<span>סיכוי פריצה (30 יום):</span> ",
+                            f"<span style='color:#34d399; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['breakout_30d']}% 🚀</span>",
+                            "</div>",
+                            "<div class='scout-list-item'>",
+                            "<span>סיכון הפצה/שבירה:</span> ",
+                            f"<span style='color:#ef4444; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['distribution_risk']}% 📉</span>",
+                            "</div>",
+                            "</div>",
+                            "<div class='scout-stat-box'>",
+                            "<div class='scout-section-title'>👁️ Smart Money Flow</div>",
+                            smart_money_html,
+                            "</div>",
+                            "</div>",
+                            f"<div class='scout-alert-box' style='border-color: {alert_border}; background: {alert_bg};'>",
+                            "<span class='scout-alert-title'>🛡️ מערכת הגנה ממלכודות (Failure Detection):</span>",
+                            failure_html,
+                            "</div>",
+                            "</div>",
+                        ]
+                        # מאוחד לשורה רציפה אחת (ללא שורות/הזחות) כדי שה-Markdown parser
+                        # לא יפרש את ה-HTML בטעות כבלוק קוד (code block).
+                        st.markdown("".join(card_parts), unsafe_allow_html=True)
                         
                         with st.expander(f"📝 Trading Plan & Replay Engine ל-{tkr}", expanded=False):
                             st.markdown("#### 🗺️ Wyckoff Roadmap")
