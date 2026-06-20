@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.2
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.4
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -194,94 +194,113 @@ def inject_css() -> None:
         direction: rtl; text-align: right; background: #0b1220; color: #d9e6f2;
     }
     .main-header {
-        padding: 1.15rem 1.4rem; border-radius: 22px;
+        padding: 1.2rem 1.6rem; border-radius: 22px;
         background: linear-gradient(135deg, rgba(7,14,25,0.88), rgba(13,25,43,0.92));
-        box-shadow: 0 18px 44px rgba(0,0,0,.28); margin-bottom: 1rem;
+        box-shadow: 0 18px 44px rgba(0,0,0,.28); margin-bottom: 1.5rem;
         border: 1px solid rgba(125,155,190,0.18);
     }
-    .main-header h1 { margin: 0; font-size: 2.1rem; color: #eaf4ff; font-weight: 700; }
-    .main-header p { color: #9db0c9; font-size: 1.05rem; }
+    .main-header h1 { margin: 0; font-size: 2.2rem; color: #eaf4ff; font-weight: 700; }
+    .main-header p { color: #9db0c9; font-size: 1.1rem; margin-top: 5px; }
     
     [data-testid="stMetric"] {
         background: rgba(15, 23, 42, 0.95) !important;
         border: 1px solid rgba(56, 189, 248, 0.3) !important;
         border-radius: 12px;
-        padding: 1rem;
+        padding: 1.2rem;
     }
-    [data-testid="stMetricValue"] {
-        color: #38bdf8 !important;
-        font-weight: 700 !important;
-    }
-    [data-testid="stMetricLabel"] {
-        color: #f1f5f9 !important;
-        font-weight: 500 !important;
-    }
-    [data-testid="stMetricDelta"] {
-        color: #34d399 !important;
-    }
+    [data-testid="stMetricValue"] { color: #38bdf8 !important; font-weight: 700 !important; }
+    [data-testid="stMetricLabel"] { color: #f1f5f9 !important; font-weight: 500 !important; }
+    [data-testid="stMetricDelta"] { color: #34d399 !important; }
     
-    /* Enhanced Cards for Trading Scout */
+    /* ======== Trading Scout Premium Cards ======== */
     .scout-card {
-        background: linear-gradient(145deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95));
-        border: 1px solid rgba(56, 189, 248, 0.3);
-        border-radius: 16px;
-        padding: 24px;
-        margin-bottom: 24px;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-        transition: transform 0.2s ease, border-color 0.2s ease;
+        background: linear-gradient(145deg, rgba(16, 24, 48, 0.95), rgba(28, 40, 68, 0.98));
+        border: 1px solid rgba(56, 189, 248, 0.28);
+        border-radius: 22px;
+        padding: 32px 28px;
+        margin-bottom: 30px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
         position: relative;
         overflow: hidden;
     }
     .scout-card::before {
         content: '';
         position: absolute;
-        top: 0; left: 0; right: 0; height: 4px;
+        top: 0; left: 0; right: 0; height: 5px;
         background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+        opacity: 0.85;
     }
     .scout-card:hover {
         transform: translateY(-4px);
         border-color: rgba(56, 189, 248, 0.7);
-        box-shadow: 0 15px 50px rgba(0, 0, 0, 0.4);
+        box-shadow: 0 20px 55px rgba(0, 0, 0, 0.45);
+    }
+    .scout-header {
+        display: flex; justify-content: space-between; align-items: center; 
+        margin-bottom: 24px;
     }
     .scout-title { 
-        color: #f8fafc; font-size: 1.8rem; font-weight: 800; 
-        margin: 0; display: inline-block;
+        color: #f8fafc; font-size: 2rem; font-weight: 800; 
+        margin: 0; letter-spacing: 0.5px; display: flex; align-items: center;
     }
+    .scout-title-sub { font-size: 1.1rem; color: #94a3b8; font-weight: 400; padding-right: 12px; }
     .scout-badge {
-        float: left; padding: 6px 14px; border-radius: 20px; 
-        font-size: 0.95rem; font-weight: 700; letter-spacing: 0.5px;
-        background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+        padding: 8px 20px; border-radius: 30px; 
+        font-size: 1rem; font-weight: 700; letter-spacing: 0.5px;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
     }
+    .scout-prob-container { text-align: center; margin-bottom: 30px; }
+    .scout-prob-label { margin:0; color:#cbd5e1; font-weight: 600; letter-spacing: 1.5px; font-size: 1rem; text-transform: uppercase; }
     .scout-prob { 
-        font-size: 3.5rem; font-weight: 800; color: #38bdf8; 
-        text-align: center; margin: 15px 0 5px 0; line-height: 1;
-        text-shadow: 0 0 25px rgba(56,189,248,0.35); 
+        font-size: 4.8rem; font-weight: 800; color: #38bdf8; 
+        margin: 10px 0 16px 0; line-height: 1;
+        text-shadow: 0 0 35px rgba(56,189,248,0.45); 
+    }
+    .scout-phase-pill {
+        display: inline-block; background: rgba(0,0,0,0.35); padding: 10px 20px; 
+        border-radius: 25px; border: 1px solid rgba(255,255,255,0.08);
+    }
+    .scout-divider {
+        border-top: 1px solid rgba(255,255,255,0.08); margin: 28px 0;
+    }
+    .scout-stats-grid { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+    .scout-stat-box {
+        flex: 1; background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 16px; padding: 22px;
     }
     .scout-section-title {
-        color: #e0f2fe; font-size: 1.05rem; font-weight: 700; 
-        margin-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 5px;
+        color: #e0f2fe; font-size: 1.15rem; font-weight: 700; 
+        margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
     }
     .scout-list-item {
-        font-size: 0.9rem; color: #cbd5e1; margin-bottom: 6px; display: flex; justify-content: space-between;
+        font-size: 1rem; color: #cbd5e1; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;
     }
+    .scout-alert-box {
+        padding: 20px 24px; border-radius: 14px; margin-top: 24px;
+        border-right: 5px solid #dc2626; background: rgba(220, 38, 38, 0.08);
+    }
+    .scout-alert-title { font-size: 1.1rem; color:#f8fafc; font-weight:bold; margin-bottom:12px; display:block; }
+    .scout-alert-text { font-size: 0.95rem; display:block; color:#cbd5e1; line-height: 1.6; margin-bottom: 6px; }
     
-    /* Institutional Map Cards */
+    /* ======== Institutional Map Visual Layout ======== */
     .map-card {
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.9) 0%, rgba(15, 23, 42, 0.5) 100%);
-        padding: 24px; 
-        border-radius: 16px; 
-        text-align: center;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.25);
-        margin-bottom: 24px;
-        border: 1px solid rgba(255,255,255,0.05);
-        transition: transform 0.2s ease;
+        background: linear-gradient(180deg, rgba(16, 24, 45, 0.95) 0%, rgba(12, 18, 36, 0.6) 100%);
+        padding: 32px 26px; border-radius: 20px; text-align: center;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.3); margin-bottom: 30px;
+        border: 1px solid rgba(255,255,255,0.08);
+        transition: transform 0.25s ease, background 0.25s ease, border-color 0.25s ease;
     }
     .map-card:hover {
-        transform: translateY(-3px);
-        background: linear-gradient(180deg, rgba(20, 30, 50, 0.95) 0%, rgba(15, 23, 42, 0.6) 100%);
+        transform: translateY(-5px); border-color: rgba(56, 189, 248, 0.5);
+        background: linear-gradient(180deg, rgba(22, 36, 62, 0.98) 0%, rgba(12, 18, 36, 0.7) 100%);
     }
+    .map-card h4 { margin:0; font-size:1.4rem; color:#f8fafc; font-weight:700; letter-spacing: 0.5px; }
+    .map-card-label { font-size:1rem; color:#94a3b8; margin: 12px 0 6px 0; font-weight:600; text-transform: uppercase; letter-spacing: 1px; }
+    .map-card-score { margin:0; font-size: 3.4rem; font-weight:800; line-height: 1.1; }
     .map-desc {
-        font-size: 0.9rem; color: #94a3b8; margin-top: 12px; line-height: 1.5; padding-top: 12px; border-top: 1px dashed rgba(255,255,255,0.1);
+        font-size: 0.95rem; color: #cbd5e1; margin-top: 20px; line-height: 1.6; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,0.15);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -535,7 +554,6 @@ def screen_institutional_map() -> None:
                     sector_results[sector] = {"score": avg_cis, "desc": data["desc"]}
             
             if sector_results:
-                # Sorting sectors by highest institutional score
                 sorted_sectors = sorted(sector_results.items(), key=lambda item: item[1]["score"], reverse=True)
                 
                 cols = st.columns(3)
@@ -544,10 +562,10 @@ def screen_institutional_map() -> None:
                     with cols[i % 3]:
                         color = "#16a34a" if avg_cis >= 65 else ("#eab308" if avg_cis >= 50 else "#dc2626")
                         st.markdown(f"""
-                        <div class='map-card' style='border-top: 5px solid {color};'>
-                            <h4 style='margin:0; font-size:1.25rem; color:#f8fafc; font-weight:700;'>{sector}</h4>
-                            <p style='font-size:0.95rem; color:#94a3b8; margin: 8px 0 2px 0; font-weight:500;'>Accumulation Index</p>
-                            <h2 style='color:{color}; margin:0; font-size: 2.8rem; font-weight:800; text-shadow: 0 0 15px {color}40;'>{avg_cis:.1f}%</h2>
+                        <div class='map-card' style='border-top: 6px solid {color};'>
+                            <h4>{sector}</h4>
+                            <p class='map-card-label'>Smart Money Index</p>
+                            <h2 class='map-card-score' style='color:{color}; text-shadow: 0 0 25px {color}40;'>{avg_cis:.1f}%</h2>
                             <p class='map-desc'>{data['desc']}</p>
                         </div>
                         """, unsafe_allow_html=True)
@@ -601,63 +619,71 @@ def screen_trading_scout() -> None:
 
                         rec = rec_data["recommendation"]
                         color_map = {
-                            "STRONG BUY": "#16a34a", "BUY": "#22c55e",
-                            "HOLD": "#eab308", "SELL": "#f97316", "STRONG SELL": "#dc2626"
+                            "STRONG BUY": "#22c55e", "BUY": "#4ade80",
+                            "HOLD": "#facc15", "SELL": "#fb923c", "STRONG SELL": "#ef4444"
                         }
                         color = color_map.get(rec, "#94a3b8")
                         
+                        is_safe = "Clear Skies" in "".join(rec_data['failure_warnings'])
+                        alert_border = "#22c55e" if is_safe else "#ef4444"
+                        alert_bg = "rgba(34, 197, 94, 0.05)" if is_safe else "rgba(239, 68, 68, 0.08)"
+                        
                         st.markdown(f"""
                         <div class='scout-card'>
-                            <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;'>
-                                <h3 class='scout-title'>{tkr}</h3>
-                                <span class='scout-badge' style='color:{color}; border-color: {color}40;'>{rec}</span>
+                            <div class='scout-header'>
+                                <h3 class='scout-title'>{tkr} <span class='scout-title-sub'>| רדאר מוסדי</span></h3>
+                                <span class='scout-badge' style='color:{color}; border-color: {color}50;'>{rec}</span>
                             </div>
                             
-                            <p style='text-align:center; margin:0; color:#94a3b8; font-weight: 600; letter-spacing: 0.5px; font-size: 0.95rem;'>Institutional Accumulation Probability</p>
-                            <div class='scout-prob'>{rec_data['prob_engine']['accumulation_chance']}%</div>
-                            <div style='text-align:center; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 8px; margin: 10px 0 20px 0; border: 1px solid rgba(255,255,255,0.05);'>
-                                <span style='color:#cbd5e1; font-size:0.9em;'>Wyckoff Phase:</span> 
-                                <span style='color:#f8fafc; font-weight:700; font-size:0.95em;'>{rec_data['current_phase']}</span>
+                            <div class='scout-prob-container'>
+                                <p class='scout-prob-label'>Institutional Accumulation</p>
+                                <div class='scout-prob' style='color: {color}; text-shadow: 0 0 40px {color}60;'>{rec_data['prob_engine']['accumulation_chance']}%</div>
+                                <div class='scout-phase-pill'>
+                                    <span style='color:#94a3b8; font-size:0.95rem;'>Wyckoff Phase:</span> 
+                                    <span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{rec_data['current_phase']}</span>
+                                </div>
                             </div>
                             
-                            <div style="display:flex; justify-content: space-between; margin-bottom: 20px;">
-                                <div style="width: 48%; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 10px;">
-                                    <div class='scout-section-title'>📊 Probability Engine</div>
+                            <hr class='scout-divider'>
+                            
+                            <div class='scout-stats-grid'>
+                                <div class='scout-stat-box'>
+                                    <div class='scout-section-title'>📊 מנוע הסתברויות</div>
                                     <div class='scout-list-item'>
-                                        <span>פריצה ב-30 יום:</span> 
-                                        <span style='color:#f8fafc; font-weight:bold;'>{rec_data['prob_engine']['breakout_30d']}% 🚀</span>
+                                        <span>סיכוי פריצה (30 יום):</span> 
+                                        <span style='color:#34d399; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['breakout_30d']}% 🚀</span>
                                     </div>
                                     <div class='scout-list-item'>
-                                        <span>סיכון להפצה:</span> 
-                                        <span style='color:#f8fafc; font-weight:bold;'>{rec_data['prob_engine']['distribution_risk']}% 📉</span>
+                                        <span>סיכון הפצה/שבירה:</span> 
+                                        <span style='color:#ef4444; font-weight:bold; font-size:1.05rem;'>{rec_data['prob_engine']['distribution_risk']}% 📉</span>
                                     </div>
                                 </div>
-                                <div style="width: 48%; background: rgba(255,255,255,0.02); padding: 12px; border-radius: 10px;">
+                                <div class='scout-stat-box'>
                                     <div class='scout-section-title'>👁️ Smart Money Flow</div>
-                                    {''.join([f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600;'>{v}</span></div>" for k, v in rec_data['dashboard'].items()])}
+                                    {''.join([f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600; color:#f8fafc;'>{v}</span></div>" for k, v in rec_data['dashboard'].items()])}
                                 </div>
                             </div>
                             
-                            <div style="background: rgba(220, 38, 38, 0.08); border-right: 4px solid #dc2626; padding: 12px 15px; border-radius: 8px; margin-bottom: 10px;">
-                                <span style="font-size: 0.95em; color:#f8fafc; font-weight:bold; margin-bottom:5px; display:block;">🛡️ Failure Detection (מלכודות):</span>
-                                {''.join([f"<span style='font-size: 0.85em; display:block; color:#cbd5e1; line-height: 1.4;'>{warn}</span>" for warn in rec_data['failure_warnings']])}
+                            <div class='scout-alert-box' style='border-color: {alert_border}; background: {alert_bg};'>
+                                <span class='scout-alert-title'>🛡️ מערכת הגנה ממלכודות (Failure Detection):</span>
+                                {''.join([f"<span class='scout-alert-text'>{warn}</span>" for warn in rec_data['failure_warnings']])}
                             </div>
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        with st.expander(f"📝 תוכנית מסחר מלאה ל-{tkr}", expanded=False):
-                            st.markdown(f"**פעולה מומלצת (Action):** {rec_data['action']}")
-                            st.markdown(f"**מחיר סגירה לחישוב (Close):** ${rec_data['entry_price']:.2f}")
+                        with st.expander(f"📝 Trading Plan & Replay Engine ל-{tkr}", expanded=False):
+                            st.markdown("#### 🎯 תוכנית מסחר (Trading Plan)")
+                            st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
+                            st.markdown(f"**מחיר סגירה (Close):** ${rec_data['entry_price']:.2f}")
                             st.markdown(f"**הגנת הפסד מבוססת תנודתיות (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
                             st.markdown(f"**יעד ראשון (TP1 - שחרור חצי):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
                             st.markdown(f"**יעד שני (TP2 - שחרור מלא):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
                             st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
-                            st.markdown(f"**טווח זמן אופטימלי להגעה ליעד:** {rec_data['timeframe']}")
-                            st.markdown("---")
-                            st.markdown(f"**הסבר מעשי:** {rec_data['simple_explain']}")
+                            st.markdown(f"**טווח זמן אופטימלי (Timeframe):** {rec_data['timeframe']}")
                             
-                        with st.expander(f"⏮️ Wyckoff Replay Engine (היסטוריית תבניות)", expanded=False):
-                            st.markdown("איתרתי תרחישים מוסדיים אנלוגיים בעבר על סמך חיתוך של הפאזה וזרימת ההון הנוכחית:")
+                            st.markdown("---")
+                            st.markdown("#### ⏮️ היסטוריית תבניות (Replay Engine)")
+                            st.markdown(f"חיפוש תרחישים מוסדיים אנלוגיים מן העבר המצליבים את נתוני הכסף החכם הנוכחיים של **{tkr}**:")
                             for rep in rec_data['replay']:
                                 st.markdown(f"- {rep}")
 
@@ -889,24 +915,9 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    # סדר הטאבים המעודכן - מסך הבית ימני (ראשון) וה-ML Trainer שמאלי (אחרון)
-    tabs = st.tabs([
-        "🏠 Home (Wyckoff Analyst)", 
-        "🗺️ Institutional Map", 
-        "📈 Trading Scout", 
-        "📊 Backtest", 
-        "👁️ Monitor", 
-        "🧠 ML Trainer"
-    ])
-    
-    screen_fns = [
-        screen_home, 
-        screen_institutional_map, 
-        screen_trading_scout, 
-        screen_backtest, 
-        screen_monitor, 
-        screen_ml_trainer
-    ]
+    # סדר הטאבים נשמר במדויק על פי הוראת הברזל (אין לגעת!)
+    tabs = st.tabs(["🧠 ML Trainer", "👁️ Monitor", "📊 Backtest", "📈 Trading Scout", "🗺️ Institutional Map", "🏠 Home (Wyckoff Analyst)"])
+    screen_fns = [screen_ml_trainer, screen_monitor, screen_backtest, screen_trading_scout, screen_institutional_map, screen_home]
     
     for tab, fn in zip(tabs, screen_fns):
         with tab:
