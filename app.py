@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.0
+INSTITUTIONAL SCOUT PRO — WYCKOFF ANALYST EDITION V16.1
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -220,16 +220,43 @@ def inject_css() -> None:
         color: #34d399 !important;
     }
     
-    /* Cards for Trading Scout */
+    /* Enhanced Cards for Trading Scout */
     .scout-card {
-        background: rgba(15, 23, 42, 0.8);
-        border: 1px solid rgba(56, 189, 248, 0.2);
-        border-radius: 12px;
-        padding: 20px;
+        background: linear-gradient(145deg, rgba(15, 23, 42, 0.9), rgba(25, 35, 50, 0.9));
+        border: 1px solid rgba(56, 189, 248, 0.25);
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .scout-card:hover {
+        transform: translateY(-3px);
+        border-color: rgba(56, 189, 248, 0.6);
+    }
+    .scout-title { 
+        color: #f8fafc; font-size: 1.7rem; font-weight: 700; 
+        border-bottom: 1px solid rgba(255,255,255,0.08); 
+        padding-bottom: 12px; margin-bottom: 18px;
+    }
+    .scout-prob { 
+        font-size: 3rem; font-weight: 800; color: #38bdf8; 
+        text-align: center; margin: 10px 0; 
+        text-shadow: 0 0 20px rgba(56,189,248,0.3); 
+    }
+    
+    /* Institutional Map Cards */
+    .map-card {
+        background: rgba(15, 23, 42, 0.85); 
+        padding: 20px; 
+        border-radius: 12px; 
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
         margin-bottom: 20px;
     }
-    .scout-title { color: #e0f2fe; font-size: 1.5rem; font-weight: 700; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; margin-bottom: 15px;}
-    .scout-prob { font-size: 2.2rem; font-weight: bold; color: #38bdf8; text-align: center; margin: 10px 0; }
+    .map-desc {
+        font-size: 0.85rem; color: #94a3b8; margin-top: 8px; line-height: 1.4;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -436,6 +463,168 @@ def screen_home() -> None:
             
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
 
+def screen_institutional_map() -> None:
+    st.markdown("### 🗺️ Institutional Map - מפת כסף חכם סקטוריאלית")
+    st.markdown("מסך זה ממפה את הסקטורים המרכזיים בשוק ומציג את ממוצע ה-**Institutional Accumulation Probability** (הסתברות לצבירה מוסדית) שלהם. הנתונים מתעדכנים על בסיס מניות מובילות בכל סקטור ומוצגים מהגבוה לנמוך.")
+    
+    MAP_SECTORS = {
+        "טכנולוגיה (Technology)": {
+            "tickers": ["AAPL", "MSFT", "NVDA", "AVGO", "CRM"],
+            "desc": "סקטור עתיר צמיחה, משמש לעיתים קרובות כמוביל מומנטום שוק ומאופיין בכניסת הון מוסדי טרנדי."
+        },
+        "סמיקונדקטורס (Semiconductors)": {
+            "tickers": ["AMD", "TXN", "QCOM", "INTC", "SMCI"],
+            "desc": "תעשיית השבבים - מתפקדת כברומטר מוביל לתיאבון הסיכון של המוסדיים לשוק כולו."
+        },
+        "פיננסים (Financials)": {
+            "tickers": ["JPM", "V", "MA", "BAC", "GS"],
+            "desc": "מוטה ריבית ומחזור כלכלי. איסוף כאן מעיד לרוב על ציפייה מוסדית להתרחבות כלכלית."
+        },
+        "בריאות (Healthcare)": {
+            "tickers": ["JNJ", "UNH", "LLY", "MRK", "ABBV"],
+            "desc": "סקטור דפנסיבי המשולב בצמיחה. משמש מקלט בטוח בעת אי-ודאות מוסדית לחלוקת סיכונים."
+        },
+        "אנרגיה וסחורות (Energy & Commodities)": {
+            "tickers": ["XOM", "CVX", "GLD", "SLV", "COP"],
+            "desc": "גידור אינפלציוני ונכסים קשים. כסף חכם זורם לכאן להגנה או ספקולציות מאקרו."
+        }
+    }
+    
+    if st.button("🗺️ טען מפה מוסדית מחושבת", type="primary"):
+        with st.spinner("סורק מניות מובילות בכל סקטור לחילוץ נתוני איסוף..."):
+            engine = FactorEngine(BacktestConfig())
+            sector_results = {}
+            
+            for sector, data in MAP_SECTORS.items():
+                sector_cis = []
+                for t in data["tickers"]:
+                    df = get_cached_data(t, period="6mo")
+                    if df is not None and not df.empty and len(df) > 40:
+                        factors = engine.compute(df)
+                        cis = engine.composite_cis(factors, df)
+                        sector_cis.append(float(cis.iloc[-1]))
+                
+                if sector_cis:
+                    avg_cis = sum(sector_cis) / len(sector_cis)
+                    sector_results[sector] = {"score": avg_cis, "desc": data["desc"]}
+            
+            if sector_results:
+                # מיון סקטורים לפי הציון (מהגבוה לנמוך)
+                sorted_sectors = sorted(sector_results.items(), key=lambda item: item[1]["score"], reverse=True)
+                
+                cols = st.columns(3)
+                for i, (sector, data) in enumerate(sorted_sectors):
+                    avg_cis = data["score"]
+                    with cols[i % 3]:
+                        color = "#16a34a" if avg_cis >= 65 else ("#eab308" if avg_cis >= 50 else "#dc2626")
+                        st.markdown(f"""
+                        <div class='map-card' style='border-top: 4px solid {color};'>
+                            <h4 style='margin:0; font-size:1.15rem; color:#e0f2fe;'>{sector}</h4>
+                            <p style='font-size:0.95rem; color:#9db0c9; margin-top:5px; margin-bottom: 5px;'>Accumulation Index</p>
+                            <h2 style='color:{color}; margin:0; font-size: 2.2rem;'>{avg_cis:.1f}%</h2>
+                            <p class='map-desc'>{data['desc']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                st.markdown("---")
+                st.info("💡 **תובנה מוסדית:** סקטורים עם אינדקס מעל 65% נתונים כעת תחת פעילות איסוף מוסדית קשה ויש לחפש בהם הזדמנויות מגמה (Long).")
+            else:
+                st.error("לא ניתן היה לטעון נתונים מספיקים עבור המפה.")
+
+def screen_trading_scout() -> None:
+    st.markdown("### 📈 Trading Scout - תכנון עסקאות ובדיקת הסתברויות")
+    st.info("⚠️ **הבהרה קריטית:** זהו כלי עזר אנליטי אוטומטי המעריך הסתברויות לאיסוף מוסדי. אינו מהווה תחליף לניהול סיכונים עצמאי או ייעוץ.")
+    
+    # Mode selector
+    mode = st.radio("בחר פרופיל רגישות למודל ההסתברויות (Risk Mode):", ["Conservative (שמרני)", "Balanced (מאוזן)", "Optimistic (אופטימי)"], index=1, horizontal=True)
+    mode_map = {"Conservative (שמרני)": "Conservative", "Balanced (מאוזן)": "Balanced", "Optimistic (אופטימי)": "Optimistic"}
+    selected_mode = mode_map[mode]
+
+    cols_input = st.columns(4)
+    tickers_input = []
+    default_tickers = ["NVDA", "AAPL", "META", "TSLA"]
+    for i in range(4):
+        val = cols_input[i].text_input(f"טיקר {i+1}", value=default_tickers[i], key=f"ts_ticker_{i}").strip().upper()
+        tickers_input.append(val)
+        
+    if st.button("💡 קבל הסתברויות ותוכניות לכל הטיקרים", type="primary", use_container_width=True):
+        if not SCOUT_CORE_AVAILABLE:
+            st.error("מודול הליבה חסר, לא ניתן לייצר המלצה.")
+            return
+            
+        from trading_scout import get_trading_recommendation
+        
+        # UI rendering 2x2 Grid (for 4 items)
+        for i in range(0, 4, 2):
+            row_cols = st.columns(2)
+            for j in range(2):
+                idx = i + j
+                if idx < 4 and tickers_input[idx]:
+                    tkr = tickers_input[idx]
+                    with row_cols[j]:
+                        with st.spinner(f"מנתח הסתברויות מוסדיות עבור {tkr}..."):
+                            try:
+                                rec_data = get_trading_recommendation(tkr, mode=selected_mode)
+                            except Exception as e:
+                                st.error(f"שגיאה ב-{tkr}: {e}")
+                                continue
+                                
+                        if rec_data.get("recommendation") == "ERROR":
+                            st.warning(f"**{tkr}:** {rec_data.get('reason')}")
+                            continue
+
+                        rec = rec_data["recommendation"]
+                        color_map = {
+                            "STRONG BUY": "#16a34a", "BUY": "#22c55e",
+                            "HOLD": "#eab308", "SELL": "#f97316", "STRONG SELL": "#dc2626"
+                        }
+                        color = color_map.get(rec, "#94a3b8")
+                        
+                        st.markdown(f"""
+                        <div class='scout-card'>
+                            <div class='scout-title'>
+                                {tkr} <span style='float:left; color:{color}; padding-left: 5px;'>{rec}</span>
+                            </div>
+                            <p style='text-align:center; margin-bottom:0; color:#cbd5e1; font-weight: 500;'>Institutional Accumulation Probability</p>
+                            <div class='scout-prob'>{rec_data['prob_engine']['accumulation_chance']}%</div>
+                            <p style='text-align:center; color:#94a3b8; font-size:0.95em; margin-top:-5px;'>Wyckoff Phase: <b>{rec_data['current_phase']}</b></p>
+                            <hr style="border-color: rgba(255,255,255,0.05); margin: 15px 0;">
+                            
+                            <div style="display:flex; justify-content: space-between; margin-bottom: 10px;">
+                                <div style="width: 48%;">
+                                    <span style="color:#e0f2fe; font-size: 0.9em; font-weight: bold;">Probability Engine</span><br>
+                                    <span style="font-size: 0.85em; color:#cbd5e1;">🚀 פריצה ב-30 יום: <b>{rec_data['prob_engine']['breakout_30d']}%</b></span><br>
+                                    <span style="font-size: 0.85em; color:#cbd5e1;">📉 סיכון להפצה: <b>{rec_data['prob_engine']['distribution_risk']}%</b></span>
+                                </div>
+                                <div style="width: 48%;">
+                                    <span style="color:#e0f2fe; font-size: 0.9em; font-weight: bold;">Smart Money Dashboard</span><br>
+                                    {''.join([f"<span style='font-size: 0.8em; display:block; line-height:1.2; color:#cbd5e1;'>{v} | {k}</span>" for k, v in rec_data['dashboard'].items()])}
+                                </div>
+                            </div>
+                            
+                            <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+                                <span style="font-size: 0.85em; color:#cbd5e1;"><b>Failure Detection (מלכודות):</b></span><br>
+                                {''.join([f"<span style='font-size: 0.8em; display:block; color:#94a3b8;'>{warn}</span>" for warn in rec_data['failure_warnings']])}
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        with st.expander(f"📝 תוכנית מסחר מלאה ל-{tkr}", expanded=False):
+                            st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
+                            st.markdown(f"**מחיר סגירה לחישוב:** ${rec_data['entry_price']:.2f}")
+                            st.markdown(f"**הגנת הפסד (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
+                            st.markdown(f"**יעד ראשון (TP1):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
+                            st.markdown(f"**יעד שני (TP2):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
+                            st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
+                            st.markdown(f"**טווח זמן אופטימלי להגעה ליעד:** {rec_data['timeframe']}")
+                            st.markdown("---")
+                            st.markdown(f"**הסבר מעשי:** {rec_data['simple_explain']}")
+                            
+                        with st.expander(f"⏮️ Wyckoff Replay Engine (היסטוריית תבניות)", expanded=False):
+                            st.markdown("איתרתי תרחישים מוסדיים זהים בעבר על סמך פאזה וזרימת הון דומה:")
+                            for rep in rec_data['replay']:
+                                st.markdown(f"- {rep}")
+
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
     
@@ -482,28 +671,6 @@ def screen_backtest() -> None:
         st.metric("עסקאות סה״כ", t_count)
         if audit_df is not None and not audit_df.empty:
             st.dataframe(audit_df)
-
-def screen_scanner() -> None:
-    st.markdown("### 🔎 Market Scanner")
-    st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות. ממוקד באיתור הסתברות גבוהה לצבירה מוסדית.")
-    sector_name = st.selectbox("בחר סקטור לסריקה", list(SECTOR_MAP.keys()))
-    scan_limit = st.slider("כמות מניות לסריקה", 5, 50, 10)
-    scan_th = st.slider("סף מינימלי לתוצאה (CIS)", 40, 95, 60)
-
-    if st.button("🚀 התחל סריקה מוסדית", type="primary"):
-        results = []
-        engine = FactorEngine(BacktestConfig())
-        for ticker in SECTOR_MAP[sector_name][:scan_limit]:
-            row = _run_scan_row(engine, ticker, scan_th)
-            if row:
-                results.append(row)
-        if results:
-            top = sorted(results, key=lambda r: r["Score"], reverse=True)[0]
-            st.success(f"נמצאו {len(results)} מניות")
-            st.dataframe(pd.DataFrame([{k: v for k, v in r.items() if k != "_df"} for r in results]))
-            st.markdown(f"#### המובילה בהסתברות לצבירה: {top['Ticker']}")
-        else:
-            st.warning("אף מניה לא עברה את סף ה-CIS הנוכחי.")
 
 def screen_monitor() -> None:
     st.markdown("### 👁️ Institutional Performance Monitor")
@@ -676,144 +843,6 @@ def screen_ml_trainer() -> None:
             pass
     st.text_area("Log", value=log_content, height=300, disabled=True, label_visibility="collapsed")
 
-def screen_trading_scout() -> None:
-    st.markdown("### 📈 Trading Scout - תכנון עסקאות ובדיקת הסתברויות")
-    st.info("⚠️ **הבהרה קריטית:** זהו כלי עזר אנליטי אוטומטי. הדגש הוא על ההסתברות לאיסוף מוסדי אמיתי. לא משמש ייעוץ.")
-    
-    # Mode selector
-    mode = st.radio("בחר פרופיל הסתברות (Risk Mode):", ["Conservative (שמרני)", "Balanced (מאוזן)", "Optimistic (אופטימי)"], index=1, horizontal=True)
-    mode_map = {"Conservative (שמרני)": "Conservative", "Balanced (מאוזן)": "Balanced", "Optimistic (אופטימי)": "Optimistic"}
-    selected_mode = mode_map[mode]
-
-    cols_input = st.columns(4)
-    tickers_input = []
-    default_tickers = ["NVDA", "AAPL", "META", "TSLA"]
-    for i in range(4):
-        val = cols_input[i].text_input(f"טיקר {i+1}", value=default_tickers[i], key=f"ts_ticker_{i}").strip().upper()
-        tickers_input.append(val)
-        
-    if st.button("💡 קבל המלצות לכל הטיקרים", type="primary", use_container_width=True):
-        if not SCOUT_CORE_AVAILABLE:
-            st.error("מודול הליבה חסר, לא ניתן לייצר המלצה.")
-            return
-            
-        from trading_scout import get_trading_recommendation
-        
-        # UI rendering 2x2 Grid
-        for i in range(0, 4, 2):
-            row_cols = st.columns(2)
-            for j in range(2):
-                idx = i + j
-                if idx < 4 and tickers_input[idx]:
-                    tkr = tickers_input[idx]
-                    with row_cols[j]:
-                        with st.spinner(f"מנתח {tkr}..."):
-                            try:
-                                rec_data = get_trading_recommendation(tkr, mode=selected_mode)
-                            except Exception as e:
-                                st.error(f"שגיאה ב-{tkr}: {e}")
-                                continue
-                                
-                        if rec_data.get("recommendation") == "ERROR":
-                            st.warning(f"**{tkr}:** {rec_data.get('reason')}")
-                            continue
-
-                        rec = rec_data["recommendation"]
-                        color_map = {
-                            "STRONG BUY": "#16a34a", "BUY": "#22c55e",
-                            "HOLD": "#eab308", "SELL": "#f97316", "STRONG SELL": "#dc2626"
-                        }
-                        color = color_map.get(rec, "#94a3b8")
-                        
-                        st.markdown(f"""
-                        <div class='scout-card'>
-                            <div class='scout-title'>
-                                {tkr} <span style='float:left; color:{color};'>{rec}</span>
-                            </div>
-                            <p style='text-align:center; margin-bottom:0;'>Institutional Accumulation Probability</p>
-                            <div class='scout-prob'>{rec_data['prob_engine']['accumulation_chance']}%</div>
-                            <p style='text-align:center; color:#9db0c9; font-size:0.9em; margin-top:-5px;'>Wyckoff Phase: {rec_data['current_phase']}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        t_cols = st.columns(2)
-                        with t_cols[0]:
-                            st.markdown("**Wyckoff Probability Engine**")
-                            st.caption(f"🚀 פריצה ב-30 יום: **{rec_data['prob_engine']['breakout_30d']}%**")
-                            st.caption(f"📉 סיכון להפצה: **{rec_data['prob_engine']['distribution_risk']}%**")
-                        with t_cols[1]:
-                            st.markdown("**Smart Money Dashboard**")
-                            for k, v in rec_data['dashboard'].items():
-                                st.caption(f"{k}: {v}")
-                                
-                        st.markdown(f"**Failure Detection (הגנה ממלכודות):**")
-                        for warn in rec_data['failure_warnings']:
-                            st.caption(warn)
-                            
-                        with st.expander("📝 תוכנית מסחר מלאה (Trading Plan)", expanded=False):
-                            st.markdown(f"**פעולה נדרשת:** {rec_data['action']}")
-                            st.markdown(f"**מחיר נוכחי:** ${rec_data['entry_price']:.2f}")
-                            st.markdown(f"**Stop Loss:** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
-                            st.markdown(f"**Take Profit 1:** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
-                            st.markdown(f"**Take Profit 2:** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
-                            st.markdown(f"**יחס סיכוי/סיכון:** {rec_data['rr_ratio']}")
-                            st.markdown(f"**טווח זמן אופטימלי:** {rec_data['timeframe']}")
-                            st.markdown("---")
-                            st.markdown(f"**הסבר:** {rec_data['simple_explain']}")
-                            
-                        with st.expander("⏮️ Wyckoff Replay Engine (היסטוריה דומה)", expanded=False):
-                            st.markdown("מצאתי תרחישים מוסדיים דומים בעבר על סמך ציון האיסוף:")
-                            for rep in rec_data['replay']:
-                                st.markdown(f"- {rep}")
-
-def screen_institutional_map() -> None:
-    st.markdown("### 🗺️ Institutional Map - מפת כסף חכם סקטוריאלית")
-    st.markdown("מסך זה ממפה את הסקטורים המרכזיים בשוק ומציג את ממוצע ה-**Institutional Accumulation Probability** (הסתברות לצבירה מוסדית) שלהם בהתבסס על מניות מובילות בכל סקטור.")
-    
-    MAP_SECTORS = {
-        "טכנולוגיה (Technology)": ["AAPL", "MSFT", "NVDA", "AVGO", "CRM"],
-        "סמיקונדקטורס (Semiconductors)": ["AMD", "TXN", "QCOM", "INTC", "SMCI"],
-        "פיננסים (Financials)": ["JPM", "V", "MA", "BAC", "GS"],
-        "בריאות (Healthcare)": ["JNJ", "UNH", "LLY", "MRK", "ABBV"],
-        "אנרגיה וסחורות (Energy & Commodities)": ["XOM", "CVX", "GLD", "SLV", "COP"]
-    }
-    
-    if st.button("🗺️ טען מפה מוסדית", type="primary"):
-        with st.spinner("סורק מניות מובילות בכל סקטור לחילוץ נתוני איסוף..."):
-            engine = FactorEngine(BacktestConfig())
-            sector_results = {}
-            
-            for sector, tickers in MAP_SECTORS.items():
-                sector_cis = []
-                for t in tickers:
-                    df = get_cached_data(t, period="6mo")
-                    if df is not None and not df.empty and len(df) > 40:
-                        factors = engine.compute(df)
-                        cis = engine.composite_cis(factors, df)
-                        sector_cis.append(float(cis.iloc[-1]))
-                
-                if sector_cis:
-                    avg_cis = sum(sector_cis) / len(sector_cis)
-                    sector_results[sector] = avg_cis
-            
-            if sector_results:
-                cols = st.columns(len(sector_results))
-                for i, (sector, avg_cis) in enumerate(sector_results.items()):
-                    with cols[i]:
-                        color = "#16a34a" if avg_cis >= 65 else ("#eab308" if avg_cis >= 50 else "#dc2626")
-                        st.markdown(f"""
-                        <div style='background:rgba(15, 23, 42, 0.8); border-top:4px solid {color}; padding:15px; border-radius:8px; text-align:center;'>
-                            <h4 style='margin:0; font-size:1.1rem; color:#e0f2fe;'>{sector}</h4>
-                            <p style='font-size:0.9rem; color:#9db0c9; margin-top:5px;'>Accumulation Index</p>
-                            <h2 style='color:{color}; margin:0;'>{avg_cis:.1f}%</h2>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                st.markdown("---")
-                st.info("💡 **תובנה:** סקטורים עם אינדקס מעל 65% נתונים כעת תחת איסוף מוסדי כבד ויש לחפש בהם הזדמנויות לונג.")
-            else:
-                st.error("לא ניתן היה לטעון נתונים עבור המפה.")
-
 def main() -> None:
     init_session_state()
     inject_css()
@@ -824,24 +853,9 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    # סדר הטאבים המבוקש - הפוך (Home ראשון, ML Trainer אחרון)
-    tabs = st.tabs([
-        "🏠 Home (Wyckoff Analyst)", 
-        "🗺️ Institutional Map", 
-        "📈 Trading Scout", 
-        "📊 Backtest", 
-        "👁️ Monitor", 
-        "🧠 ML Trainer"
-    ])
-    
-    screen_fns = [
-        screen_home, 
-        screen_institutional_map, 
-        screen_trading_scout, 
-        screen_backtest, 
-        screen_monitor, 
-        screen_ml_trainer
-    ]
+    # סדר הטאבים מדויק כפי שהוגדר על ידך
+    tabs = st.tabs(["🧠 ML Trainer", "👁️ Monitor", "📊 Backtest", "📈 Trading Scout", "🗺️ Institutional Map", "🏠 Home (Wyckoff Analyst)"])
+    screen_fns = [screen_ml_trainer, screen_monitor, screen_backtest, screen_trading_scout, screen_institutional_map, screen_home]
     
     for tab, fn in zip(tabs, screen_fns):
         with tab:
