@@ -889,9 +889,24 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    # סדר הטאבים מדויק כפי שהוגדר
-    tabs = st.tabs(["🧠 ML Trainer", "👁️ Monitor", "📊 Backtest", "📈 Trading Scout", "🗺️ Institutional Map", "🏠 Home (Wyckoff Analyst)"])
-    screen_fns = [screen_ml_trainer, screen_monitor, screen_backtest, screen_trading_scout, screen_institutional_map, screen_home]
+    # סדר הטאבים המעודכן - מסך הבית ימני (ראשון) וה-ML Trainer שמאלי (אחרון)
+    tabs = st.tabs([
+        "🏠 Home (Wyckoff Analyst)", 
+        "🗺️ Institutional Map", 
+        "📈 Trading Scout", 
+        "📊 Backtest", 
+        "👁️ Monitor", 
+        "🧠 ML Trainer"
+    ])
+    
+    screen_fns = [
+        screen_home, 
+        screen_institutional_map, 
+        screen_trading_scout, 
+        screen_backtest, 
+        screen_monitor, 
+        screen_ml_trainer
+    ]
     
     for tab, fn in zip(tabs, screen_fns):
         with tab:
