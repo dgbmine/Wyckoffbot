@@ -1,6 +1,6 @@
 """
 ============================================================
-TRADING SCOUT PRO — PROBABILITY & REPLAY ENGINE V4.5
+TRADING SCOUT PRO — PROBABILITY & REPLAY ENGINE V4.6
 מודול משלים ל-Wyckoff Institutional Analyst - רדאר כסף חכם
 ============================================================
 """
@@ -12,9 +12,6 @@ from scout_core import get_data, FactorEngine, BacktestConfig, check_phase_entry
 def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     """
     מודול המלצות מסחר מבוסס Wyckoff וציון מוסדי (CIS).
-    עונה על השאלה: "מה ההסתברות שזה צבירה מוסדית אמיתית?"
-    כולל Probability Engine דינמי המשקלל משקלים שונים לכל פקטור (OBV, RS, Stopping Volume וכו')
-    בהתאם לפאזה הספציפית שבה נמצא הנכס.
     """
     df = get_data(ticker, period="1y")
     if df is None or df.empty or len(df) < 60:
@@ -40,27 +37,18 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     effort_vs_result = float(factors.get('f_effort_vs_result', pd.Series([1.0])).iloc[-1])
     stopping_vol = float(factors.get('f_stopping_volume', pd.Series([0.0])).iloc[-1])
 
-    # === תיקון #3: הנחתה (Penalty/Discount) על ה-CIS בפאזות שליליות ===
-    # ציון CIS גבוה בשלב הפצה/ירידה תוך OBV שלילי הוא "מטעה" - יש להנחית אותו בפועל,
-    # ולא רק להציג עליו אזהרה קוסמטית.
-    is_bearish_phase = ("Distribution" in current_phase) or ("Markdown" in current_phase) or ("Heavy Supply" in current_phase)
-    cis_penalty = 0.0
-    if is_bearish_phase:
-        cis_penalty += 20.0  # הנחתה בסיסית על עצם השהייה בפאזה שלילית
-        if obv_vel < 0:
-            cis_penalty += 15.0  # הנחתה נוספת אם זרימת ההון מאשרת את החולשה
-        if rs_spy < -0.02:
-            cis_penalty += 5.0   # חולשה יחסית מול השוק מחמירה את ההנחתה
-    cis_score_adjusted = max(1.0, cis_score - cis_penalty)
-
-    # === חישוב הסתברות מוסדית משוקללת (Risk Mode) ===
+    # === חישוב הסתברות מוסדית (Risk Mode) וקנס הפצה דינמי ===
     prob_modifier = 1.0
     if mode == "Conservative":
         prob_modifier = 0.85
     elif mode == "Optimistic":
         prob_modifier = 1.15
 
-    accum_prob = min(99, max(1, int(cis_score_adjusted * prob_modifier)))
+    # אם אנחנו בפיזור, ניתן קנס חמור לציון ה-CIS למניעת קריאות שווא בגלל מחזורים גבוהים של זריקת סחורה
+    if "Distribution" in current_phase or "Markdown" in current_phase:
+        prob_modifier -= 0.35
+
+    accum_prob = min(99, max(1, int(cis_score * prob_modifier)))
 
     # === חישוב ATR דינמי לניהול סיכונים (14 יום) ===
     high_low = df['High'] - df['Low']
@@ -69,55 +57,41 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     atr = float(true_range.rolling(14).mean().iloc[-1]) if not pd.isna(true_range.rolling(14).mean().iloc[-1]) else close_price * 0.02
 
-    # === תיקון #1 (חלק ב'): Stop Loss דינמי לפי הפאזה הספציפית ===
-    # בפאזת ניעור (Spring/Phase C) הסטופ צמוד יותר מתחת לשפל הניעור (סיכון מבני קצר).
-    # בפאזת בנייה/פריצה (Phase D/LPS) מרווח בינוני. במגמה (Phase E/Markup) מרווח רחב יותר לתת לטרנד "לנשום".
-    if "Phase C" in current_phase or "Spring" in current_phase:
-        sl_multiplier = 1.3
-    elif "Phase D" in current_phase or "LPS" in current_phase:
-        sl_multiplier = 1.8
-    elif "Phase E" in current_phase or "Markup" in current_phase or "Re-accumulation" in current_phase:
-        sl_multiplier = 2.5
-    else:
-        sl_multiplier = 2.0
-
-    # יעדים וסטופים דינמיים לפי מרווחי תנודתיות (ATR) ולפי הפאזה הנוכחית
-    stop_loss_price = close_price - (atr * sl_multiplier)
+    # יעדים וסטופים
+    stop_loss_price = close_price - (atr * 2)
     stop_loss_pct = ((stop_loss_price - close_price) / close_price) * 100
     tp1_price = close_price + (atr * 3.5)
     tp1_pct = ((tp1_price - close_price) / close_price) * 100
     tp2_price = close_price + (atr * 7)
     tp2_pct = ((tp2_price - close_price) / close_price) * 100
-    
     rr_ratio = f"1:{round(abs((tp1_price - close_price) / (close_price - stop_loss_price)), 1)}"
 
     allowed = check_phase_entry_allowed(current_phase, "Balanced")
     is_positive_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
 
-    # === תיקון #2: Wyckoff Roadmap - השלב הקודם והשלב הבא המצופה ===
-    if "Phase A" in current_phase or "Selling Climax" in current_phase:
-        prev_phase_label, next_phase_label = "Markdown / טרום-איסוף", "Phase B (בניית בסיס)"
-    elif "Phase B" in current_phase or ("Accumulation" in current_phase and "Re-" not in current_phase):
-        prev_phase_label, next_phase_label = "Phase A (בלימה)", "Phase C (ניעור / Spring)"
+    # === Wyckoff Roadmap Mapping ===
+    roadmap = {"previous_phase": "לא ידוע", "next_phase": "לא ידוע"}
+    if "Phase A" in current_phase:
+        roadmap["previous_phase"] = "מגמת ירידה (Markdown)"
+        roadmap["next_phase"] = "שלב B (בניית כוח / איסוף)"
+    elif "Phase B" in current_phase:
+        roadmap["previous_phase"] = "שלב A (בלימה)"
+        roadmap["next_phase"] = "שלב C (ניעור / Spring)"
     elif "Phase C" in current_phase or "Spring" in current_phase:
-        prev_phase_label, next_phase_label = "Phase B (בניית בסיס)", "Phase D (פריצה / SOS)"
+        roadmap["previous_phase"] = "שלב B (איסוף שקט)"
+        roadmap["next_phase"] = "שלב D (הכנה לפריצה / SOS)"
     elif "Phase D" in current_phase or "LPS" in current_phase:
-        prev_phase_label, next_phase_label = "Phase C (ניעור / Spring)", "Phase E (מגמה / Markup)"
+        roadmap["previous_phase"] = "שלב C (ניעור)"
+        roadmap["next_phase"] = "שלב E (מגמת עליה / Markup)"
     elif "Phase E" in current_phase or "Markup" in current_phase:
-        prev_phase_label, next_phase_label = "Phase D (פריצה / SOS)", "Re-accumulation או Distribution"
-    elif "Re-accumulation" in current_phase:
-        prev_phase_label, next_phase_label = "Phase E (מגמה / Markup)", "Phase D מחודש (המשך מגמה)"
-    elif "Distribution" in current_phase or "Heavy Supply" in current_phase:
-        prev_phase_label, next_phase_label = "Phase E (מגמה / Markup)", "Markdown (ירידות)"
+        roadmap["previous_phase"] = "שלב D (פריצה)"
+        roadmap["next_phase"] = "שלב A עליון (תחילת פיזור)"
+    elif "Distribution" in current_phase:
+        roadmap["previous_phase"] = "שלב E (מגמת עליה)"
+        roadmap["next_phase"] = "מגמת ירידה (Markdown)"
     elif "Markdown" in current_phase:
-        prev_phase_label, next_phase_label = "Distribution (הפצה)", "Phase A מחודש (בלימה)"
-    else:
-        prev_phase_label, next_phase_label = "לא ידוע / דשדוש", "ממתין לאיתות מובהק"
-
-    roadmap = {
-        "previous_phase": prev_phase_label,
-        "next_phase": next_phase_label,
-    }
+        roadmap["previous_phase"] = "פיזור מוסדי (Distribution)"
+        roadmap["next_phase"] = "שלב A חדש (חיפוש תחתית)"
 
     # === Smart Money Dashboard ===
     dashboard = {
@@ -128,54 +102,73 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
         "Volume Anomalies": "✅ בלימת מחזורים" if stopping_vol > 0 else "⚠️ מחזורים שגרתיים"
     }
 
-    # === Wyckoff Probability Engine - Matrix Weighting ===
+    # === Wyckoff Probability Engine ===
     bo_modifier = 0
     dist_modifier = 0
+    edu_bo = ""
+    edu_dist = ""
     
-    # משקלים המשתנים בהתאם לפאזת חיי המניה:
+    # חישוב משקלים דינמי לפי פאזה + בניית טקסט הסבר מלמד
     if "Phase C" in current_phase or "Spring" in current_phase:
-        # ב-Spring, ספיגה וזרימת הון הם הקריטיים ביותר
         if absorption > 1.2: bo_modifier += 15
         if obv_vel > 0: bo_modifier += 15
         if stopping_vol > 0: bo_modifier += 10
-        if rs_spy < -0.02: dist_modifier += 15 # חולשה כללית בפריצה זה מסוכן
+        if rs_spy < -0.02: dist_modifier += 15
+        edu_bo = f"הסיכוי לפריצה מבוסס כעת על נתוני שלב C (ניעור מוסדי). המערכת זיהתה " + ("זרימת הון פנימי חזקה (OBV) וספיגת מוכרים, מה שמגביר משמעותית את סיכוי הפריצה." if bo_modifier >= 20 else "שחסרה עדיין דחיפה חזקה של קונים כדי לאשר פריצה מלאה.")
+        edu_dist = "הסיכון העיקרי הוא שניעור זה יתברר כהמשך ירידות (Fake Spring)."
+        
     elif "Phase D" in current_phase or "LPS" in current_phase:
-        # ב-LPS, שבירת מבנה כלפי מעלה ו-RS הם קריטיים
         if struct_break > 0: bo_modifier += 20
         if obv_vel > 0.02: bo_modifier += 15
         if rs_spy > 0: bo_modifier += 10
+        edu_bo = f"בשלב D המטרה היא לפרוץ כלפי מעלה. " + ("זיהינו שבירת מבנה חיובית ועוצמה מול השוק, לכן ההסתברות לפריצה קפצה." if bo_modifier >= 20 else "חסרים עדיין אישורי מחזורים כדי להגדיל את ההסתברות לפריצה מוצלחת.")
+        edu_dist = "כל עוד המבנה נשמר, סיכוני ההפצה נמוכים יחסית לשלבים קודמים."
+        
     elif "Phase E" in current_phase or "Markup" in current_phase:
-        # במגמת עליה, אנו בוחנים עוצמה מול השוק וסימני תשישות
         if rs_spy > 0.02: bo_modifier += 15
         if obv_vel > 0.05: bo_modifier += 15
-        if effort_vs_result > 2.5: dist_modifier += 25 # מאמץ ללא תוצאה שווה התקרבות להפצה
+        if effort_vs_result > 2.5: dist_modifier += 25 
+        edu_bo = "המניה כבר במגמת עליה מלאה. סיכויי הפריצה משקפים את היכולת להמשיך לייצר שיאים חדשים."
+        edu_dist = "בשלב זה אנו מחפשים 'תשישות'. " + ("התגלה מאמץ קונים ללא תוצאה (Effort vs Result גרוע), מה שמקפיץ את סיכון ההפצה!" if dist_modifier >= 25 else "המחזורים נראים בריאים ואין סימני פיזור ברורים.")
+        
+    elif "Distribution" in current_phase or "Markdown" in current_phase:
+        dist_modifier += 40
+        bo_modifier = 0
+        edu_bo = "המערכת חסמה את סיכויי הפריצה ללונג, מכיוון שהפאזה הטכנית מראה על ירידות או פיזור נזילות של כסף חכם."
+        edu_dist = "זיהוי הפצה מובהק. המוסדיים מחלקים סחורה לציבור, ולכן סיכון השבירה מזנק."
+        
     else: 
-        # בפאזות A, B או חוסר ודאות - אנו מחפשים בעיקר רצפה
         if stopping_vol > 0: bo_modifier += 15
         if absorption > 1.2: bo_modifier += 10
         if struct_break < 0: dist_modifier += 20
+        edu_bo = "המניה נמצאת בשלבי התבססות מוקדמים (דשדוש). סיכויי הפריצה יתחזקו רק אם נראה בלימה עקבית של המחזורים השליליים."
+        edu_dist = "בשלב זה קיימת סכנה שהדשדוש יהפוך להמשך מגמת ירידה אם המבנה ימשך להישבר."
 
-    # סיכונים כלליים ללא קשר לפאזה
-    if obv_vel < -0.02: dist_modifier += 25
-    if "Distribution" in current_phase or "Markdown" in current_phase:
-        dist_modifier += 40
-        bo_modifier = 0
-        
+    if obv_vel < -0.02: 
+        dist_modifier += 25
+        edu_dist += " **בנוסף, ה-OBV (זרימת ההון) מצביע על יציאת כסף, מה שמעלה את סיכון ההפצה.**"
+
     breakout_chance = min(98, max(2, int((accum_prob * 0.40) + bo_modifier)))
     distribution_risk = min(98, max(2, int((100 - accum_prob) * 0.40 + dist_modifier)))
+
+    educational_note = (
+        f"<b>• ציון האיסוף ({accum_prob}%):</b> זהו נתון הבסיס. הוא עונה על השאלה: 'כמה כסף מוסדי קונה עכשיו?'. ציון מתחת ל-50 מראה על חוסר עניין.<br><br>"
+        f"<b>• סיכוי לפריצה ({breakout_chance}%):</b> {edu_bo}<br><br>"
+        f"<b>• סיכון הפצה ({distribution_risk}%):</b> {edu_dist}"
+    )
 
     prob_engine = {
         "accumulation_chance": accum_prob,
         "breakout_30d": breakout_chance,
         "distribution_risk": distribution_risk,
+        "educational_note": educational_note
     }
 
     # === Failure Detection - Sharp & Exclusive Warnings ===
     failure_warnings = []
     
-    # שימוש ב-if/elif כדי למנוע הצפת אזהרות כפולות וליצור מסר חד:
     if "Distribution" in current_phase or "Markdown" in current_phase:
-        failure_warnings.append(f"🔴 סכנת מחיקה (Markdown): הכסף החכם משחרר את **{ticker}** בשיטתיות. הלחץ מצביע על פיזור סחורה מתמשך. אל תחפש תחתיות שקריות.")
+        failure_warnings.append(f"🔴 סכנת מחיקה (Markdown): המערכת מזהה שהכסף החכם משחרר את **{ticker}** בשיטתיות. אל תחפש תחתיות שקריות. יש להימנע מלונג לחלוטין.")
     elif "Spring" in current_phase and obv_vel < 0:
         failure_warnings.append(f"🔴 ניעור שקרי (Fake Spring Alert): למרות השבירה מטה של **{ticker}**, ה-OBV יורד בחדות. זה אינו ניעור מוסדי שמטרתו קנייה, אלא המשך טבעי של לחץ המכירות.")
     elif is_positive_phase and effort_vs_result > 2.5 and close_price < df['Open'].iloc[-1]:
@@ -183,7 +176,7 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     elif "Markup" in current_phase and rs_spy < -0.02:
         failure_warnings.append(f"⚠️ חולשה בסייקל (Weak Leader): **{ticker}** בפייז חיובי, אך מפגינה חולשה יחסית צורמת מול מדד ה-S&P 500. כשהשוק יתקן, מניות חלשות יקרסו ראשונות.")
     elif accum_prob > 60 and not allowed:
-        failure_warnings.append(f"⚠️ חוסר בשלות טכני: קיימים ניצנים של כסף חכם הנכנס ל-**{ticker}**, אך התבנית עצמה עדיין אינה מוכנה למהלך מגמתי (תזמון לקוי).")
+        failure_warnings.append(f"⚠️ חוסר בשלות טכני: קיימים ניצנים של כסף חכם הנכנס ל-**{ticker}**, אך התבנית עצמה עדיין אינה מוכנה למהלך מגמתי (תזמון לקוי). המתן להזדמנות בשלב C או D.")
 
     if not failure_warnings:
         failure_warnings.append(f"✅ שמיים נקיים (Clear Skies): התנהגות המחיר וזרימת ההון ב-**{ticker}** תקינה לחלוטין. לא זוהו אנומליות, אזהרות מוסדיות או מלכודות קלאסיות בטווח הזמן הקרוב.")
@@ -211,14 +204,17 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     elif "Distribution" in current_phase or "Markdown" in current_phase:
         replay.append(f"🔍 פיזור נזילות: דפוס הפיזור ב-**{ticker}** משכפל את ההתנהגות של TSLA בסוף 2022 - ה-OBV נשפך לפני המחיר, והמוסדיים נוטשים את הספינה.")
         
-    else: # Transition / Phase A / Phase B
+    else: 
         if stopping_vol > 0:
             replay.append(f"🔍 בלימת נפילה: בלימת המחזורים החריגה ב-**{ticker}** מזכירה את השלבים הראשונים (Phase A) של AAPL בתחילת 2023, כשהכסף החכם בלם באלימות את הירידות.")
         else:
             replay.append(f"🔍 שחיקה ואיסוף שקט: **{ticker}** נמצאת בשלב קיפאון המזכיר את AMZN באמצע 2023. שחיקה איטית (Phase B) בזמן שקרנות גידור אוספות בשקט וללא לחץ.")
 
     # === לוגיקת המלצה (Action Plan) ===
-    if accum_prob >= 75 and is_positive_phase:
+    if "Distribution" in current_phase or "Markdown" in current_phase:
+        rec = "STRONG SELL"
+        action = "התרחקות מוחלטת (AVOID) או פתיחת פוזיציית שורט. זיהוי הפצה מובהק."
+    elif accum_prob >= 75 and is_positive_phase:
         rec = "STRONG BUY"
         action = "כניסה מועדפת (High Conviction). ההסתברות לצבירה מוסדית אמיתית גבוהה מאוד. שקול כניסה אגרסיבית."
     elif accum_prob >= 65 and allowed:
@@ -227,9 +223,6 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     elif (50 <= accum_prob < 65) or (accum_prob >= 65 and not is_positive_phase):
         rec = "HOLD"
         action = "המתן. אמנם קיימת נוכחות של הון פנימי, אך הפאזה הטכנית אינה מספקת אישור טקטי לפריצה מיידית."
-    elif "Distribution" in current_phase or "Markdown" in current_phase:
-        rec = "STRONG SELL"
-        action = "הסבירות לצבירה היא אפסית. זהו פיזור מוסדי מובהק (Distribution). שקול הגנות (שורט) או יציאה מיידית."
     else:
         rec = "SELL"
         action = "הסתברות נמוכה לאיסוף. מומנטום הכסף החכם שלילי. חפש נקודות יציאה טקטית בתיקון הקרוב מעלה."
