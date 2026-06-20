@@ -1,10 +1,14 @@
+"""
+============================================================
+SCOUT CORE V16.6 — WYCKOFF INSTITUTIONAL ENGINE
+============================================================
+"""
+
 import numpy as np
 import pandas as pd
 import yfinance as yf
 from dataclasses import dataclass
 import warnings
-import streamlit as st
-from datetime import datetime
 import logging
 
 warnings.filterwarnings("ignore")
@@ -24,16 +28,15 @@ def get_data(ticker, period="2y", start=None, end=None):
         if start is not None and end is not None:
             df = tkr.history(start=start, end=end, auto_adjust=False)
             if df is None or df.empty or len(df) < 40:
-                df = tkr.history(start=start, end=end)  # גיבוי לספריות yfinance חדשות
+                df = tkr.history(start=start, end=end)
         else:
             df = tkr.history(period=period, auto_adjust=False)
             if df is None or df.empty or len(df) < 40:
-                df = tkr.history(period=period)  # גיבוי לספריות yfinance חדשות
+                df = tkr.history(period=period)
 
         if df is None or df.empty or len(df) < 40:
             return None
 
-        # מנגנון קילוף אזורי זמן בטוח לקריסות TypeError
         def _safe_tz_drop(idx):
             idx = pd.to_datetime(idx)
             if getattr(idx, 'tz', None) is not None:
@@ -42,12 +45,10 @@ def get_data(ticker, period="2y", start=None, end=None):
 
         df.index = _safe_tz_drop(df.index)
         
-        # ניקוי רשומות כפולות וחסרות לשיפור יציבות הנתונים
         df = df[~df.index.duplicated(keep='first')]
         df.dropna(subset=['Close', 'Volume'], inplace=True)
         df = df.sort_index()
 
-        # הורדת נתוני עזר (SPY ו-VIX)
         if start is not None and end is not None:
             spy_df = yf.Ticker("SPY").history(start=start, end=end, auto_adjust=False)
             if spy_df is None or spy_df.empty:
@@ -171,14 +172,7 @@ def check_phase_entry_allowed(phase, risk_profile):
         return any(p in phase for p in ["Phase E", "Markup"])
     return False
 
-# ---------- New Diagnostic Function (Phase Follow-Through) ----------
 def calculate_phase_followthrough(df: pd.DataFrame, horizon: int = 20, threshold_pct: float = 0.04) -> dict:
-    """
-    מודד דיוק זיהוי Wyckoff טהור (Phase Follow-Through). 
-    בוחן האם זיהוי פאזה הוביל לתנועת מחיר מצופה בתוך חלון הזמן הנתון (horizon), 
-    ללא תלות ב-ATR, Stop-Loss או מדדים כלכליים. 
-    מחזיר מילון מפורק לפי פאזות.
-    """
     if df is None or df.empty or 'wyckoff_phase' not in df.columns:
         return {}
     
@@ -194,7 +188,6 @@ def calculate_phase_followthrough(df: pd.DataFrame, horizon: int = 20, threshold
         curr_phase = str(phases[i])
         prev_phase = str(phases[i-1]) if i > 0 else ""
         
-        # סינון לאיתותים אמיתיים (מעבר פאזה בלבד) למניעת אוטו-קורלציה
         if curr_phase == prev_phase:
             continue
             
@@ -242,7 +235,6 @@ class BacktestConfig:
     stop_loss_pct: float = 0.05
     atr_multiplier: float = 2.0
 
-# ---------- Factor Engine ----------
 class FactorEngine:
     def __init__(self, cfg: BacktestConfig):
         self.cfg = cfg
@@ -428,7 +420,6 @@ class FactorEngine:
                 else:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             elif df['Low'].iloc[i] < l60 + a and c < s50:
-                # הבחנה ברורה ומשופרת בין Spring חזק, Spring רגיל ל-False Sweep
                 obv_min_prev = obv_min60.iloc[i-1] if i > 0 and not pd.isna(obv_min60.iloc[i-1]) else obv.iloc[i]
                 
                 is_new_low = df['Low'].iloc[i] < l60
@@ -471,8 +462,6 @@ class FactorEngine:
             
             if phases.iloc[i] == prev_phase and phases.iloc[i] not in ["TRANSITION / UNCERTAIN STATE", "לא בתהליך איסוף"]:
                 streak += 1
-                if streak == 100:
-                    logger.warning(f"Suspicious Phase Chain Detected: '{phases.iloc[i]}' persisted for {streak} consecutive trading days.")
             else:
                 streak = 0
                 
@@ -508,7 +497,7 @@ def run_wyckoff_anchored_backtest(
     
     df['rs_spy_factor'] = factors['f_rs_spy'] if 'f_rs_spy' in factors.columns else 0.0
 
-    if use_ai and st is not None and getattr(st, "session_state", None) and getattr(st.session_state, "ml_model", None) is not None:
+    if use_ai and getattr(st, "session_state", None) and getattr(st.session_state, "ml_model", None) is not None:
         try:
             model = st.session_state.ml_model
             expected_features = getattr(model, "feature_names_in_", None)
@@ -667,9 +656,6 @@ def run_wyckoff_anchored_backtest(
 
 
 def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float, allowed: bool) -> str:
-    """
-    פונקציית הסבר מפושטת למשתמש הדיוט. מתרגמת מונחים פיננסיים לעברית יומיומית.
-    """
     if df is None or df.empty:
         return "אין לנו כרגע מספיק נתונים כדי להפיק הסבר פשוט על הנכס הזה."
 
@@ -687,7 +673,6 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
     
     text = []
     
-    # מה קורה למחיר
     text.append(f"**📈 מה קורה למחיר?**")
     if close > sma20 and sma20 > sma50 and sma50 > sma200:
         text.append("המניה נמצאת כרגע במגמת עלייה חזקה ובריאה. המחיר שומר על יציבות מעל כל הממוצעים החשובים.")
@@ -700,7 +685,6 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
         
     text.append("")
     
-    # מה קורה לקונים
     text.append(f"**👥 מה קורה להתעניינות הקונים (נפח מסחר)?**")
     if vol > vol_ma20 * 1.2:
         text.append("יש היום התעניינות גבוהה מהרגיל במניה! הרבה קניות או מכירות מתבצעות, מה שמרמז שכסף גדול (משקיעים מוסדיים) מעורב כאן.")
@@ -711,7 +695,6 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
         
     text.append("")
         
-    # כוח מול השוק
     text.append(f"**💪 איך היא מתנהגת לעומת השוק הכללי (הבורסה)?**")
     if rs_spy > 0.02:
         text.append("המניה הזו חזקה מהשוק! גם כשקשה מסביב, המשקיעים בוחרים לשים את הכסף שלהם דווקא כאן.")
@@ -724,9 +707,6 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
 
 
 def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str:
-    """
-    פונקציית ההסבר המקצועית המקורית (Evidence Ledger). משמשת את Backtest ו-Scanner.
-    """
     if df is None or df.empty:
         return "אין מספיק נתונים לאנליזה מוסדית. נדרשים נתונים היסטוריים נוספים."
 
@@ -798,16 +778,13 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
 
     if is_bullish:
         dominant_driver = "ACCUMULATION / MARKUP: קונצנזוס חיובי של כניסת הון ועוצמה מבנית."
-        logic_text = "קיימת התאמה מלאה בין המחיר, הנפח (OBV) והמומנטום. הנתונים מאשרים נוכחות אקטיבית של כסף חכם הסופג היצע ודוחף כלפי מעלה. הוסר חשש מסתירות."
+        logic_text = "קיימת התאמה מלאה בין המחיר, הנפח (OBV) והמומנטום. הנתונים מאשרים נוכחות אקטיבית של כסף חכם הסופג היצע ודוחף כלפי מעלה."
     elif is_bearish:
         dominant_driver = "DISTRIBUTION / MARKDOWN: קונצנזוס שלילי, לחץ מכירות קשיח."
-        logic_text = "קטגוריות הליבה מצביעות מטה פה אחד. מוסדיים מבצעים פיזור סחורה ללא התנגדות. הוסר חשש מסתירות."
-        if current_phase not in ["Markdown (Institutional Distribution)", "Distribution (Heavy Supply)", "לא בתהליך איסוף"]:
-             current_phase = "TRANSITION / UNCERTAIN STATE"
+        logic_text = "קטגוריות הליבה מצביעות מטה פה אחד. מוסדיים מבצעים פיזור סחורה ללא התנגדות."
     else:
         dominant_driver = "TRANSITION: חוסר עקביות או סתירה מהותית בין הפקטורים."
-        current_phase = "TRANSITION / UNCERTAIN STATE"
-        logic_text = "המערכת מזהה נתונים מעורבים (למשל, מבנה מחיר חיובי מול OBV שלילי). עקב כללי הסתירה הלוגית המחמירים של SCOUT, הנרטיב נפסל עד ליצירת קונצנזוס בין הון למחיר. המצב הנוכחי מוגדר כמעבר בלבד."
+        logic_text = "המערכת מזהה נתונים מעורבים. המצב הנוכחי מוגדר כמעבר בלבד עד להתגבשות מגמה מוסדית ברורה."
 
     md = f"""### ⚖️ Evidence Ledger
 
@@ -826,10 +803,227 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
 ---
 ### 1. פירוט פאקטורים אמיתי (Raw Data)
 * **Price Structure (מבנה מחיר)**: סגירת נר אחרונה ב-{close:.2f}. {trend_text}
-* **Volume / OBV (זרימת הון)**: המחזור עומד על פי {vol_ratio:.2f} ממוצע 20 יום. זרימת ה-OBV ל-10 ימים היא {obv_text}
+* **Volume / OBV (זרימת הון)**: המחזור עומד על פי {vol_ratio:.2f} ממוצע 20 יום. זרימת ה-OBV היא {obv_text}
 * **Momentum (עוצמה יחסית)**: ה-RS למול ה-SPY ב-20 הימים האחרונים עומד על {rs_spy:.2%}. {mom_text}
 
 ### 2. לוגיקה מפורשת (Decision Gate)
 {logic_text}
 """
     return md
+
+# ============================================================
+# NEW: Probability Engine & Dashboard Logic Extractors
+# ============================================================
+
+def _extract_last(factors: pd.DataFrame, col: str, default: float = 0.0) -> float:
+    if col in factors.columns:
+        return float(factors[col].iloc[-1])
+    return default
+
+def build_smart_money_dashboard(factors: pd.DataFrame) -> dict:
+    obv_vel = _extract_last(factors, 'f07_obv_velocity')
+    struct_break = _extract_last(factors, 'f35_struct_break')
+    absorption = _extract_last(factors, 'f04_absorption', 1.0)
+    rs_spy = _extract_last(factors, 'f_rs_spy')
+    stopping_vol = _extract_last(factors, 'f_stopping_volume')
+
+    return {
+        "OBV Velocity": "✅ כניסה אגרסיבית" if obv_vel > 0.02 else ("❌ יציאת הון" if obv_vel < -0.02 else "⚠️ נייטרלי / מעורב"),
+        "Price Structure": "✅ שבירת מבנה (BOS)" if struct_break > 0 else "❌ דשדוש או ירידה",
+        "Supply Absorption": "✅ ספיגה עמוקה" if absorption > 1.2 else "⚠️ אין ספיגה משמעותית",
+        "Relative Strength": "✅ מוביל על השוק" if rs_spy > 0 else "❌ מפגר אחרי השוק",
+        "Volume Anomalies": "✅ בלימת מחזורים" if stopping_vol > 0 else "⚠️ מחזורים שגרתיים"
+    }
+
+def generate_roadmap(current_phase: str) -> dict:
+    roadmap = {
+        "previous_phase": "לא ידוע",
+        "next_phase": "לא ידוע",
+        "action_plan": "המתן לאישורים נוספים.",
+        "what_if_success": "התקדמות לשלב הבא על פי המודל המוסדי.",
+        "what_if_fail": "שבירת מבנה המצריכה יציאה או הערכה מחדש."
+    }
+    
+    if "Phase A" in current_phase:
+        roadmap["previous_phase"] = "מגמת ירידה (Markdown)"
+        roadmap["next_phase"] = "שלב B (בניית כוח / איסוף)"
+        roadmap["action_plan"] = "חפש סימני ספיגה ובלימת מחזורים. לא להיכנס עדיין ללונג."
+        roadmap["what_if_success"] = "יצירת טווח דשדוש (TR) יציב שמעיד על בלימת הירידות (Phase B)."
+        roadmap["what_if_fail"] = "שבירת השפל הנוכחי והמשך מגמת ירידה עמוקה יותר."
+    elif "Phase B" in current_phase:
+        roadmap["previous_phase"] = "שלב A (בלימה)"
+        roadmap["next_phase"] = "שלב C (ניעור / Spring)"
+        roadmap["action_plan"] = "היערך לקראת ניעור (Spring) מטה שיקח נזילות לפני עליה."
+        roadmap["what_if_success"] = "ביצוע ניעור מוצלח של כסף חלש וספיגת ההיצע (Phase C)."
+        roadmap["what_if_fail"] = "קריסת התמיכה והפיכת הדשדוש מתבנית איסוף לתבנית פיזור (Distribution)."
+    elif "Phase C" in current_phase or "Spring" in current_phase:
+        roadmap["previous_phase"] = "שלב B (איסוף שקט)"
+        roadmap["next_phase"] = "שלב D (הכנה לפריצה / SOS)"
+        roadmap["action_plan"] = "תזמון כניסה אגרסיבית. הצב סטופ מתחת לשפל של הניעור."
+        roadmap["what_if_success"] = "ראלי אלים כלפי מעלה (SOS) עם מחזורים מתרחבים אל עבר ההתנגדות."
+        roadmap["what_if_fail"] = "שבירה חוזרת מתחת ל-Spring מעידה כי ה'ניעור' היה למעשה המשך ירידות אותנטי (Markdown)."
+    elif "Phase D" in current_phase or "LPS" in current_phase:
+        roadmap["previous_phase"] = "שלב C (ניעור)"
+        roadmap["next_phase"] = "שלב E (מגמת עליה / Markup)"
+        roadmap["action_plan"] = "חזק פוזיציות קיימות לקראת הפריצה הגדולה החוצה מטווח האיסוף."
+        roadmap["what_if_success"] = "פריצת טווח האיסוף וכניסה למגמת עלייה ארוכת טווח (Markup)."
+        roadmap["what_if_fail"] = "היפוך חד בהתנגדות (Upthrust) המרמז על מלכודת שוורים."
+    elif "Phase E" in current_phase or "Markup" in current_phase:
+        roadmap["previous_phase"] = "שלב D (פריצה)"
+        roadmap["next_phase"] = "שלב A עליון (תחילת פיזור)"
+        roadmap["action_plan"] = "נהל את העסקה עם סטופ דינמי (Trailing Stop). קח רווחים ביעדים."
+        roadmap["what_if_success"] = "המשך ריצה ויצירת שיאים חדשים כל עוד זרימת הכסף החכם תומכת."
+        roadmap["what_if_fail"] = "הופעת מחזורי מסחר חריגים ללא התקדמות במחיר, המעידים על חלוקת סחורה מוסדית."
+    elif "Distribution" in current_phase:
+        roadmap["previous_phase"] = "שלב E (מגמת עליה)"
+        roadmap["next_phase"] = "מגמת ירידה (Markdown)"
+        roadmap["action_plan"] = "צא מפוזיציות לונג. המוסדיים מפזרים סחורה. שקול עסקאות שורט."
+        roadmap["what_if_success"] = "שבירת תמיכות וכניסה לשלב ירידות ארוך (Markdown)."
+        roadmap["what_if_fail"] = "הפצה שלא צולחת עשויה להפוך ל-Re-accumulation ולדחוף את הנכס לשיא חדש."
+    elif "Markdown" in current_phase:
+        roadmap["previous_phase"] = "פיזור מוסדי (Distribution)"
+        roadmap["next_phase"] = "שלב A חדש (חיפוש תחתית)"
+        roadmap["action_plan"] = "התרחק! אל תחפש תחתיות עד שלא נראה מחזורי בלימה מובהקים (Phase A)."
+        roadmap["what_if_success"] = "המשך שחיקת מחירים עד למציאת רצפה חדשה."
+        roadmap["what_if_fail"] = "קפיצה פתאומית במחזורים עשויה לרמוז על כניסת כסף חכם מוקדמת (Climax)."
+        
+    return roadmap
+
+def calculate_wyckoff_probability(df: pd.DataFrame, factors: pd.DataFrame, current_phase: str, mode: str, cis_score: float) -> dict:
+    obv_vel = _extract_last(factors, 'f07_obv_velocity')
+    struct_break = _extract_last(factors, 'f35_struct_break')
+    absorption = _extract_last(factors, 'f04_absorption', 1.0)
+    rs_spy = _extract_last(factors, 'f_rs_spy')
+    effort_vs_result = _extract_last(factors, 'f_effort_vs_result', 1.0)
+    stopping_vol = _extract_last(factors, 'f_stopping_volume')
+
+    prob_modifier = 1.0
+    if mode == "Conservative":
+        prob_modifier = 0.85
+    elif mode == "Optimistic":
+        prob_modifier = 1.15
+
+    if "Distribution" in current_phase or "Markdown" in current_phase:
+        prob_modifier -= 0.35
+
+    accum_prob = min(99, max(1, int(cis_score * prob_modifier)))
+
+    bo_modifier = 0
+    dist_modifier = 0
+    edu_bo = ""
+    edu_dist = ""
+    
+    if "Phase C" in current_phase or "Spring" in current_phase:
+        if absorption > 1.2: bo_modifier += 15
+        if obv_vel > 0: bo_modifier += 15
+        if stopping_vol > 0: bo_modifier += 10
+        if rs_spy < -0.02: dist_modifier += 15
+        edu_bo = f"הסיכוי לפריצה מבוסס כעת על נתוני שלב C (ניעור מוסדי). המערכת זיהתה " + ("זרימת הון פנימי חזקה (OBV) וספיגת מוכרים, מה שמגביר משמעותית את סיכוי הפריצה." if bo_modifier >= 20 else "שחסרה עדיין דחיפה חזקה של קונים כדי לאשר פריצה מלאה.")
+        edu_dist = "הסיכון העיקרי הוא שניעור זה יתברר כהמשך ירידות (Fake Spring)."
+        
+    elif "Phase D" in current_phase or "LPS" in current_phase:
+        if struct_break > 0: bo_modifier += 20
+        if obv_vel > 0.02: bo_modifier += 15
+        if rs_spy > 0: bo_modifier += 10
+        edu_bo = f"בשלב D המטרה היא לפרוץ כלפי מעלה. " + ("זיהינו שבירת מבנה חיובית ועוצמה מול השוק, לכן ההסתברות לפריצה קפצה." if bo_modifier >= 20 else "חסרים עדיין אישורי מחזורים כדי להגדיל את ההסתברות לפריצה מוצלחת.")
+        edu_dist = "כל עוד המבנה נשמר, סיכוני ההפצה נמוכים יחסית לשלבים קודמים."
+        
+    elif "Phase E" in current_phase or "Markup" in current_phase:
+        if rs_spy > 0.02: bo_modifier += 15
+        if obv_vel > 0.05: bo_modifier += 15
+        if effort_vs_result > 2.5: dist_modifier += 25 
+        edu_bo = "המניה כבר במגמת עליה מלאה. סיכויי הפריצה משקפים את היכולת להמשיך לייצר שיאים חדשים."
+        edu_dist = "בשלב זה אנו מחפשים 'תשישות'. " + ("התגלה מאמץ קונים ללא תוצאה (Effort vs Result גרוע), מה שמקפיץ את סיכון ההפצה!" if dist_modifier >= 25 else "המחזורים נראים בריאים ואין סימני פיזור ברורים.")
+        
+    elif "Distribution" in current_phase or "Markdown" in current_phase:
+        dist_modifier += 40
+        bo_modifier = 0
+        edu_bo = "המערכת חסמה את סיכויי הפריצה ללונג, מכיוון שהפאזה הטכנית מראה על ירידות או פיזור נזילות של כסף חכם."
+        edu_dist = "זיהוי הפצה מובהק. המוסדיים מחלקים סחורה לציבור, ולכן סיכון השבירה מזנק."
+        
+    else: 
+        if stopping_vol > 0: bo_modifier += 15
+        if absorption > 1.2: bo_modifier += 10
+        if struct_break < 0: dist_modifier += 20
+        edu_bo = "המניה נמצאת בשלבי התבססות מוקדמים (דשדוש). סיכויי הפריצה יתחזקו רק אם נראה בלימה עקבית של המחזורים השליליים."
+        edu_dist = "בשלב זה קיימת סכנה שהדשדוש יהפוך להמשך מגמת ירידה אם המבנה ימשך להישבר."
+
+    if obv_vel < -0.02: 
+        dist_modifier += 25
+        edu_dist += " **בנוסף, ה-OBV (זרימת ההון) מצביע על יציאת כסף, מה שמעלה את סיכון ההפצה.**"
+
+    breakout_chance = min(98, max(2, int((accum_prob * 0.40) + bo_modifier)))
+    distribution_risk = min(98, max(2, int((100 - accum_prob) * 0.40 + dist_modifier)))
+
+    educational_note = (
+        f"<b>• ציון האיסוף ({accum_prob}%):</b> זהו נתון הבסיס. הוא עונה על השאלה: 'כמה כסף מוסדי קונה עכשיו?'. ציון מתחת ל-50 מראה על חוסר עניין.<br><br>"
+        f"<b>• סיכוי לפריצה ({breakout_chance}%):</b> {edu_bo}<br><br>"
+        f"<b>• סיכון הפצה ({distribution_risk}%):</b> {edu_dist}"
+    )
+
+    return {
+        "accumulation_chance": accum_prob,
+        "breakout_30d": breakout_chance,
+        "distribution_risk": distribution_risk,
+        "educational_note": educational_note
+    }
+
+def detect_failure_risks(df: pd.DataFrame, factors: pd.DataFrame, current_phase: str, accum_prob: float, allowed: bool, ticker: str) -> list:
+    obv_vel = _extract_last(factors, 'f07_obv_velocity')
+    rs_spy = _extract_last(factors, 'f_rs_spy')
+    effort_vs_result = _extract_last(factors, 'f_effort_vs_result', 1.0)
+    close_price = float(df['Close'].iloc[-1])
+    open_price = float(df['Open'].iloc[-1])
+    
+    is_positive_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
+    
+    failure_warnings = []
+    
+    if "Distribution" in current_phase or "Markdown" in current_phase:
+        failure_warnings.append(f"🔴 סכנת מחיקה (Markdown): המערכת מזהה שהכסף החכם משחרר סחורה בשיטתיות. אל תחפש תחתיות שקריות. יש להימנע מלונג לחלוטין ב-**{ticker}**.")
+    elif "Spring" in current_phase and obv_vel < 0:
+        failure_warnings.append(f"🔴 ניעור שקרי (Fake Spring Alert): למרות השבירה מטה של המחיר ב-**{ticker}**, ה-OBV יורד בחדות. זה אינו ניעור מוסדי שמטרתו קנייה, אלא המשך טבעי של לחץ המכירות.")
+    elif is_positive_phase and effort_vs_result > 2.5 and close_price < open_price:
+        failure_warnings.append(f"⚠️ היצע צף מעל המחיר (Supply Overhang): הקונים ב-**{ticker}** מתאמצים להרים את המחיר ללא שום תוצאה הולמת (Effort vs Result גרוע). ישנו מוכר מוסדי עקשן שמכביד מלמעלה.")
+    elif "Markup" in current_phase and rs_spy < -0.02:
+        failure_warnings.append(f"⚠️ חולשה בסייקל (Weak Leader): **{ticker}** נמצאת בטרנד חיובי, אך מופגנת חולשה יחסית צורמת מול מדד ה-S&P 500. כשהשוק יתקן, מניות חלשות יקרסו ראשונות.")
+    elif accum_prob > 60 and not allowed:
+        failure_warnings.append(f"⚠️ חוסר בשלות טכני: קיימים ניצנים של כסף חכם הנכנס לנכס (**{ticker}**), אך התבנית עצמה עדיין אינה מוכנה למהלך מגמתי (תזמון לקוי). המתן להזדמנות בשלב C או D.")
+
+    if not failure_warnings:
+        failure_warnings.append(f"✅ שמיים נקיים (Clear Skies): התנהגות המחיר וזרימת ההון של **{ticker}** תקינה לחלוטין. לא זוהו אנומליות, אזהרות מוסדיות או מלכודות קלאסיות בטווח הזמן הקרוב.")
+        
+    return failure_warnings
+
+def generate_replay_analogies(ticker: str, current_phase: str, accum_prob: float, factors: pd.DataFrame) -> list:
+    stopping_vol = _extract_last(factors, 'f_stopping_volume')
+    replay = []
+    
+    if "Phase C" in current_phase or "Spring" in current_phase:
+        if accum_prob >= 70:
+            replay.append(f"🔍 טביעת אצבע מוסדית: הניעור הנוכחי ב-**{ticker}** זהה קונספטואלית לתבנית ה-Spring של BTC בינואר 2023 - קצירת נזילות קצרה מטה ומיד אחריה הזרמת הון מסיבית.")
+        else:
+            replay.append(f"⚠️ מלכודת עבר: הניסיון לייצר Spring ב-**{ticker}** נראה חלש וחסר גיבוי הון, בדומה למלכודות ש-DIS חוותה ב-2023. ללא OBV תומך, המחיר ימשיך לרדת.")
+            
+    elif "Phase D" in current_phase or "LPS" in current_phase:
+        if accum_prob >= 65:
+            replay.append(f"🔍 בניית כוח: **{ticker}** מזכירה כעת את ההתבססות האחרונה (LPS) של NVDA רגע לפני הפריצה הגדולה שלה. ישנה ספיגה שקטה צמוד להתנגדות.")
+        else:
+            replay.append(f"⚠️ פריצת שווא: זרימת ההון הנוכחית מזכירה את ניסיונות הפריצה של PYPL ב-2021 (Bull Trap) - מחיר עולה, אך המוסדיים לא באמת מאמינים בו.")
+            
+    elif "Phase E" in current_phase or "Markup" in current_phase:
+        if accum_prob >= 70:
+            replay.append(f"🔍 מומנטום פנימי: הריצה ב-**{ticker}** מלווה בכסף קשיח ולא ספקולטיבי, מזכיר את ההתנהגות של SMCI בטרנד העלייה הבריא שלה, שם כל היצע נבלע מיד.")
+        else:
+            replay.append(f"⚠️ תשישות טרנד: המומנטום ב-**{ticker}** מתחיל להראות סממנים היסטוריים של היחלשות איסוף מוסדי, שלב קלאסי המקדים כניסה לדשדוש והפצה.")
+            
+    elif "Distribution" in current_phase or "Markdown" in current_phase:
+        replay.append(f"🔍 פיזור נזילות: דפוס הפיזור ב-**{ticker}** משכפל את ההתנהגות של TSLA בסוף 2022 - ה-OBV נשפך לפני המחיר, והמוסדיים נוטשים את הספינה.")
+        
+    else: 
+        if stopping_vol > 0:
+            replay.append(f"🔍 בלימת נפילה: בלימת המחזורים החריגה ב-**{ticker}** מזכירה את השלבים הראשונים (Phase A) של AAPL בתחילת 2023, כשהכסף החכם בלם באלימות את הירידות.")
+        else:
+            replay.append(f"🔍 שחיקה ואיסוף שקט: **{ticker}** נמצאת בשלב קיפאון המזכיר את AMZN באמצע 2023. שחיקה איטית (Phase B) בזמן שקרנות גידור אוספות בשקט וללא לחץ.")
+            
+    return replay
