@@ -1,6 +1,6 @@
 """
 ============================================================
-SCOUT CORE V16.6 — WYCKOFF INSTITUTIONAL ENGINE
+SCOUT CORE V16.7 — WYCKOFF INSTITUTIONAL ENGINE
 ============================================================
 """
 
@@ -16,9 +16,19 @@ warnings.filterwarnings("ignore")
 # הגדרת לוגר מקומי לדיאגנוסטיקה
 logger = logging.getLogger("scout_core")
 
+# --- DEBUG: נקודת בדיקה לתחילת טעינת המודול (אם זה לא מופיע בלוגים, הקובץ לא נטען בכלל) ---
+logger.info("scout_core.py: התחלת טעינת מודול (V16.7).")
+
 # ---------- Helper Functions ----------
 def clean_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in (' ', '_', '-')).replace(' ', '_')
+
+def _extract_last(factors: pd.DataFrame, col: str, default: float = 0.0) -> float:
+    """Helper function to safely extract the last value of a column"""
+    if col in factors.columns:
+        val = factors[col].iloc[-1]
+        return float(val) if pd.notna(val) else default
+    return default
 
 def get_data(ticker, period="2y", start=None, end=None):
     try:
@@ -88,6 +98,76 @@ def get_data(ticker, period="2y", start=None, end=None):
     except Exception as e:
         logger.error(f"Error in get_data for {ticker}: {e}")
         return None
+
+def get_fundamental_data(ticker: str) -> dict:
+    """
+    שואב נתונים פונדמנטליים ויחסי תמחור מ-Yahoo Finance.
+    """
+    try:
+        tkr = yf.Ticker(ticker)
+        info = tkr.info
+        if not info:
+            return {}
+        
+        pe_trailing = info.get("trailingPE")
+        pe_forward = info.get("forwardPE")
+        peg = info.get("pegRatio")
+        ev_ebitda = info.get("enterpriseToEbitda")
+        ps = info.get("priceToSalesTrailing12Months")
+        pb = info.get("priceToBook")
+        roe = info.get("returnOnEquity")
+        eps_growth = info.get("earningsGrowth")
+        sector = info.get("sector", "Unknown")
+        
+        valuation = "הוגן"
+        color = "#eab308"
+        if pe_forward:
+            threshold_cheap = 18
+            threshold_exp = 28
+            if sector in ["Technology", "Communication Services"]:
+                threshold_cheap = 22
+                threshold_exp = 35
+            elif sector in ["Financial Services", "Energy"]:
+                threshold_cheap = 12
+                threshold_exp = 18
+
+            if pe_forward < threshold_cheap:
+                valuation = "זול"
+                color = "#16a34a"
+            elif pe_forward > threshold_exp:
+                valuation = "יקר"
+                color = "#ef4444"
+                
+        next_earnings = "לא ידוע"
+        try:
+            calendar = tkr.calendar
+            if calendar is not None and not calendar.empty:
+                if "Earnings Date" in calendar.index:
+                    dates = calendar.loc["Earnings Date"]
+                    if isinstance(dates, list) and len(dates) > 0:
+                        next_earnings = dates[0].strftime("%Y-%m-%d")
+                    elif hasattr(dates, "strftime"):
+                        next_earnings = dates.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+        return {
+            "pe_trailing": round(pe_trailing, 2) if pe_trailing else "N/A",
+            "pe_forward": round(pe_forward, 2) if pe_forward else "N/A",
+            "peg": round(peg, 2) if peg else "N/A",
+            "ev_ebitda": round(ev_ebitda, 2) if ev_ebitda else "N/A",
+            "ps": round(ps, 2) if ps else "N/A",
+            "pb": round(pb, 2) if pb else "N/A",
+            "roe": f"{round(roe * 100, 1)}%" if roe else "N/A",
+            "eps_growth": f"{round(eps_growth * 100, 1)}%" if eps_growth else "N/A",
+            "sector": sector,
+            "valuation": valuation,
+            "valuation_color": color,
+            "next_earnings": next_earnings
+        }
+    except Exception as e:
+        logger.error(f"Error fetching fundamentals for {ticker}: {e}")
+        return {}
 
 def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) -> dict:
     if not trades:
@@ -815,11 +895,6 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
 # NEW: Probability Engine & Dashboard Logic Extractors
 # ============================================================
 
-def _extract_last(factors: pd.DataFrame, col: str, default: float = 0.0) -> float:
-    if col in factors.columns:
-        return float(factors[col].iloc[-1])
-    return default
-
 def build_smart_money_dashboard(factors: pd.DataFrame) -> dict:
     obv_vel = _extract_last(factors, 'f07_obv_velocity')
     struct_break = _extract_last(factors, 'f35_struct_break')
@@ -1027,3 +1102,18 @@ def generate_replay_analogies(ticker: str, current_phase: str, accum_prob: float
             replay.append(f"🔍 שחיקה ואיסוף שקט: **{ticker}** נמצאת בשלב קיפאון המזכיר את AMZN באמצע 2023. שחיקה איטית (Phase B) בזמן שקרנות גידור אוספות בשקט וללא לחץ.")
             
     return replay
+
+# --- DEBUG: בדיקת אבחון בסוף המודול - מאתרת אם חסר שם כלשהו ש-app.py מצפה לו ---
+# (חייבת להיות בסוף הקובץ, כי רק כאן כל הפונקציות כבר הוגדרו ב-globals())
+_REQUIRED_EXPORTS = [
+    "clean_filename", "get_data", "calculate_optimal_threshold", "check_phase_entry_allowed",
+    "BacktestConfig", "FactorEngine", "run_wyckoff_anchored_backtest", "explain_score",
+    "calculate_advanced_metrics", "calculate_phase_followthrough", "explain_score_simple",
+    "build_smart_money_dashboard", "generate_roadmap", "calculate_wyckoff_probability",
+    "detect_failure_risks", "generate_replay_analogies", "get_fundamental_data", "_extract_last",
+]
+_missing_exports = [name for name in _REQUIRED_EXPORTS if name not in globals()]
+if _missing_exports:
+    logger.error(f"scout_core.py: חסרים השמות הבאים במודול - הייבוא ב-app.py יכשל: {_missing_exports}")
+else:
+    logger.info("scout_core.py: כל הפונקציות הנדרשות הוגדרו בהצלחה - המודול תקין במלואו.")
