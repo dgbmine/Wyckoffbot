@@ -1,6 +1,6 @@
 """
 ============================================================
-TRADING SCOUT PRO V5.1
+TRADING SCOUT PRO V5.2
 מודול משלים ל-Wyckoff Institutional Analyst - רדאר כסף חכם
 (רזה וממוקד, נשען לחלוטין על מנוע scout_core החכם)
 ============================================================
@@ -11,7 +11,7 @@ import numpy as np
 from scout_core import (
     get_data, FactorEngine, BacktestConfig, check_phase_entry_allowed,
     build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
-    detect_failure_risks, generate_replay_analogies
+    detect_failure_risks, generate_replay_analogies, get_fundamental_data
 )
 
 def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
@@ -44,6 +44,47 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     accum_prob = prob_engine['accumulation_chance']
     failure_warnings = detect_failure_risks(df, factors, current_phase, accum_prob, allowed, ticker)
     replay = generate_replay_analogies(ticker, current_phase, accum_prob, factors)
+    
+    # === שכבה 1: מלכודות Wyckoff טהורות (מהליבה) ===
+    # אם כל שהוחזר הוא ההודעה הגנרית "Clear Skies" - אין מלכודת Wyckoff אמיתית.
+    wyckoff_traps = [w for w in failure_warnings if not w.startswith("✅ שמיים נקיים")]
+
+    # === סינתזה פונדמנטלית ===
+    fund_data = get_fundamental_data(ticker)
+    synth = "חסרים נתונים פונדמנטליים להערכה."
+    if fund_data and fund_data.get("valuation"):
+        val = fund_data["valuation"]
+        if accum_prob >= 65 and val == "זול":
+            synth = "🔥 High Conviction - כסף חכם אוסף מניה שמתומחרת בזול."
+        elif accum_prob >= 65 and val == "יקר":
+            synth = "🚀 Momentum/Growth - מוסדיים קונים למרות התמחור היקר."
+        elif accum_prob < 50 and val == "זול":
+            synth = "⚠️ Value Trap - המניה זולה, אבל אין כניסת כסף חכם (מלכודת ערך)."
+        elif accum_prob < 50 and val == "יקר":
+            synth = "🚫 Avoid - תמחור יקר ואין שום עניין מוסדי רלוונטי."
+        else:
+            synth = "⚖️ Neutral - תמחור הוגן / כסף חכם בהמתנה."
+    
+    if fund_data:
+        fund_data['synthesis'] = synth
+
+    # === שכבה 2: מלכודות פונדמנטליות (Value Trap / שילוב חיובי) ===
+    fundamental_traps = []
+    if fund_data and fund_data.get("valuation"):
+        val = fund_data["valuation"]
+        if accum_prob < 50 and val == "זול":
+            fundamental_traps.append(
+                f"⚠️ **Value Trap**: {ticker} נראית זולה פונדמנטלית, אבל אין כניסת כסף חכם מוסדי משמעותית. סיכון גבוה לירידות נוספות."
+            )
+        elif accum_prob >= 65 and val == "זול" and is_positive_phase:
+            fundamental_traps.append(
+                f"✅ **שילוב חיובי**: צבירה מוסדית + תמחור אטרקטיבי ב-{ticker}. אין מלכודות פונדמנטליות בולטות."
+            )
+
+    # === רשימה מאוחדת (לתאימות לאחור עם קוד קיים שמשתמש ב-failure_warnings הגולמי) ===
+    failure_warnings = wyckoff_traps + fundamental_traps
+    if not wyckoff_traps and not fundamental_traps:
+        failure_warnings = [f"✅ **שמיים נקיים**: לא זוהו מלכודות Wyckoff או פונדמנטליות עבור {ticker}. השילוב נראה תקין."]
 
     # === חישוב ATR דינמי לניהול סיכונים (14 יום) ===
     high_low = df['High'] - df['Low']
@@ -96,6 +137,9 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
         "prob_engine": prob_engine,
         "dashboard": dashboard,
         "failure_warnings": failure_warnings,
+        "wyckoff_traps": wyckoff_traps,
+        "fundamental_traps": fundamental_traps,
         "replay": replay,
-        "roadmap": roadmap
+        "roadmap": roadmap,
+        "fundamental": fund_data
     }
