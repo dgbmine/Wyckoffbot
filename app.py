@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V16.7
+INSTITUTIONAL SCOUT PRO V16.8
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -63,23 +63,22 @@ try:
         BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
         calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple,
         build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
-        detect_failure_risks, generate_replay_analogies
+        detect_failure_risks, generate_replay_analogies, get_fundamental_data
     )
     SCOUT_CORE_AVAILABLE = True
 except ImportError:
     try:
-        # Fallback to an older file structure if present
         from scout import (
             clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
             BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
             calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple
         )
-        # Dummy fallbacks for new functions to prevent crashing in a partial environment
         def build_smart_money_dashboard(f): return {}
         def generate_roadmap(p): return {"previous_phase":"-", "next_phase":"-", "action_plan":"", "what_if_success":"", "what_if_fail":""}
         def calculate_wyckoff_probability(d, f, p, m, c): return {"accumulation_chance": c, "breakout_30d": 0, "distribution_risk": 0, "educational_note": ""}
         def detect_failure_risks(d, f, p, a, al, t): return ["מערכת הגנה אינה זמינה במלואה."]
         def generate_replay_analogies(t, p, a, f): return []
+        def get_fundamental_data(t): return {}
         
         SCOUT_CORE_AVAILABLE = True
     except ImportError as _imp_exc:
@@ -225,7 +224,7 @@ def inject_css() -> None:
     /* ======== Trading Scout Premium Cards ======== */
     .scout-wrapper {
         width: 100%;
-        margin-bottom: 40px; /* Allows breathing room when stacked */
+        margin-bottom: 40px; 
     }
     .scout-card {
         background: linear-gradient(145deg, rgba(16, 24, 48, 0.95), rgba(28, 40, 68, 0.98));
@@ -278,34 +277,37 @@ def inject_css() -> None:
     /* ======== Roadmap In-Card ======== */
     .roadmap-box {
         background: rgba(255, 255, 255, 0.03);
-        border-radius: 12px;
-        padding: 16px 20px;
+        border-radius: 14px;
+        padding: 22px 28px;
         margin-top: 24px;
-        margin-bottom: 10px;
+        margin-bottom: 14px;
         border-right: 3px solid #38bdf8;
         display: flex;
         justify-content: center;
         align-items: center;
-        gap: 15px;
+        gap: 28px;
         font-size: 1rem;
         color: #94a3b8;
+        flex-wrap: wrap;
     }
     .roadmap-step {
         display: flex;
         flex-direction: column;
         align-items: center;
+        gap: 4px;
     }
-    .roadmap-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-    .roadmap-value { font-weight: 600; color: #f8fafc; }
-    .roadmap-arrow { color: #475569; font-size: 1.2rem; font-weight: bold; }
+    .roadmap-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; color: #64748b; }
+    .roadmap-value { font-weight: 600; color: #f8fafc; font-size: 1.02rem; }
+    .roadmap-arrow { color: #475569; font-size: 1.3rem; font-weight: bold; }
     
     .scout-divider {
         border-top: 1px solid rgba(255,255,255,0.08); margin: 28px 0;
     }
+    
+    /* ======== Stacked Vertical Layout for Sections ======== */
     .scout-stats-grid { 
         display: flex; 
-        flex-direction: row;
-        justify-content: space-between; 
+        flex-direction: column; /* CHANGED FROM ROW TO COLUMN */
         gap: 24px; 
         margin-bottom: 24px; 
     }
@@ -327,6 +329,18 @@ def inject_css() -> None:
     }
     .scout-alert-title { font-size: 1.1rem; color:#f8fafc; font-weight:bold; margin-bottom:12px; display:block; }
     .scout-alert-text { font-size: 0.95rem; display:block; color:#cbd5e1; line-height: 1.6; margin-bottom: 6px; }
+    .trap-section-label {
+        font-size: 0.85rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.5px; margin: 14px 0 8px 0; display: block;
+    }
+    .trap-fund-highlight {
+        background: rgba(239, 68, 68, 0.12);
+        border-right: 3px solid #ef4444;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-weight: 600;
+        color: #fecaca !important;
+    }
     
     .edu-box {
         background: rgba(56, 189, 248, 0.05);
@@ -345,6 +359,50 @@ def inject_css() -> None:
         display:block; 
         margin-bottom:10px;
         font-size: 1.05rem;
+    }
+
+    /* ======== Fundamental Analysis Screen ======== */
+    .fund-card {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 18px;
+        padding: 28px 30px;
+        margin-bottom: 22px;
+    }
+    .fund-verdict-box {
+        text-align: center;
+        border-radius: 18px;
+        padding: 26px;
+        margin-bottom: 22px;
+        border: 1px solid rgba(255,255,255,0.08);
+    }
+    .fund-verdict-label { font-size: 1rem; color: #94a3b8; margin-bottom: 6px; }
+    .fund-verdict-value { font-size: 2.4rem; font-weight: 800; letter-spacing: 0.5px; }
+    .fund-verdict-sub { font-size: 0.95rem; color: #cbd5e1; margin-top: 8px; }
+    .fund-synth-box {
+        background: rgba(56, 189, 248, 0.06);
+        border-right: 4px solid #38bdf8;
+        border-radius: 12px;
+        padding: 18px 22px;
+        margin-bottom: 22px;
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .fund-meta-row {
+        display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 22px;
+    }
+    .fund-meta-box {
+        flex: 1; min-width: 220px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 14px; padding: 18px 20px;
+    }
+    .fund-meta-label { font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; }
+    .fund-meta-value { font-size: 1.2rem; font-weight: 700; color: #f8fafc; }
+    .fund-table-title {
+        color: #e0f2fe; font-size: 1.15rem; font-weight: 700;
+        margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
     }
 
     /* ======== Institutional Map Visual Layout ======== */
@@ -392,19 +450,6 @@ def _compute_wyckoff(ticker: str):
         "allowed": allowed,
         "num_bars": len(df)
     }
-
-def _run_scan_row(engine, ticker: str, scan_th: float):
-    df = get_cached_data(ticker, period="1y")
-    if df is None or len(df) <= 60:
-        return None
-    factors = engine.compute(df)
-    cis = engine.composite_cis(factors, df)
-    phase = engine.get_wyckoff_phase(df)
-    score = float(cis.iloc[-1])
-    if score < scan_th:
-        return None
-    allowed = check_phase_entry_allowed(str(phase.iloc[-1]), "Balanced")
-    return {"Ticker": ticker, "Score": round(score, 1), "Phase": str(phase.iloc[-1]), "Allowed?": "✅ כן" if allowed else "❌ לא", "_df": df}
 
 def init_session_state() -> None:
     if "model_archive" not in st.session_state:
@@ -490,11 +535,12 @@ def screen_home() -> None:
                         return "background:#38bdf8; color:#0f172a; font-weight:bold; border:2px solid #fff; transform:scale(1.05);"
                     return "background:rgba(255,255,255,0.05); color:#64748b;"
                     
+                # תוקנו החצים לזרימה תקינה מימין לשמאל בעברית (←)
                 if is_bearish:
                     html = f"""
                     <div style="display:flex; justify-content:space-around; align-items:center; background:#1e293b; padding:20px; border-radius:12px; margin-top:10px;">
                         <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg(['Distribution', 'Supply'])}">הפצה (Distribution)<br><span style="font-size:0.85em">מוסדיים מוכרים</span></div>
-                        <div style="color:#475569; font-size:1.8em;">➔</div>
+                        <div style="color:#475569; font-size:1.8em;">←</div>
                         <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Markdown')}">ירידות (Markdown)<br><span style="font-size:0.85em">פיזור סחורה</span></div>
                     </div>
                     """
@@ -502,13 +548,13 @@ def screen_home() -> None:
                     html = f"""
                     <div style="display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:15px 10px; border-radius:12px; margin-top:10px; font-size:0.9em;">
                         <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase A'])}">שלב A<br><span style="font-size:0.8em">בלימה</span></div>
-                        <div style="color:#475569;">➔</div>
+                        <div style="color:#475569;">←</div>
                         <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase B', 'Accumulation'])}">שלב B<br><span style="font-size:0.8em">בניית כוח</span></div>
-                        <div style="color:#475569;">➔</div>
+                        <div style="color:#475569;">←</div>
                         <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase C', 'Spring'])}">שלב C<br><span style="font-size:0.8em">ניעור</span></div>
-                        <div style="color:#475569;">➔</div>
+                        <div style="color:#475569;">←</div>
                         <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase D', 'Re-accumulation'])}">שלב D<br><span style="font-size:0.8em">פריצה</span></div>
-                        <div style="color:#475569;">➔</div>
+                        <div style="color:#475569;">←</div>
                         <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase E', 'Markup'])}">שלב E<br><span style="font-size:0.8em">מגמה</span></div>
                     </div>
                     """
@@ -638,6 +684,149 @@ def screen_institutional_map() -> None:
             else:
                 st.error("לא ניתן היה לטעון נתונים מספיקים עבור המפה.")
 
+def screen_fundamental() -> None:
+    st.markdown("### 📊 Fundamental Analysis - ניתוח ערך וחברה")
+    st.markdown("מסך זה מנתח את הבריאות הפיננסית של החברה והתמחור שלה ביחס לסקטור, ומשלב זאת עם נתוני הכסף החכם.")
+    
+    tkr = st.text_input("הזן סימול לניתוח פונדמנטלי מקיף:", value="MSFT", key="fund_tkr").strip().upper()
+    
+    if st.button("📈 נתח פונדמנטלית", type="primary", use_container_width=True):
+        if not SCOUT_CORE_AVAILABLE:
+            st.error("המודול הפונדמנטלי חסר.")
+            return
+
+        with st.spinner(f"שואב נתוני עומק פיננסיים עבור {tkr}..."):
+            fdata = get_fundamental_data(tkr)
+            if not fdata:
+                st.error(f"שגיאה בשאיבת נתונים מ-Yahoo Finance עבור הסימול {tkr}.")
+                return
+            
+            df = get_cached_data(tkr)
+            cis_score = 0
+            if df is not None and not df.empty:
+                engine = FactorEngine(BacktestConfig())
+                factors = engine.compute(df)
+                cis_score = float(engine.composite_cis(factors, df).iloc[-1])
+            
+            if cis_score >= 65 and fdata["valuation"] == "זול":
+                synth = "🔥 High Conviction - כסף חכם אוסף מניה זולה."
+            elif cis_score >= 65 and fdata["valuation"] == "יקר":
+                synth = "🚀 Growth Momentum - מוסדיים קונים למרות תמחור יקר."
+            elif cis_score < 50 and fdata["valuation"] == "זול":
+                synth = "⚠️ Value Trap - זולה, אבל ללא כניסת כסף חכם."
+            elif cis_score < 50 and fdata["valuation"] == "יקר":
+                synth = "🚫 Avoid - יקרה וללא עניין מוסדי."
+            else:
+                synth = "⚖️ Neutral - המתנה או תמחור הוגן."
+
+            verdict = fdata.get("valuation", "-")
+            v_color = fdata.get("valuation_color", "#94a3b8")
+
+            # === שורת המחץ - זול/הוגן/יקר במשקל ויזואלי גבוה ===
+            st.markdown(
+                "".join([
+                    f"<div class='fund-verdict-box' style='border-color:{v_color}50; background:{v_color}12;'>",
+                    f"<div class='fund-verdict-label'>{tkr} ביחס לסקטור ({fdata.get('sector', '-')})</div>",
+                    f"<div class='fund-verdict-value' style='color:{v_color};'>{verdict}</div>",
+                    f"<div class='fund-verdict-sub'>מבוסס על Forward P/E: {fdata.get('pe_forward', 'N/A')}</div>",
+                    "</div>",
+                ]),
+                unsafe_allow_html=True
+            )
+            with st.popover("ℹ️ ביחס למה משווים?"):
+                st.write(
+                    "התמחור נמדד ביחס לסקטור הספציפי של החברה, ולא ביחס לשוק הכללי (S&P 500). "
+                    "לכל סקטור יש 'נורמות' מכפיל שונות - חברת טכנולוגיה צומחת תיסחר באופן טבעי "
+                    "במכפילים גבוהים יותר מבנק או חברת אנרגיה, ולכן ההשוואה תמיד יחסית-ענפית ולא מוחלטת."
+                )
+                st.caption("לדוגמה: סקטור טכנולוגיה/תקשורת - 'זול' מתחת ל-22, 'יקר' מעל 35. פיננסים/אנרגיה - 'זול' מתחת ל-12, 'יקר' מעל 18.")
+
+            # === סינתזה וואיקוף + פונדמנטלי - משקל ויזואלי גבוה ===
+            st.markdown(
+                f"<div class='fund-synth-box'>🧭 סינתזת וואיקוף + פונדמנטלי: {synth} &nbsp; (Wyckoff Score: {cis_score:.1f})</div>",
+                unsafe_allow_html=True
+            )
+
+            # === שורת מטא: סקטור ודוח רווחים קרוב ===
+            st.markdown(
+                "".join([
+                    "<div class='fund-meta-row'>",
+                    "<div class='fund-meta-box'>",
+                    "<div class='fund-meta-label'>🏢 סקטור</div>",
+                    f"<div class='fund-meta-value'>{fdata.get('sector', '-')}</div>",
+                    "</div>",
+                    "<div class='fund-meta-box'>",
+                    "<div class='fund-meta-label'>📅 דוח רווחים קרוב (הבא)</div>",
+                    f"<div class='fund-meta-value'>{fdata.get('next_earnings', 'לא ידוע')}</div>",
+                    "</div>",
+                    "</div>",
+                ]),
+                unsafe_allow_html=True
+            )
+
+            # === טבלת מכפילים מסודרת עם הסבר לכל שורה ===
+            st.markdown("<div class='fund-card'>", unsafe_allow_html=True)
+            st.markdown("<div class='fund-table-title'>📐 טבלת מכפילים ויחסי תמחור</div>", unsafe_allow_html=True)
+
+            metrics = [
+                ("Trailing P/E", fdata.get("pe_trailing", "-"), "מכפיל רווח היסטורי - כמה משלמים על כל דולר שהחברה הרוויחה ב-12 החודשים האחרונים."),
+                ("Forward P/E", fdata.get("pe_forward", "-"), "מכפיל רווח עתידי - מתבסס על תחזיות רווח קדימה. זהו המכפיל החשוב ביותר להערכת תמחור עתידי."),
+                ("PEG Ratio", fdata.get("peg", "-"), "מכפיל רווח משוקלל בקצב הצמיחה. ערך מתחת ל-1 נחשב לרוב כהזדמנות (המניה 'צומחת מהר יותר ממה שהמכפיל מרמז')."),
+                ("EV/EBITDA", fdata.get("ev_ebitda", "-"), "שווי פעילות (חוב+הון) חלקי רווח תפעולי תזרימי. מנקה עיוותי מבנה הון, מס ופחת - שימושי להשוואה בין חברות עם רמות חוב שונות."),
+                ("P/S (מכירות)", fdata.get("ps", "-"), "שווי שוק חלקי הכנסות שנתיות. קריטי לחברות טכנולוגיה צומחות שעדיין לא רווחיות, שם P/E לא רלוונטי."),
+                ("P/B (הון)", fdata.get("pb", "-"), "שווי שוק חלקי ההון העצמי המאזני של החברה. שימושי בעיקר לבנקים וחברות עם נכסים מוחשיים רבים."),
+                ("ROE", fdata.get("roe", "-"), "תשואה להון - כמה רווח מייצרת החברה על כל דולר של בעלי המניות. מדד מרכזי לאיכות ויעילות ההנהלה."),
+                ("EPS Growth", fdata.get("eps_growth", "-"), "קצב צמיחת הרווח למניה ביחס לתקופה המקבילה - מדד הצמיחה הבסיסי ביותר של החברה."),
+            ]
+
+            header_l, header_r1, header_r2 = st.columns([2.2, 1.6, 1])
+            with header_l:
+                st.markdown("**מכפיל**")
+            with header_r1:
+                st.markdown("**ערך**")
+            with header_r2:
+                st.markdown("**הסבר**")
+
+            for name, val, desc in metrics:
+                row_l, row_r1, row_r2 = st.columns([2.2, 1.6, 1])
+                with row_l:
+                    st.markdown(name)
+                with row_r1:
+                    st.markdown(f"**{val}**")
+                with row_r2:
+                    with st.popover("מה זה?"):
+                        st.write(desc)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("#### 🔎 סורק פונדמנטלי-מוסדי (Market Scanner)")
+    st.caption("מאתר מניות מסקטורים מובילים שמוגדרות כ'זולות' ובעלות ציון צבירה מוסדית גבוה.")
+    if st.button("סרוק הזדמנויות (מניות זולות + כסף חכם)", type="primary"):
+        with st.spinner("סורק נתונים עבור עשרות מניות... (עשוי לקחת כדקה)"):
+            results = []
+            scan_list = GROWTH_TICKERS[:12] + VALUE_TICKERS[:12] 
+            for tkr_scan in scan_list:
+                fdata = get_fundamental_data(tkr_scan)
+                if fdata and fdata.get("valuation") == "זול":
+                    df = get_cached_data(tkr_scan, "1y")
+                    if df is not None and not df.empty and len(df) > 60:
+                        engine = FactorEngine(BacktestConfig())
+                        factors = engine.compute(df)
+                        cis = engine.composite_cis(factors, df).iloc[-1]
+                        if cis >= 50:
+                            results.append({
+                                "Ticker": tkr_scan,
+                                "Sector": fdata.get("sector", ""),
+                                "Fwd P/E": fdata.get("pe_forward", ""),
+                                "EPS Growth": fdata.get("eps_growth", ""),
+                                "Wyckoff CIS": round(float(cis), 1)
+                            })
+            if results:
+                st.dataframe(pd.DataFrame(results).sort_values("Wyckoff CIS", ascending=False), use_container_width=True)
+            else:
+                st.info("לא נמצאו מניות העונות לקריטריונים (זולות פונדמנטלית + איסוף מוסדי סביר).")
+
 def screen_trading_scout() -> None:
     st.markdown("### 📈 Trading Scout - תכנון עסקאות ובדיקת הסתברויות")
     st.info("⚠️ **הבהרה קריטית:** זהו כלי עזר אנליטי אוטומטי המעריך הסתברויות לאיסוף מוסדי. אינו מהווה תחליף לניהול סיכונים עצמאי או ייעוץ.")
@@ -664,7 +853,7 @@ def screen_trading_scout() -> None:
         # UI rendering in sequential order (Stacked Vertically to avoid cutoffs)
         for tkr in tickers_input:
             if tkr:
-                with st.spinner(f"מנתח טביעות אצבע מוסדיות עבור {tkr}..."):
+                with st.spinner(f"מנתח טביעות אצבע מוסדיות ופונדמנטליות עבור {tkr}..."):
                     try:
                         rec_data = get_trading_recommendation(tkr, mode=selected_mode)
                     except Exception as e:
@@ -682,7 +871,9 @@ def screen_trading_scout() -> None:
                 }
                 color = color_map.get(rec, "#94a3b8")
                 
-                is_safe = "Clear Skies" in "".join(rec_data['failure_warnings'])
+                wyckoff_traps = rec_data.get('wyckoff_traps', [])
+                fundamental_traps = rec_data.get('fundamental_traps', [])
+                is_safe = (not wyckoff_traps) and (not any("Value Trap" in t for t in fundamental_traps))
                 alert_border = "#22c55e" if is_safe else "#ef4444"
                 alert_bg = "rgba(34, 197, 94, 0.05)" if is_safe else "rgba(239, 68, 68, 0.08)"
                 
@@ -690,10 +881,30 @@ def screen_trading_scout() -> None:
                     f"<div class='scout-list-item'><span>{k}:</span> <span style='font-weight:600; color:#f8fafc;'>{v}</span></div>"
                     for k, v in rec_data['dashboard'].items()
                 ])
-                failure_html = "".join([
-                    f"<span class='scout-alert-text'>{warn}</span>"
-                    for warn in rec_data['failure_warnings']
-                ])
+
+                if not wyckoff_traps and not fundamental_traps:
+                    failure_html = (
+                        f"<span class='scout-alert-text'>✅ <b>שמיים נקיים</b> - לא זוהו מלכודות Wyckoff "
+                        f"או פונדמנטליות עבור {tkr}. השילוב נראה תקין.</span>"
+                    )
+                else:
+                    wyckoff_block = ""
+                    if wyckoff_traps:
+                        wyckoff_items = "".join([f"<span class='scout-alert-text'>{w}</span>" for w in wyckoff_traps])
+                        wyckoff_block = f"<div class='trap-section-label'>📉 מלכודות Wyckoff</div>{wyckoff_items}"
+                    else:
+                        wyckoff_block = "<div class='trap-section-label'>📉 מלכודות Wyckoff</div><span class='scout-alert-text'>✅ לא זוהו מלכודות טכניות.</span>"
+
+                    fund_block = ""
+                    if fundamental_traps:
+                        is_value_trap = any("Value Trap" in t for t in fundamental_traps)
+                        fund_class = "trap-fund-highlight" if is_value_trap else ""
+                        fund_items = "".join([f"<span class='scout-alert-text {fund_class}'>{t}</span>" for t in fundamental_traps])
+                        fund_block = f"<div class='trap-section-label'>💰 מלכודות פונדמנטליות</div>{fund_items}"
+                    else:
+                        fund_block = "<div class='trap-section-label'>💰 מלכודות פונדמנטליות</div><span class='scout-alert-text'>✅ לא זוהו מלכודות פונדמנטליות.</span>"
+
+                    failure_html = wyckoff_block + fund_block
                 
                 roadmap_prev = rec_data.get('roadmap', {}).get('previous_phase', '—')
                 roadmap_next = rec_data.get('roadmap', {}).get('next_phase', '—')
@@ -720,18 +931,21 @@ def screen_trading_scout() -> None:
                     "</div>",
                     "</div>",
                     
-                    # Visual Roadmap 
+                    # Visual Roadmap - חצים תוקנו לשמאל
                     "<div class='roadmap-box'>",
                     "<div class='roadmap-step'><span class='roadmap-label'>היינו ב:</span><span class='roadmap-value'>", roadmap_prev, "</span></div>",
-                    "<div class='roadmap-arrow'>➔</div>",
+                    "<div class='roadmap-arrow'>←</div>",
                     "<div class='roadmap-step'><span class='roadmap-label'>אנחנו ב:</span><span class='roadmap-value' style='color:#38bdf8;'>", rec_data['current_phase'], "</span></div>",
-                    "<div class='roadmap-arrow'>➔</div>",
+                    "<div class='roadmap-arrow'>←</div>",
                     "<div class='roadmap-step'><span class='roadmap-label'>היעד סביר:</span><span class='roadmap-value'>", roadmap_next, "</span></div>",
                     "</div>",
                     f"<div style='text-align:center; font-size:0.95rem; color:#cbd5e1; margin-bottom: 20px;'>💡 <b>פעולה נדרשת:</b> {roadmap_action}</div>",
 
                     "<hr class='scout-divider'>",
+                    
+                    # Stacked Vertically Section
                     "<div class='scout-stats-grid'>",
+                    
                     "<div class='scout-stat-box'>",
                     "<div class='scout-section-title'>📊 מנוע הסתברויות</div>",
                     "<div class='scout-list-item'>",
@@ -744,11 +958,21 @@ def screen_trading_scout() -> None:
                     "</div>",
                     f"<div class='edu-box'><span class='edu-box-title'>🎓 פינת הלמידה: מה המספרים אומרים?</span>{edu_note}</div>",
                     "</div>",
+                    
                     "<div class='scout-stat-box'>",
                     "<div class='scout-section-title'>👁️ Smart Money Flow</div>",
                     smart_money_html,
                     "</div>",
+                    
+                    "<div class='scout-stat-box'>",
+                    "<div class='scout-section-title'>🏢 סיכום פונדמנטלי מהיר</div>",
+                    f"<div class='scout-list-item'><span>מכפיל רווח עתידי (Fwd P/E):</span> <span style='font-weight:bold; color:{rec_data.get('fundamental', {}).get('valuation_color', '#fff')}'>{rec_data.get('fundamental', {}).get('pe_forward', 'N/A')} ({rec_data.get('fundamental', {}).get('valuation', '-')})</span></div>",
+                    f"<div class='scout-list-item'><span>דוח רווחים קרוב:</span> <span>{rec_data.get('fundamental', {}).get('next_earnings', 'N/A')}</span></div>",
+                    f"<div class='scout-list-item'><span>סינתזה (Wyckoff + Fund):</span> <span style='font-weight:bold;'>{rec_data.get('fundamental', {}).get('synthesis', '-')}</span></div>",
                     "</div>",
+                    
+                    "</div>", # Close scout-stats-grid
+                    
                     f"<div class='scout-alert-box' style='border-color: {alert_border}; background: {alert_bg};'>",
                     "<span class='scout-alert-title'>🛡️ מערכת הגנה ממלכודות (Failure Detection):</span>",
                     failure_html,
@@ -1014,9 +1238,9 @@ def main() -> None:
         unsafe_allow_html=True
     )
 
-    # סדר הטאבים נשמר במדויק תחת חוק הברזל
-    tabs = st.tabs(["🏠 Home (Wyckoff Analyst)", "🗺️ Institutional Map", "📈 Trading Scout", "📊 Backtest", "👁️ Monitor", "🧠 ML Trainer"])
-    screen_fns = [screen_home, screen_institutional_map, screen_trading_scout, screen_backtest, screen_monitor, screen_ml_trainer]
+    # Added Fundamental Analysis to Tabs
+    tabs = st.tabs(["🏠 Home (Wyckoff Analyst)", "🗺️ Institutional Map", "📊 Fundamental Analysis", "📈 Trading Scout", "📊 Backtest", "👁️ Monitor", "🧠 ML Trainer"])
+    screen_fns = [screen_home, screen_institutional_map, screen_fundamental, screen_trading_scout, screen_backtest, screen_monitor, screen_ml_trainer]
     
     for tab, fn in zip(tabs, screen_fns):
         with tab:
