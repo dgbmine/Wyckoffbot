@@ -57,6 +57,8 @@ AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
 
 AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
 
+SCOUT_CORE_IMPORT_ERROR: Optional[str] = None
+
 try:
     from scout_core import (
         clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
@@ -66,7 +68,8 @@ try:
         detect_failure_risks, generate_replay_analogies, get_fundamental_data
     )
     SCOUT_CORE_AVAILABLE = True
-except ImportError:
+except Exception as _imp_exc1:
+    _first_error = f"{type(_imp_exc1).__name__}: {_imp_exc1}"
     try:
         from scout import (
             clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
@@ -81,9 +84,10 @@ except ImportError:
         def get_fundamental_data(t): return {}
         
         SCOUT_CORE_AVAILABLE = True
-    except ImportError as _imp_exc:
+    except Exception as _imp_exc2:
         SCOUT_CORE_AVAILABLE = False
-        logger.warning("scout module not available: %s", _imp_exc)
+        SCOUT_CORE_IMPORT_ERROR = f"scout_core: {_first_error} | scout (fallback): {type(_imp_exc2).__name__}: {_imp_exc2}"
+        logger.warning("scout module not available: %s", SCOUT_CORE_IMPORT_ERROR)
 
         def explain_score(df: pd.DataFrame, phase: str, cis: float) -> str:
             return "מערכת ניתוח חסרה. טען את הקובץ המתאים."
@@ -96,6 +100,7 @@ except ImportError:
         
         def calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04):
             return {}
+
 
 st.set_page_config(
     layout="wide",
@@ -482,7 +487,13 @@ def screen_home() -> None:
             result = _compute_wyckoff(ticker)
             
         if result is None:
-            st.error("אין נתונים זמינים או נדרש לפחות 60 ימי מסחר.")
+            if not SCOUT_CORE_AVAILABLE:
+                st.error("מודול הליבה (scout_core) לא נטען בהצלחה - לכן לא ניתן לשאוב נתונים.")
+                if SCOUT_CORE_IMPORT_ERROR:
+                    st.code(SCOUT_CORE_IMPORT_ERROR)
+                st.caption("בדוק ב-requirements.txt שכל הספריות (yfinance, pandas, numpy וכו') מותקנות, ושאין שגיאת ייבוא בקובץ scout_core.py.")
+            else:
+                st.error("אין נתונים זמינים או נדרש לפחות 60 ימי מסחר.")
             return
             
         if result["allowed"] and result["current_cis"] >= 65:
@@ -692,7 +703,10 @@ def screen_fundamental() -> None:
     
     if st.button("📈 נתח פונדמנטלית", type="primary", use_container_width=True):
         if not SCOUT_CORE_AVAILABLE:
-            st.error("המודול הפונדמנטלי חסר.")
+            st.error("מודול הליבה (scout_core) לא נטען בהצלחה - לכן הניתוח הפונדמנטלי אינו זמין.")
+            if SCOUT_CORE_IMPORT_ERROR:
+                st.code(SCOUT_CORE_IMPORT_ERROR)
+            st.caption("בדוק ב-requirements.txt שכל הספריות (yfinance, pandas, numpy וכו') מותקנות, ושאין שגיאת ייבוא בקובץ scout_core.py.")
             return
 
         with st.spinner(f"שואב נתוני עומק פיננסיים עבור {tkr}..."):
