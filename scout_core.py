@@ -13,28 +13,14 @@ import logging
 
 warnings.filterwarnings("ignore")
 
-# הגדרת לוגר מקומי לדיאגנוסטיקה
 logger = logging.getLogger("scout_core")
 
-# --- DEBUG: נקודת בדיקה לתחילת טעינת המודול (אם זה לא מופיע בלוגים, הקובץ לא נטען בכלל) ---
-logger.info("scout_core.py: התחלת טעינת מודול (V16.7).")
-
-# ---------- Helper Functions ----------
 def clean_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in (' ', '_', '-')).replace(' ', '_')
-
-def _extract_last(factors: pd.DataFrame, col: str, default: float = 0.0) -> float:
-    """Helper function to safely extract the last value of a column"""
-    if col in factors.columns:
-        val = factors[col].iloc[-1]
-        return float(val) if pd.notna(val) else default
-    return default
 
 def get_data(ticker, period="2y", start=None, end=None):
     try:
         tkr = yf.Ticker(ticker)
-        
-        # ניסיון ראשון - הגישה המועדפת
         if start is not None and end is not None:
             df = tkr.history(start=start, end=end, auto_adjust=False)
             if df is None or df.empty or len(df) < 40:
@@ -54,7 +40,6 @@ def get_data(ticker, period="2y", start=None, end=None):
             return idx
 
         df.index = _safe_tz_drop(df.index)
-        
         df = df[~df.index.duplicated(keep='first')]
         df.dropna(subset=['Close', 'Volume'], inplace=True)
         df = df.sort_index()
@@ -63,7 +48,6 @@ def get_data(ticker, period="2y", start=None, end=None):
             spy_df = yf.Ticker("SPY").history(start=start, end=end, auto_adjust=False)
             if spy_df is None or spy_df.empty:
                 spy_df = yf.Ticker("SPY").history(start=start, end=end)
-                
             vix_df = yf.Ticker("^VIX").history(start=start, end=end, auto_adjust=False)
             if vix_df is None or vix_df.empty:
                 vix_df = yf.Ticker("^VIX").history(start=start, end=end)
@@ -71,7 +55,6 @@ def get_data(ticker, period="2y", start=None, end=None):
             spy_df = yf.Ticker("SPY").history(period=period, auto_adjust=False)
             if spy_df is None or spy_df.empty:
                 spy_df = yf.Ticker("SPY").history(period=period)
-
             vix_df = yf.Ticker("^VIX").history(period=period, auto_adjust=False)
             if vix_df is None or vix_df.empty:
                 vix_df = yf.Ticker("^VIX").history(period=period)
@@ -99,9 +82,10 @@ def get_data(ticker, period="2y", start=None, end=None):
         logger.error(f"Error in get_data for {ticker}: {e}")
         return None
 
-def get_fundamental_data(ticker: str) -> dict:
+def get_fundamental_data(ticker: str, cis_score: float = None) -> dict:
     """
     שואב נתונים פונדמנטליים ויחסי תמחור מ-Yahoo Finance.
+    משלב סינתזת כסף חכם במידה ומועבר ציון CIS.
     """
     try:
         tkr = yf.Ticker(ticker)
@@ -120,7 +104,8 @@ def get_fundamental_data(ticker: str) -> dict:
         sector = info.get("sector", "Unknown")
         
         valuation = "הוגן"
-        color = "#eab308"
+        color = "#eab308" # צהוב
+        
         if pe_forward:
             threshold_cheap = 18
             threshold_exp = 28
@@ -133,12 +118,13 @@ def get_fundamental_data(ticker: str) -> dict:
 
             if pe_forward < threshold_cheap:
                 valuation = "זול"
-                color = "#16a34a"
+                color = "#16a34a" # ירוק
             elif pe_forward > threshold_exp:
                 valuation = "יקר"
-                color = "#ef4444"
+                color = "#ef4444" # אדום
                 
         next_earnings = "לא ידוע"
+        last_earnings = "לא ידוע"
         try:
             calendar = tkr.calendar
             if calendar is not None and not calendar.empty:
@@ -148,8 +134,34 @@ def get_fundamental_data(ticker: str) -> dict:
                         next_earnings = dates[0].strftime("%Y-%m-%d")
                     elif hasattr(dates, "strftime"):
                         next_earnings = dates.strftime("%Y-%m-%d")
+            
+            earn_dates = tkr.get_earnings_dates(limit=10)
+            if earn_dates is not None and not earn_dates.empty:
+                now_utc = pd.Timestamp.now(tz='UTC')
+                past_dates = [d for d in earn_dates.index if d.tz_convert('UTC') < now_utc]
+                if past_dates:
+                    last_earnings = past_dates[0].strftime("%Y-%m-%d")
         except Exception:
             pass
+
+        synthesis = "⚖️ ניטרלי - אין מספיק נתונים משולבים."
+        if cis_score is not None:
+            if valuation == "זול":
+                if cis_score < 50:
+                    synthesis = "⚠️ Value Trap: המניה נראית זולה פונדמנטלית, אך אין עניין מוסדי (כסף חכם לא אוסף). סיכון לירידות נוספות."
+                elif cis_score >= 65:
+                    synthesis = "🔥 High Conviction: שילוב מנצח! זולה פונדמנטלית ונתמכת באיסוף מוסדי מובהק."
+                else:
+                    synthesis = "זולה פונדמנטלית, כסף חכם בהמתנה."
+            elif valuation == "יקר":
+                if cis_score >= 65:
+                    synthesis = "🚀 Growth Momentum: תמחור יקר, אך המוסדיים ממשיכים לדחוף פנימה הון."
+                elif cis_score < 50:
+                    synthesis = "🚫 Avoid: יקרה פונדמנטלית וללא כניסת כסף חכם. מסוכן."
+                else:
+                    synthesis = "יקרה פונדמנטלית, תמיכה מוסדית בינונית/מעורבת."
+            else:
+                synthesis = "⚖️ תמחור הוגן, יש לעקוב אחר תנועות ההון המוסדי לקביעת כיוון."
 
         return {
             "pe_trailing": round(pe_trailing, 2) if pe_trailing else "N/A",
@@ -163,7 +175,9 @@ def get_fundamental_data(ticker: str) -> dict:
             "sector": sector,
             "valuation": valuation,
             "valuation_color": color,
-            "next_earnings": next_earnings
+            "next_earnings": next_earnings,
+            "last_earnings": last_earnings,
+            "synthesis": synthesis
         }
     except Exception as e:
         logger.error(f"Error fetching fundamentals for {ticker}: {e}")
@@ -501,7 +515,6 @@ class FactorEngine:
                     phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             elif df['Low'].iloc[i] < l60 + a and c < s50:
                 obv_min_prev = obv_min60.iloc[i-1] if i > 0 and not pd.isna(obv_min60.iloc[i-1]) else obv.iloc[i]
-                
                 is_new_low = df['Low'].iloc[i] < l60
                 positive_close = c > df['Open'].iloc[i]
                 high_volume = v > v_ma * 1.5
@@ -579,6 +592,7 @@ def run_wyckoff_anchored_backtest(
 
     if use_ai and getattr(st, "session_state", None) and getattr(st.session_state, "ml_model", None) is not None:
         try:
+            import streamlit as st
             model = st.session_state.ml_model
             expected_features = getattr(model, "feature_names_in_", None)
             X_pred = factors.copy()
@@ -645,21 +659,16 @@ def run_wyckoff_anchored_backtest(
                 exit_px = stop_loss_level
                 ret = (exit_px - entry_price) / entry_price
                 profit_dollars = position_size * ret
-                
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
-                horizon = 20
                 phase_success = False
                 if entry_index_int + 1 < len(df):
-                    end_idx = min(entry_index_int + 1 + horizon, len(df))
+                    end_idx = min(entry_index_int + 1 + 20, len(df))
                     future_closes = df['Close'].iloc[entry_index_int + 1 : end_idx]
                     is_bull = any(p in entry_phase for p in ["Phase C", "Spring", "Phase D", "Re-accumulation", "Phase E", "Markup", "SOS", "LPS"])
-                    is_bear = any(p in entry_phase for p in ["Markdown", "Distribution", "Heavy Supply"])
                     if is_bull:
                         phase_success = bool(((future_closes.max() - entry_price) / entry_price) >= 0.04)
-                    elif is_bear:
-                        phase_success = bool(((entry_price - future_closes.min()) / entry_price) >= 0.04)
 
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
@@ -685,21 +694,16 @@ def run_wyckoff_anchored_backtest(
                 exit_px = df['Close'].iloc[i]
                 ret = (exit_px - entry_price) / entry_price
                 profit_dollars = position_size * ret
-                
                 target_ret = (entry_atr / entry_price) * 1.2 if entry_atr > 0 else 0.02
                 is_win = bool(ret > target_ret)
                 
-                horizon = 20
                 phase_success = False
                 if entry_index_int + 1 < len(df):
-                    end_idx = min(entry_index_int + 1 + horizon, len(df))
+                    end_idx = min(entry_index_int + 1 + 20, len(df))
                     future_closes = df['Close'].iloc[entry_index_int + 1 : end_idx]
                     is_bull = any(p in entry_phase for p in ["Phase C", "Spring", "Phase D", "Re-accumulation", "Phase E", "Markup", "SOS", "LPS"])
-                    is_bear = any(p in entry_phase for p in ["Markdown", "Distribution", "Heavy Supply"])
                     if is_bull:
                         phase_success = bool(((future_closes.max() - entry_price) / entry_price) >= 0.04)
-                    elif is_bear:
-                        phase_success = bool(((entry_price - future_closes.min()) / entry_price) >= 0.04)
 
                 audit_logs.append({
                     "entry_date": entry_date.strftime("%Y-%m-%d"),
@@ -734,7 +738,6 @@ def run_wyckoff_anchored_backtest(
 
     return df, pd.DataFrame(audit_logs)
 
-
 def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float, allowed: bool) -> str:
     if df is None or df.empty:
         return "אין לנו כרגע מספיק נתונים כדי להפיק הסבר פשוט על הנכס הזה."
@@ -764,7 +767,6 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
         text.append("המניה מדשדשת (הולכת הצידה) - היא לא עולה ולא יורדת בצורה מובהקת, אלא 'אוספת כוח' או 'מפזרת סחורה'.")
         
     text.append("")
-    
     text.append(f"**👥 מה קורה להתעניינות הקונים (נפח מסחר)?**")
     if vol > vol_ma20 * 1.2:
         text.append("יש היום התעניינות גבוהה מהרגיל במניה! הרבה קניות או מכירות מתבצעות, מה שמרמז שכסף גדול (משקיעים מוסדיים) מעורב כאן.")
@@ -774,7 +776,6 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
         text.append("כמות הקניות והמכירות כרגע ממוצעת ורגילה לחלוטין.")
         
     text.append("")
-        
     text.append(f"**💪 איך היא מתנהגת לעומת השוק הכללי (הבורסה)?**")
     if rs_spy > 0.02:
         text.append("המניה הזו חזקה מהשוק! גם כשקשה מסביב, המשקיעים בוחרים לשים את הכסף שלהם דווקא כאן.")
@@ -784,7 +785,6 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
         text.append("המניה מתנהגת בערך כמו רוב השוק, בלי להראות יתרון או חסרון מיוחד.")
         
     return "\n".join(text)
-
 
 def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str:
     if df is None or df.empty:
@@ -891,9 +891,10 @@ def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str
 """
     return md
 
-# ============================================================
-# NEW: Probability Engine & Dashboard Logic Extractors
-# ============================================================
+def _extract_last(factors: pd.DataFrame, col: str, default: float = 0.0) -> float:
+    if col in factors.columns:
+        return float(factors[col].iloc[-1])
+    return default
 
 def build_smart_money_dashboard(factors: pd.DataFrame) -> dict:
     obv_vel = _extract_last(factors, 'f07_obv_velocity')
@@ -921,46 +922,46 @@ def generate_roadmap(current_phase: str) -> dict:
     
     if "Phase A" in current_phase:
         roadmap["previous_phase"] = "מגמת ירידה (Markdown)"
-        roadmap["next_phase"] = "שלב B (בניית כוח / איסוף)"
-        roadmap["action_plan"] = "חפש סימני ספיגה ובלימת מחזורים. לא להיכנס עדיין ללונג."
-        roadmap["what_if_success"] = "יצירת טווח דשדוש (TR) יציב שמעיד על בלימת הירידות (Phase B)."
-        roadmap["what_if_fail"] = "שבירת השפל הנוכחי והמשך מגמת ירידה עמוקה יותר."
+        roadmap["next_phase"] = "שלב B (איסוף שקט)"
+        roadmap["action_plan"] = "חפש סימני ספיגה. לא להיכנס עדיין ללונג."
+        roadmap["what_if_success"] = "יצירת טווח דשדוש יציב שמעיד על בלימת הירידות."
+        roadmap["what_if_fail"] = "שבירת השפל הנוכחי והמשך מגמת ירידה."
     elif "Phase B" in current_phase:
         roadmap["previous_phase"] = "שלב A (בלימה)"
         roadmap["next_phase"] = "שלב C (ניעור / Spring)"
-        roadmap["action_plan"] = "היערך לקראת ניעור (Spring) מטה שיקח נזילות לפני עליה."
-        roadmap["what_if_success"] = "ביצוע ניעור מוצלח של כסף חלש וספיגת ההיצע (Phase C)."
-        roadmap["what_if_fail"] = "קריסת התמיכה והפיכת הדשדוש מתבנית איסוף לתבנית פיזור (Distribution)."
+        roadmap["action_plan"] = "היערך לקראת ניעור (Spring) מטה שיקח נזילות."
+        roadmap["what_if_success"] = "ביצוע ניעור מוצלח של כסף חלש וספיגת ההיצע."
+        roadmap["what_if_fail"] = "קריסת התמיכה והפיכת הדשדוש לתבנית פיזור."
     elif "Phase C" in current_phase or "Spring" in current_phase:
         roadmap["previous_phase"] = "שלב B (איסוף שקט)"
-        roadmap["next_phase"] = "שלב D (הכנה לפריצה / SOS)"
-        roadmap["action_plan"] = "תזמון כניסה אגרסיבית. הצב סטופ מתחת לשפל של הניעור."
-        roadmap["what_if_success"] = "ראלי אלים כלפי מעלה (SOS) עם מחזורים מתרחבים אל עבר ההתנגדות."
-        roadmap["what_if_fail"] = "שבירה חוזרת מתחת ל-Spring מעידה כי ה'ניעור' היה למעשה המשך ירידות אותנטי (Markdown)."
+        roadmap["next_phase"] = "שלב D (הכנה לפריצה)"
+        roadmap["action_plan"] = "תזמון כניסה אגרסיבית. הצב סטופ מתחת לשפל הניעור."
+        roadmap["what_if_success"] = "ראלי אלים כלפי מעלה עם מחזורים מתרחבים."
+        roadmap["what_if_fail"] = "שבירה חוזרת מתחת ל-Spring (Markdown)."
     elif "Phase D" in current_phase or "LPS" in current_phase:
         roadmap["previous_phase"] = "שלב C (ניעור)"
-        roadmap["next_phase"] = "שלב E (מגמת עליה / Markup)"
-        roadmap["action_plan"] = "חזק פוזיציות קיימות לקראת הפריצה הגדולה החוצה מטווח האיסוף."
-        roadmap["what_if_success"] = "פריצת טווח האיסוף וכניסה למגמת עלייה ארוכת טווח (Markup)."
-        roadmap["what_if_fail"] = "היפוך חד בהתנגדות (Upthrust) המרמז על מלכודת שוורים."
+        roadmap["next_phase"] = "שלב E (מגמת עליה)"
+        roadmap["action_plan"] = "חזק פוזיציות קיימות לקראת הפריצה הגדולה."
+        roadmap["what_if_success"] = "פריצת טווח האיסוף וכניסה למגמת עלייה."
+        roadmap["what_if_fail"] = "היפוך חד בהתנגדות המרמז על מלכודת שוורים."
     elif "Phase E" in current_phase or "Markup" in current_phase:
         roadmap["previous_phase"] = "שלב D (פריצה)"
-        roadmap["next_phase"] = "שלב A עליון (תחילת פיזור)"
-        roadmap["action_plan"] = "נהל את העסקה עם סטופ דינמי (Trailing Stop). קח רווחים ביעדים."
-        roadmap["what_if_success"] = "המשך ריצה ויצירת שיאים חדשים כל עוד זרימת הכסף החכם תומכת."
-        roadmap["what_if_fail"] = "הופעת מחזורי מסחר חריגים ללא התקדמות במחיר, המעידים על חלוקת סחורה מוסדית."
+        roadmap["next_phase"] = "שלב A עליון (פיזור)"
+        roadmap["action_plan"] = "נהל עסקה עם סטופ דינמי. קח רווחים ביעדים."
+        roadmap["what_if_success"] = "המשך ריצה ויצירת שיאים חדשים."
+        roadmap["what_if_fail"] = "חלוקת סחורה מוסדית ומחזורים חריגים ללא התקדמות."
     elif "Distribution" in current_phase:
         roadmap["previous_phase"] = "שלב E (מגמת עליה)"
         roadmap["next_phase"] = "מגמת ירידה (Markdown)"
-        roadmap["action_plan"] = "צא מפוזיציות לונג. המוסדיים מפזרים סחורה. שקול עסקאות שורט."
-        roadmap["what_if_success"] = "שבירת תמיכות וכניסה לשלב ירידות ארוך (Markdown)."
-        roadmap["what_if_fail"] = "הפצה שלא צולחת עשויה להפוך ל-Re-accumulation ולדחוף את הנכס לשיא חדש."
+        roadmap["action_plan"] = "צא מפוזיציות לונג. המוסדיים מפזרים סחורה."
+        roadmap["what_if_success"] = "שבירת תמיכות וכניסה לשלב ירידות ארוך."
+        roadmap["what_if_fail"] = "הפצה שלא צולחת עשויה להפוך ל-Re-accumulation."
     elif "Markdown" in current_phase:
         roadmap["previous_phase"] = "פיזור מוסדי (Distribution)"
-        roadmap["next_phase"] = "שלב A חדש (חיפוש תחתית)"
-        roadmap["action_plan"] = "התרחק! אל תחפש תחתיות עד שלא נראה מחזורי בלימה מובהקים (Phase A)."
+        roadmap["next_phase"] = "שלב A חדש"
+        roadmap["action_plan"] = "התרחק! המתן למחזורי בלימה מובהקים."
         roadmap["what_if_success"] = "המשך שחיקת מחירים עד למציאת רצפה חדשה."
-        roadmap["what_if_fail"] = "קפיצה פתאומית במחזורים עשויה לרמוז על כניסת כסף חכם מוקדמת (Climax)."
+        roadmap["what_if_fail"] = "קפיצה פתאומית במחזורים עשויה לרמוז על בלימה."
         
     return roadmap
 
@@ -993,46 +994,46 @@ def calculate_wyckoff_probability(df: pd.DataFrame, factors: pd.DataFrame, curre
         if obv_vel > 0: bo_modifier += 15
         if stopping_vol > 0: bo_modifier += 10
         if rs_spy < -0.02: dist_modifier += 15
-        edu_bo = f"הסיכוי לפריצה מבוסס כעת על נתוני שלב C (ניעור מוסדי). המערכת זיהתה " + ("זרימת הון פנימי חזקה (OBV) וספיגת מוכרים, מה שמגביר משמעותית את סיכוי הפריצה." if bo_modifier >= 20 else "שחסרה עדיין דחיפה חזקה של קונים כדי לאשר פריצה מלאה.")
+        edu_bo = "הסיכוי לפריצה מבוסס כעת על נתוני שלב C (ניעור מוסדי). זיהינו לחץ קונים חזק."
         edu_dist = "הסיכון העיקרי הוא שניעור זה יתברר כהמשך ירידות (Fake Spring)."
         
     elif "Phase D" in current_phase or "LPS" in current_phase:
         if struct_break > 0: bo_modifier += 20
         if obv_vel > 0.02: bo_modifier += 15
         if rs_spy > 0: bo_modifier += 10
-        edu_bo = f"בשלב D המטרה היא לפרוץ כלפי מעלה. " + ("זיהינו שבירת מבנה חיובית ועוצמה מול השוק, לכן ההסתברות לפריצה קפצה." if bo_modifier >= 20 else "חסרים עדיין אישורי מחזורים כדי להגדיל את ההסתברות לפריצה מוצלחת.")
+        edu_bo = "בשלב D המטרה היא לפרוץ כלפי מעלה. זיהינו שבירת מבנה חיובית."
         edu_dist = "כל עוד המבנה נשמר, סיכוני ההפצה נמוכים יחסית לשלבים קודמים."
         
     elif "Phase E" in current_phase or "Markup" in current_phase:
         if rs_spy > 0.02: bo_modifier += 15
         if obv_vel > 0.05: bo_modifier += 15
         if effort_vs_result > 2.5: dist_modifier += 25 
-        edu_bo = "המניה כבר במגמת עליה מלאה. סיכויי הפריצה משקפים את היכולת להמשיך לייצר שיאים חדשים."
-        edu_dist = "בשלב זה אנו מחפשים 'תשישות'. " + ("התגלה מאמץ קונים ללא תוצאה (Effort vs Result גרוע), מה שמקפיץ את סיכון ההפצה!" if dist_modifier >= 25 else "המחזורים נראים בריאים ואין סימני פיזור ברורים.")
+        edu_bo = "המניה כבר במגמת עליה מלאה. סיכויי הפריצה משקפים את היכולת לייצר שיאים חדשים."
+        edu_dist = "בשלב זה אנו מחפשים 'תשישות'. אם נראה מאמץ ללא תוצאה, הסיכון קופץ."
         
     elif "Distribution" in current_phase or "Markdown" in current_phase:
         dist_modifier += 40
         bo_modifier = 0
-        edu_bo = "המערכת חסמה את סיכויי הפריצה ללונג, מכיוון שהפאזה הטכנית מראה על ירידות או פיזור נזילות של כסף חכם."
-        edu_dist = "זיהוי הפצה מובהק. המוסדיים מחלקים סחורה לציבור, ולכן סיכון השבירה מזנק."
+        edu_bo = "המערכת חסמה את סיכויי הפריצה ללונג, מכיוון שהפאזה מראה על ירידות."
+        edu_dist = "זיהוי הפצה מובהק. המוסדיים מחלקים סחורה לציבור."
         
     else: 
         if stopping_vol > 0: bo_modifier += 15
         if absorption > 1.2: bo_modifier += 10
         if struct_break < 0: dist_modifier += 20
-        edu_bo = "המניה נמצאת בשלבי התבססות מוקדמים (דשדוש). סיכויי הפריצה יתחזקו רק אם נראה בלימה עקבית של המחזורים השליליים."
-        edu_dist = "בשלב זה קיימת סכנה שהדשדוש יהפוך להמשך מגמת ירידה אם המבנה ימשך להישבר."
+        edu_bo = "המניה נמצאת בשלבי התבססות. סיכויי הפריצה יתחזקו רק עם בלימה עקבית."
+        edu_dist = "סכנה שהדשדוש יהפוך להמשך מגמת ירידה."
 
     if obv_vel < -0.02: 
         dist_modifier += 25
-        edu_dist += " **בנוסף, ה-OBV (זרימת ההון) מצביע על יציאת כסף, מה שמעלה את סיכון ההפצה.**"
+        edu_dist += " ה-OBV מצביע על יציאת כסף, מה שמעלה את סיכון ההפצה."
 
     breakout_chance = min(98, max(2, int((accum_prob * 0.40) + bo_modifier)))
     distribution_risk = min(98, max(2, int((100 - accum_prob) * 0.40 + dist_modifier)))
 
     educational_note = (
-        f"<b>• ציון האיסוף ({accum_prob}%):</b> זהו נתון הבסיס. הוא עונה על השאלה: 'כמה כסף מוסדי קונה עכשיו?'. ציון מתחת ל-50 מראה על חוסר עניין.<br><br>"
-        f"<b>• סיכוי לפריצה ({breakout_chance}%):</b> {edu_bo}<br><br>"
+        f"<b>• ציון האיסוף ({accum_prob}%):</b> מראה על כמות הכסף המוסדי שאוסף את המניה.<br>"
+        f"<b>• סיכוי לפריצה ({breakout_chance}%):</b> {edu_bo}<br>"
         f"<b>• סיכון הפצה ({distribution_risk}%):</b> {edu_dist}"
     )
 
@@ -1055,18 +1056,18 @@ def detect_failure_risks(df: pd.DataFrame, factors: pd.DataFrame, current_phase:
     failure_warnings = []
     
     if "Distribution" in current_phase or "Markdown" in current_phase:
-        failure_warnings.append(f"🔴 סכנת מחיקה (Markdown): המערכת מזהה שהכסף החכם משחרר סחורה בשיטתיות. אל תחפש תחתיות שקריות. יש להימנע מלונג לחלוטין ב-**{ticker}**.")
+        failure_warnings.append(f"🔴 סכנת מחיקה (Markdown): המערכת מזהה שהכסף החכם משחרר סחורה בשיטתיות.")
     elif "Spring" in current_phase and obv_vel < 0:
-        failure_warnings.append(f"🔴 ניעור שקרי (Fake Spring Alert): למרות השבירה מטה של המחיר ב-**{ticker}**, ה-OBV יורד בחדות. זה אינו ניעור מוסדי שמטרתו קנייה, אלא המשך טבעי של לחץ המכירות.")
+        failure_warnings.append(f"🔴 ניעור שקרי (Fake Spring Alert): ה-OBV יורד בחדות. זהו אינו ניעור מוסדי.")
     elif is_positive_phase and effort_vs_result > 2.5 and close_price < open_price:
-        failure_warnings.append(f"⚠️ היצע צף מעל המחיר (Supply Overhang): הקונים ב-**{ticker}** מתאמצים להרים את המחיר ללא שום תוצאה הולמת (Effort vs Result גרוע). ישנו מוכר מוסדי עקשן שמכביד מלמעלה.")
+        failure_warnings.append(f"⚠️ היצע צף מעל המחיר (Supply Overhang): מוכר מוסדי עקשן מכביד מלמעלה (מאמץ ללא תוצאה).")
     elif "Markup" in current_phase and rs_spy < -0.02:
-        failure_warnings.append(f"⚠️ חולשה בסייקל (Weak Leader): **{ticker}** נמצאת בטרנד חיובי, אך מופגנת חולשה יחסית צורמת מול מדד ה-S&P 500. כשהשוק יתקן, מניות חלשות יקרסו ראשונות.")
+        failure_warnings.append(f"⚠️ חולשה בסייקל (Weak Leader): מופגנת חולשה יחסית מול השוק. סכנה בעת תיקון.")
     elif accum_prob > 60 and not allowed:
-        failure_warnings.append(f"⚠️ חוסר בשלות טכני: קיימים ניצנים של כסף חכם הנכנס לנכס (**{ticker}**), אך התבנית עצמה עדיין אינה מוכנה למהלך מגמתי (תזמון לקוי). המתן להזדמנות בשלב C או D.")
+        failure_warnings.append(f"⚠️ חוסר בשלות טכני: התבנית עצמה עדיין אינה מוכנה למהלך מגמתי. המתן לאישור.")
 
     if not failure_warnings:
-        failure_warnings.append(f"✅ שמיים נקיים (Clear Skies): התנהגות המחיר וזרימת ההון של **{ticker}** תקינה לחלוטין. לא זוהו אנומליות, אזהרות מוסדיות או מלכודות קלאסיות בטווח הזמן הקרוב.")
+        failure_warnings.append(f"✅ שמיים נקיים (Clear Skies): התנהגות המחיר וזרימת ההון של {ticker} תקינה לחלוטין.")
         
     return failure_warnings
 
@@ -1076,44 +1077,29 @@ def generate_replay_analogies(ticker: str, current_phase: str, accum_prob: float
     
     if "Phase C" in current_phase or "Spring" in current_phase:
         if accum_prob >= 70:
-            replay.append(f"🔍 טביעת אצבע מוסדית: הניעור הנוכחי ב-**{ticker}** זהה קונספטואלית לתבנית ה-Spring של BTC בינואר 2023 - קצירת נזילות קצרה מטה ומיד אחריה הזרמת הון מסיבית.")
+            replay.append(f"🔍 טביעת אצבע מוסדית: הניעור מזכיר את ה-Spring של BTC בינואר 2023.")
         else:
-            replay.append(f"⚠️ מלכודת עבר: הניסיון לייצר Spring ב-**{ticker}** נראה חלש וחסר גיבוי הון, בדומה למלכודות ש-DIS חוותה ב-2023. ללא OBV תומך, המחיר ימשיך לרדת.")
+            replay.append(f"⚠️ מלכודת עבר: הניסיון לייצר Spring נראה חלש וחסר גיבוי הון, כמו ב-DIS ב-2023.")
             
     elif "Phase D" in current_phase or "LPS" in current_phase:
         if accum_prob >= 65:
-            replay.append(f"🔍 בניית כוח: **{ticker}** מזכירה כעת את ההתבססות האחרונה (LPS) של NVDA רגע לפני הפריצה הגדולה שלה. ישנה ספיגה שקטה צמוד להתנגדות.")
+            replay.append(f"🔍 בניית כוח: מזכירה כעת את ההתבססות של NVDA רגע לפני הפריצה הגדולה שלה.")
         else:
-            replay.append(f"⚠️ פריצת שווא: זרימת ההון הנוכחית מזכירה את ניסיונות הפריצה של PYPL ב-2021 (Bull Trap) - מחיר עולה, אך המוסדיים לא באמת מאמינים בו.")
+            replay.append(f"⚠️ פריצת שווא: מזכיר את Bull Trap של PYPL ב-2021.")
             
     elif "Phase E" in current_phase or "Markup" in current_phase:
         if accum_prob >= 70:
-            replay.append(f"🔍 מומנטום פנימי: הריצה ב-**{ticker}** מלווה בכסף קשיח ולא ספקולטיבי, מזכיר את ההתנהגות של SMCI בטרנד העלייה הבריא שלה, שם כל היצע נבלע מיד.")
+            replay.append(f"🔍 מומנטום פנימי: הריצה מלווה בכסף קשיח, מזכיר את התנהגות SMCI.")
         else:
-            replay.append(f"⚠️ תשישות טרנד: המומנטום ב-**{ticker}** מתחיל להראות סממנים היסטוריים של היחלשות איסוף מוסדי, שלב קלאסי המקדים כניסה לדשדוש והפצה.")
+            replay.append(f"⚠️ תשישות טרנד: המומנטום מתחיל להראות סממני היחלשות מוסדית.")
             
     elif "Distribution" in current_phase or "Markdown" in current_phase:
-        replay.append(f"🔍 פיזור נזילות: דפוס הפיזור ב-**{ticker}** משכפל את ההתנהגות של TSLA בסוף 2022 - ה-OBV נשפך לפני המחיר, והמוסדיים נוטשים את הספינה.")
+        replay.append(f"🔍 פיזור נזילות: דפוס הפיזור משכפל את ההתנהגות של TSLA בסוף 2022.")
         
     else: 
         if stopping_vol > 0:
-            replay.append(f"🔍 בלימת נפילה: בלימת המחזורים החריגה ב-**{ticker}** מזכירה את השלבים הראשונים (Phase A) של AAPL בתחילת 2023, כשהכסף החכם בלם באלימות את הירידות.")
+            replay.append(f"🔍 בלימת נפילה: בלימת המחזורים מזכירה את AAPL בתחילת 2023.")
         else:
-            replay.append(f"🔍 שחיקה ואיסוף שקט: **{ticker}** נמצאת בשלב קיפאון המזכיר את AMZN באמצע 2023. שחיקה איטית (Phase B) בזמן שקרנות גידור אוספות בשקט וללא לחץ.")
+            replay.append(f"🔍 שחיקה ואיסוף שקט: מזכיר את AMZN ב-2023. קרנות גידור אוספות בשקט.")
             
     return replay
-
-# --- DEBUG: בדיקת אבחון בסוף המודול - מאתרת אם חסר שם כלשהו ש-app.py מצפה לו ---
-# (חייבת להיות בסוף הקובץ, כי רק כאן כל הפונקציות כבר הוגדרו ב-globals())
-_REQUIRED_EXPORTS = [
-    "clean_filename", "get_data", "calculate_optimal_threshold", "check_phase_entry_allowed",
-    "BacktestConfig", "FactorEngine", "run_wyckoff_anchored_backtest", "explain_score",
-    "calculate_advanced_metrics", "calculate_phase_followthrough", "explain_score_simple",
-    "build_smart_money_dashboard", "generate_roadmap", "calculate_wyckoff_probability",
-    "detect_failure_risks", "generate_replay_analogies", "get_fundamental_data", "_extract_last",
-]
-_missing_exports = [name for name in _REQUIRED_EXPORTS if name not in globals()]
-if _missing_exports:
-    logger.error(f"scout_core.py: חסרים השמות הבאים במודול - הייבוא ב-app.py יכשל: {_missing_exports}")
-else:
-    logger.info("scout_core.py: כל הפונקציות הנדרשות הוגדרו בהצלחה - המודול תקין במלואו.")
