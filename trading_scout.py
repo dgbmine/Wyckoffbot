@@ -1,8 +1,7 @@
 """
 ============================================================
-TRADING SCOUT PRO V5.2
+TRADING SCOUT PRO V5.4
 מודול משלים ל-Wyckoff Institutional Analyst - רדאר כסף חכם
-(רזה וממוקד, נשען לחלוטין על מנוע scout_core החכם)
 ============================================================
 """
 
@@ -16,15 +15,13 @@ from scout_core import (
 
 def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     """
-    מודול המלצות מסחר מבוסס Wyckoff המקבל את כל כובד החישוב מ-scout_core.
-    משלב כעת אזהרות פונדמנטליות חכמות.
+    מודול המלצות מסחר הדוק, משלב וואיקוף ואזהרות פונדמנטליות.
+    מוודא עקביות מוחלטת בין הדיאגנוזה הפונדמנטלית הקשיחה (Ackman Style)
+    לבין פקודת המסחר הטכנית.
     """
     df = get_data(ticker, period="1y")
     if df is None or df.empty or len(df) < 60:
-        return {
-            "recommendation": "ERROR",
-            "reason": f"לא נמצאו נתונים מספיקים עבור {ticker} (נדרשים לפחות 60 ימי מסחר תקינים)."
-        }
+        return {"recommendation": "ERROR", "reason": f"לא נמצאו נתונים מספיקים עבור {ticker}."}
 
     engine = FactorEngine(BacktestConfig())
     factors = engine.compute(df)
@@ -36,23 +33,26 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
     accum_prob = min(99, max(1, int(cis_score)))
     allowed = check_phase_entry_allowed(current_phase, mode)
 
-    # חילוץ נתונים פונדמנטליים וסינתזה מוסדית
-    fund_data = get_fundamental_data(ticker, cis_score)
+    # חילוץ עומק פונדמנטלי המשלב את הפאזה הנוכחית לסינתזה עקבית
+    fund_data = get_fundamental_data(ticker, cis_score=cis_score, current_phase=current_phase)
 
-    # מערכת הגנה ממלכודות
+    # מערכת הגנה ממלכודות שמשלבת גם אזהרות קאש-פלואו ומאזן
     orig_warnings = detect_failure_risks(df, factors, current_phase, accum_prob, allowed, ticker)
     warnings_list = [w for w in orig_warnings if "Clear Skies" not in w]
 
-    # הזרקת מלכודות פונדמנטליות
-    if fund_data.get("valuation") == "זול" and cis_score < 50:
-        warnings_list.append(f"⚠️ Value Trap: המניה נראית זולה פונדמנטלית, אבל אין כניסת כסף חכם מוסדי משמעותית. סיכון גבוה לירידות נוספות.")
-    elif fund_data.get("valuation") == "זול" and cis_score >= 65:
-        warnings_list.append(f"🟢 גיבוי פונדמנטלי: תמחור בחסר המשולב עם כניסת כסף מוסדי מובהקת (High Conviction).")
+    synth_text = fund_data.get("synthesis", "")
+    is_toxic = any(word in synth_text for word in ["רעילה", "Toxic", "מלכודת ערך", "סכין נופלת", "🚨", "☠️"])
+    is_bearish_phase = any(p in current_phase for p in ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax"])
+
+    if is_toxic or is_bearish_phase:
+        warnings_list.append("🚨 סכין נופלת / מלכודת רעילה: הכסף החכם נוטש. חולשה מאזנית או טכנית קיצונית. להתרחק!")
+    elif "פרמיית איכות" in synth_text or "High Conviction" in synth_text:
+        warnings_list.append("🟢 פרמיית איכות פונדמנטלית: החברה יעילה תזרימית ומגובה במבנה איסוף מוסדי מובהק.")
 
     if not warnings_list:
-        warnings_list.append(f"✅ שמיים נקיים (Clear Skies): התנהגות המחיר וזרימת ההון של {ticker} תקינה לחלוטין. לא אותרו אזהרות או מלכודות פונדמנטליות.")
+        warnings_list.append(f"✅ שמיים נקיים: לא אותרו מלכודות תזרימיות או טכניות ב-{ticker}.")
 
-    # תכנון עסקאות
+    # תכנון עסקאות טכני
     close_price = df['Close'].iloc[-1]
     atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
     
@@ -70,23 +70,24 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
 
     is_positive_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "LPS", "SOS", "Breakout", "Markup", "Re-accumulation"])
 
-    if "Distribution" in current_phase or "Markdown" in current_phase:
+    # קביעת המלצה קשיחה - עקביות מלאה עם הפונדמנטלי וללא פשרות בפאזה דובית
+    if is_toxic or is_bearish_phase:
         rec = "STRONG SELL"
-        action = "חסל פוזיציות לונג. כניסה למגמת ירידות ופיזור מוסדי מובהק."
-    elif accum_prob >= 75 and is_positive_phase:
+        action = "התרחק מיד! 🚨 סכין נופלת. לחץ מכירות מוסדי אגרסיבי, נתמך בחולשה מבנית ו/או פיננסית. אל תתפוס תחתיות."
+    elif accum_prob >= 75 and is_positive_phase and not is_toxic:
         rec = "STRONG BUY"
-        action = "כניסה מועדפת (High Conviction). ההסתברות לצבירה מוסדית אמיתית גבוהה מאוד. שקול כניסה אגרסיבית."
-    elif accum_prob >= 65 and allowed:
+        action = "כניסה מועדפת. המוסדיים אוספים סחורה באגרסיביות ויש תמיכה מאזנית עוצמתית."
+    elif accum_prob >= 65 and allowed and not is_toxic:
         rec = "BUY"
-        action = "פתח פוזיציה בהתאם לניהול הסיכונים. קיימת טביעת אצבע ברורה של כסף חכם לקראת מהלך."
+        action = "פתח פוזיציה מדורגת. טביעת אצבע ברורה של כסף חכם לקראת פריצה טכנית."
     elif (50 <= accum_prob < 65) or (accum_prob >= 65 and not is_positive_phase):
         rec = "HOLD"
-        action = "המתן. אמנם קיימת נוכחות של הון פנימי, אך התבנית הטכנית לא בשלה לפריצה מיידית."
+        action = "המתן. ישנם ניצני עניין אך הפאזה אינה בשלה, או שישנו חסרון פונדמנטלי הדורש מעקב."
     else:
         rec = "SELL"
-        action = "הסתברות נמוכה לאיסוף. מומנטום הכסף החכם שלילי. חפש נקודות יציאה טקטית."
+        action = "מומנטום כסף חכם שלילי. אין הון פנימי שדוחף קדימה. שקול לממש רווחים."
 
-    reason = f"הסתברות מוסדית של {accum_prob}% מצביעה על {rec} בפאזת {current_phase}."
+    reason = f"הסתברות של {accum_prob}% לאיסוף בפאזת {current_phase}, נתמך באנליזת תזרים ואיכות עסקים."
 
     return {
         "recommendation": rec,
