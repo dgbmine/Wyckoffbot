@@ -35,7 +35,8 @@ def get_data(ticker, period="2y", start=None, end=None):
 
         def _safe_tz_drop(idx):
             idx = pd.to_datetime(idx)
-            if getattr(idx, 'tz', None) is not None: return idx.tz_convert(None)
+            if getattr(idx, 'tz', None) is not None:
+                return idx.tz_convert(None)
             return idx
 
         df.index = _safe_tz_drop(df.index)
@@ -45,10 +46,20 @@ def get_data(ticker, period="2y", start=None, end=None):
 
         if start is not None and end is not None:
             spy_df = yf.Ticker("SPY").history(start=start, end=end, auto_adjust=False)
-            if spy_df is None or spy_df.empty: spy_df = yf.Ticker("SPY").history(start=start, end=end)
+            if spy_df is None or spy_df.empty:
+                spy_df = yf.Ticker("SPY").history(start=start, end=end)
+                
+            vix_df = yf.Ticker("^VIX").history(start=start, end=end, auto_adjust=False)
+            if vix_df is None or vix_df.empty:
+                vix_df = yf.Ticker("^VIX").history(start=start, end=end)
         else:
             spy_df = yf.Ticker("SPY").history(period=period, auto_adjust=False)
-            if spy_df is None or spy_df.empty: spy_df = yf.Ticker("SPY").history(period=period)
+            if spy_df is None or spy_df.empty:
+                spy_df = yf.Ticker("SPY").history(period=period)
+
+            vix_df = yf.Ticker("^VIX").history(period=period, auto_adjust=False)
+            if vix_df is None or vix_df.empty:
+                vix_df = yf.Ticker("^VIX").history(period=period)
 
         if spy_df is not None and not spy_df.empty:
             spy_df.index = _safe_tz_drop(spy_df.index)
@@ -59,6 +70,15 @@ def get_data(ticker, period="2y", start=None, end=None):
         else:
             df["spy_close"] = np.nan
 
+        if vix_df is not None and not vix_df.empty:
+            vix_df.index = _safe_tz_drop(vix_df.index)
+            vix_df = vix_df[~vix_df.index.duplicated(keep='first')]
+            vix_df.dropna(subset=['Close'], inplace=True)
+            df = df.join(vix_df[["Close"]].rename(columns={"Close": "vix_close"}), how="left")
+            df['vix_close'] = df['vix_close'].ffill()
+        else:
+            df["vix_close"] = np.nan
+
         return df
     except Exception as e:
         logger.error(f"Error in get_data for {ticker}: {e}")
@@ -66,9 +86,9 @@ def get_data(ticker, period="2y", start=None, end=None):
 
 def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: str = "") -> dict:
     """
-    מודול עומק פונדמנטלי מלא בסגנון Bill Ackman.
-    כולל הסברים ספציפיים ופופאוברים מותאמים לטיקר תוך השוואה לסקטור.
-    אוכף סינתזה קשיחה לחלוטין וללא אופטימיות בפאזות דוביות.
+    מודול עומק פונדמנטלי מלא (Bill Ackman Style).
+    מכיל הסברים דינמיים ממוקדים למניה והשוואה מדויקת לסקטור.
+    אוכף סינתזה קשיחה לחלוטין ללא מסרים חיוביים בפאזה דובית.
     """
     try:
         tkr = yf.Ticker(ticker)
@@ -81,7 +101,7 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
         except:
             cf, bs, fin = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-        # תזרים מזומנים (Cash Flow is Reality)
+        # תזרים מזומנים תפעולי וחופשי
         ocf, ocf_yoy, fcf = "N/A", "N/A", "N/A"
         fcf_val = 0
         ocf_yoy_val = 0
@@ -99,7 +119,7 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
                     fcf_val = ocf_val + capex 
                     fcf = f"${fcf_val / 1e9:.2f}B"
 
-        # צמיחת הכנסות ושולי רווח
+        # הכנסות ויעילות תפעולית
         rev_growth, op_margin = "N/A", "N/A"
         rev_growth_val, op_margin_val = 0, 0
         if not fin.empty and "Total Revenue" in fin.index and len(fin.columns) >= 2:
@@ -115,9 +135,9 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
                     op_margin_val = (op_inc / rev) * 100
                     op_margin = f"{op_margin_val:.1f}%"
 
-        # חוב ומאזן
+        # יחס חוב
         net_debt_ebitda = "N/A"
-        net_debt_val = 0
+        net_debt_val = None
         if not bs.empty and not fin.empty:
             try:
                 total_debt = bs.loc["Total Debt"].iloc[0] if "Total Debt" in bs.index else 0
@@ -132,38 +152,32 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
         sector = info.get("sector", "Unknown")
         
         sector_benchmarks = {
-            "Technology": {"pe": 25, "op_margin": 20.0, "rev_growth": 15.0},
-            "Financial Services": {"pe": 14, "op_margin": 25.0, "rev_growth": 8.0},
-            "Healthcare": {"pe": 20, "op_margin": 15.0, "rev_growth": 10.0},
-            "Consumer Cyclical": {"pe": 18, "op_margin": 10.0, "rev_growth": 8.0},
-            "Energy": {"pe": 12, "op_margin": 15.0, "rev_growth": 5.0},
-            "Basic Materials": {"pe": 15, "op_margin": 12.0, "rev_growth": 5.0}
+            "Technology": {"pe": 25, "om": 20.0, "rg": 15.0},
+            "Financial Services": {"pe": 14, "om": 25.0, "rg": 8.0},
+            "Healthcare": {"pe": 20, "om": 15.0, "rg": 10.0},
+            "Consumer Cyclical": {"pe": 18, "om": 10.0, "rg": 8.0},
+            "Energy": {"pe": 12, "om": 15.0, "rg": 5.0},
+            "Basic Materials": {"pe": 15, "om": 12.0, "rg": 5.0}
         }
-        bench = sector_benchmarks.get(sector, {"pe": 18, "op_margin": 12.0, "rev_growth": 8.0})
+        bench = sector_benchmarks.get(sector, {"pe": 18, "om": 12.0, "rg": 8.0})
 
         valuation, color = "הוגן", "#eab308"
+        pe_diff_pct = 0
         if pe_forward:
+            pe_diff_pct = ((pe_forward - bench["pe"]) / bench["pe"]) * 100
             if pe_forward < bench["pe"] * 0.8: valuation, color = "זול", "#16a34a"
             elif pe_forward > bench["pe"] * 1.25: valuation, color = "יקר", "#ef4444"
 
-        # -------------------------------------------------------------
-        # יצירת הסברים ספציפיים למניה (Popovers Personalization)
-        # -------------------------------------------------------------
-        rg_diff = rev_growth_val - bench['rev_growth']
-        om_diff = op_margin_val - bench['op_margin']
-        pe_diff = (pe_forward - bench['pe']) if pe_forward else 0
+        # === הסברים מותאמים אישית (Popovers) ===
+        rg_diff = rev_growth_val - bench['rg']
+        om_diff = op_margin_val - bench['om']
         
-        ocf_txt = f"עבור {ticker}, נרשמה {'צמיחה חיובית' if ocf_yoy_val > 0 else 'ירידה והתכווצות'} של {ocf_yoy} בתזרים המזומנים התפעולי מול השנה שעברה. בהשוואה למתחרים בסקטור {sector}, זה מצביע על {'שיפור ביכולת הליבה לייצר מזומן' if ocf_yoy_val > 0 else 'חולשה בליבת העסקים שיכולה להעיב על המאזן'}."
-        
-        fcf_txt = f"התזרים החופשי של {ticker} עומד על {fcf}. מאחר והערך {'חיובי וגדול' if fcf_val > 0 else 'שלילי/נמוך'}, החברה {'מסוגלת לממן את עצמה, לחלק דיבידנד או לקנות מניות חזרה מבלי להזדקק לחוב נוסף' if fcf_val > 0 else 'שורפת מזומנים לאחר השקעות (Capex), עובדה שמייצרת תלות במימון חיצוני בסביבת הריבית הנוכחית'}."
-        
-        rg_txt = f"עבור {ticker}, צמיחת ההכנסות של {rev_growth} {'עוקפת' if rg_diff > 0 else 'מפגרת אחרי'} הממוצע בסקטור ה-{sector} שעומד על {bench['rev_growth']}%. הדבר מעיד על {'התרחבות נתח שוק ולקיחת לקוחות ממתחרים' if rg_diff > 0 else 'קיפאון או איבוד רלוונטיות מסחרית ביחס למתחרות הישירות שלה'}."
-        
-        om_txt = f"עבור {ticker}, שולי הרווח התפעולי של {op_margin} {'גבוהים ב-' if om_diff > 0 else 'נמוכים ב-'}{abs(om_diff):.1f}% מהממוצע בסקטור ה-{sector} ({bench['op_margin']}%). הדבר מעיד על יעילות תפעולית {'עודפת ויתרון תחרותי חזק בתמחור (Pricing Power)' if om_diff > 0 else 'ירודה יחסית למתחרים באותו התחום, עם הוצאות כבדות'}."
-        
-        nd_txt = f"יחס חוב נטו ל-EBITDA של {ticker} עומד כעת על {net_debt_ebitda}. {'רמת המינוף שמרנית ותקינה לחלוטין.' if net_debt_val < 3 else 'רמה זו (מעל 3x) מהווה דגל אדום חמור באנליזת ערך. החברה ממונפת מדי ועלולה להשמיד ערך למשקיעים בעת האטה הכלכלית.'}"
-        
-        pe_txt = f"{ticker} נסחרת במכפיל רווח עתידי של {round(pe_forward,1) if pe_forward else 'N/A'}. ממוצע סקטור ה-{sector} הוא {bench['pe']}. החברה נסחרת ב{'פרמיה המשקפת ציפיות צמיחה יוצאות דופן' if pe_diff > 0 else 'דיסקאונט שעשוי להיות הזדמנות, או לחלופין לשקף עסק גווע (Value Trap)'}."
+        ocf_txt = f"עבור {ticker}, נרשמה {'צמיחה חיובית' if ocf_yoy_val > 0 else 'התכווצות וירידה'} של {ocf_yoy} בתזרים התפעולי מול השנה שעברה. ביחס למתחרים בסקטור ה-{sector}, זהו אינדיקטור מובהק ל{'יציבות בריאה בליבת העסקים' if ocf_yoy_val > 0 else 'חולשה וקשיי נזילות מצטברים'}."
+        fcf_txt = f"התזרים החופשי של {ticker} עומד על {fcf}. מכיוון שהנתון {'חיובי ומשמעותי' if fcf_val > 0 else 'שלילי'}, החברה {'יכולה לממן את צמיחתה בעצמה, לחלק דיבידנד או לקנות מניות חזרה מבלי להנפיק חוב חדש' if fcf_val > 0 else 'שורפת מזומנים לאחר השקעות (Capex). בסביבת ריבית גבוהה, זוהי נקודת תורפה עצומה מול מתחרותיה בסקטור'}."
+        rg_txt = f"צמיחת ההכנסות של {ticker} ({rev_growth}) {'עוקפת' if rg_diff > 0 else 'מפגרת אחרי'} הממוצע בסקטור ה-{sector} שעומד על {bench['rg']}%. זה מצביע על {'לקיחת נתח שוק אגרסיבית (Market Share Expansion)' if rg_diff > 0 else 'קיפאון, אובדן לקוחות או איבוד רלוונטיות תחרותית'}."
+        om_txt = f"עבור {ticker}, שולי הרווח התפעולי ({op_margin}) {'גבוהים ב-' if om_diff > 0 else 'נמוכים ב-'}{abs(om_diff):.1f}% מהממוצע בסקטור ה-{sector} ({bench['om']}%). זה מעיד על יעילות תפעולית {'גבוהה המייצרת חפיר תחרותי חזק (Pricing Power)' if om_diff > 0 else 'נמוכה יחסית למתחרים הישירים, כנראה עקב הוצאות כבדות או ניהול כושל'}."
+        nd_txt = f"יחס חוב נטו ל-EBITDA של {ticker} הוא {net_debt_ebitda}. לפי מודלי ערך (Ackman), יחס מעל 3x מסוכן. {'המינוף תקין ושמרני.' if net_debt_val is not None and net_debt_val < 3 else 'רמת המינוף הנוכחית מהווה דגל אדום בוהק - סכנה קיומית והשמדת ערך בעת משבר.'}"
+        pe_txt = f"המכפיל העתידי (Forward P/E) של {ticker} עומד על {round(pe_forward,1) if pe_forward else 'N/A'}. ממוצע סקטור ה-{sector} הוא {bench['pe']}. המניה נסחרת ב{'פרמיה של ' + str(int(pe_diff_pct)) + '% המגלמת ציפיות שוק עצומות' if pe_diff_pct > 0 else 'דיסקאונט של ' + str(abs(int(pe_diff_pct))) + '% שיכול להיות הזדמנות, או מלכודת ערך רעילה'}."
 
         explanations = {"ocf": ocf_txt, "fcf": fcf_txt, "rev_growth": rg_txt, "op_margin": om_txt, "net_debt": nd_txt, "pe": pe_txt}
                 
@@ -175,46 +189,56 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
                 next_earnings = dates[0].strftime("%Y-%m-%d") if isinstance(dates, list) and len(dates)>0 else (dates.strftime("%Y-%m-%d") if hasattr(dates, "strftime") else "לא ידוע")
         except: pass
 
-        # -------------------------------------------------------------
-        # סינתזה קשיחה - חוק ברזל: אפס אופטימיות בפאזות דוביות
-        # -------------------------------------------------------------
-        synthesis = "חסרים נתונים פיננסיים לאנליזה."
+        # === סינתזה פונדמנטלית קשיחה (חוק הברזל הדובי) ===
+        synthesis = "חסרים נתונים לקביעת תזה."
         if cis_score is not None:
             is_collecting = cis_score >= 65
-            is_distributing = cis_score <= 40
             is_bearish_phase = any(p in current_phase for p in ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax", "UNCERTAIN"])
             is_bullish_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "LPS", "Re-accumulation"])
             
-            strong_cash = (op_margin_val > bench["op_margin"] * 0.8) and (fcf_val > 0)
-            high_debt = net_debt_val > 3.0 if net_debt_val else False
+            strong_cash = (op_margin_val > bench["om"] * 0.8) and (fcf_val > 0)
+            high_debt = (net_debt_val > 3.0) if net_debt_val is not None else False
 
-            # חוק ברזל מוחלט למצבים דוביים
-            if is_bearish_phase or is_distributing:
+            if is_bearish_phase or cis_score <= 40:
                 if high_debt or not strong_cash:
-                    synthesis = f"☠️ Toxic Value Trap (סכין נופלת): ל-{ticker} יש בעיות בליבת התזרים/המאזן, והפאזה היא {current_phase}. המוסדיים בורחים. להתרחק מיד!"
+                    synthesis = f"☠️ Toxic Value Trap (סכין נופלת): הפאזה הטכנית היא '{current_phase}' והכסף החכם נוטש. במקביל, ל-{ticker} יש בעיות מהותיות בתזרים או במאזן מול סקטור ה-{sector}. התרחק מיד!"
                 else:
-                    synthesis = f"🚨 סכין נופלת: למרות שהמספרים נראים סבירים על הנייר, הפאזה הטכנית היא {current_phase} והמוסדיים משחררים סחורה. אל תתפוס תחתיות."
+                    synthesis = f"🚨 סכין נופלת: למרות שהמספרים היבשים נראים סבירים, הפאזה היא '{current_phase}' והמוסדיים זורקים סחורה. אל תתפוס תחתיות. זוהי מלכודת ערך קלאסית."
             
             elif is_bullish_phase and is_collecting:
                 if strong_cash and valuation != "יקר" and not high_debt:
-                    synthesis = f"🔥 High Conviction: שילוב אידיאלי ב-{ticker}. תזרים חזק ביחס לסקטור {sector}, מאזן נקי ואיסוף מוסדי מובהק. פוזיציית לונג איכותית."
+                    synthesis = f"🔥 High Conviction: שילוב אידיאלי ב-{ticker}. תזרים מזומנים חזק שמוביל על סקטור ה-{sector}, מאזן נקי ואיסוף מוסדי אגרסיבי. פוזיציית לונג איכותית."
                 elif valuation == "יקר" and strong_cash:
-                    synthesis = f"🚀 פרמיית איכות: המוסדיים משלמים ביוקר על {ticker} בזכות הנהלה שמדפיסה מזומן ומכה את הסקטור. טרנד עוצמתי."
+                    synthesis = f"🚀 פרמיית איכות: המוסדיים מוכנים לשלם פרמיה יקרה על {ticker} בזכות הנהלה שמדפיסה מזומן ומכה את הסקטור ביעילות. טרנד עוצמתי."
                 elif high_debt or not strong_cash:
-                    synthesis = f"⚠️ ספקולציית מומנטום: יש איסוף טכני חיובי, אבל ל-{ticker} יש חולשה בתזרים. כניסה מסוכנת המבוססת על מומנטום קצר בלבד."
+                    synthesis = f"⚠️ ספקולציית מומנטום: אמנם יש איסוף טכני חיובי, אבל ל-{ticker} יש חולשה פונדמנטלית בתזרים (שורפת מזומנים/ממונפת). כניסה מסוכנת קצרת-טווח בלבד."
             
-            else: # דשדוש / ניטרלי
+            else: # דשדוש
                 if is_collecting and strong_cash:
-                    synthesis = f"⚖️ איסוף שקט באיכות גבוהה: כסף חכם אוסף את {ticker} שמייצרת תזרים עדיף על הסקטור. המתן לפריצת מחיר (Phase D)."
-                elif is_distributing:
-                    synthesis = f"📉 מומנטום שלילי: הון זורם החוצה מ-{ticker}. אין שום סיבה טכנית או פונדמנטלית להחזיק במניה זו כרגע."
+                    synthesis = f"⚖️ איסוף שקט באיכות גבוהה: כסף חכם אוסף את {ticker} שמייצרת תזרים יציב ועדיף על הסקטור. המתן לפריצת מחיר טכנית."
                 else:
-                    synthesis = f"💤 כסף מת: העסק בינוני ביחס לסקטור ה-{sector} והכסף החכם לא מתערב כרגע. עדיף לשמור הון."
+                    synthesis = f"💤 כסף מת: אין קצה (Edge) טכני והעסק בינוני בהשוואה למתחרים ב-{sector}. הכסף החכם לא מתערב כרגע."
+
+        # שמירת יתר הנתונים הפונדמנטלים של המקור
+        pe_trailing = info.get("trailingPE")
+        peg = info.get("pegRatio")
+        ev_ebitda = info.get("enterpriseToEbitda")
+        ps = info.get("priceToSalesTrailing12Months")
+        pb = info.get("priceToBook")
+        roe = info.get("returnOnEquity")
+        eps_growth = info.get("earningsGrowth")
 
         return {
             "ocf": ocf, "ocf_yoy": ocf_yoy, "fcf": fcf, "rev_growth": rev_growth,
             "op_margin": op_margin, "net_debt_ebitda": net_debt_ebitda,
             "pe_forward": round(pe_forward, 2) if pe_forward else "N/A",
+            "pe_trailing": round(pe_trailing, 2) if pe_trailing else "N/A",
+            "peg": round(peg, 2) if peg else "N/A",
+            "ev_ebitda": round(ev_ebitda, 2) if ev_ebitda else "N/A",
+            "ps": round(ps, 2) if ps else "N/A",
+            "pb": round(pb, 2) if pb else "N/A",
+            "roe": f"{round(roe * 100, 1)}%" if roe else "N/A",
+            "eps_growth": f"{round(eps_growth * 100, 1)}%" if eps_growth else "N/A",
             "sector": sector, "valuation": valuation, "valuation_color": color,
             "next_earnings": next_earnings, "synthesis": synthesis, "explanations": explanations
         }
@@ -223,7 +247,8 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
         return {}
 
 def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) -> dict:
-    if not trades: return {"max_drawdown": 0.0, "total_profit": 0.0, "total_trades": 0, "winning_trades": 0, "losing_trades": 0, "annual_pnl": {}, "wyckoff_success_rate": 0.0}
+    if not trades:
+        return {"max_drawdown": 0.0, "total_profit": 0.0, "total_trades": 0, "winning_trades": 0, "losing_trades": 0, "annual_pnl": {}, "wyckoff_success_rate": 0.0}
     total_trades = len(trades)
     winning_trades = sum(1 for t in trades if t.get('is_win', t.get('profit', 0) > 0))
     losing_trades = total_trades - winning_trades
@@ -325,8 +350,10 @@ class FactorEngine:
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         f = pd.DataFrame(index=df.index)
         rng = df["High"] - df["Low"]
-        vol_ma20, spread_ma20 = df["Volume"].rolling(20).mean(), rng.rolling(20).mean()
-        close_diff, midpoint = df["Close"].diff(), (df["High"] + df["Low"]) / 2
+        vol_ma20 = df["Volume"].rolling(20).mean()
+        spread_ma20 = rng.rolling(20).mean()
+        close_diff = df["Close"].diff()
+        midpoint = (df["High"] + df["Low"]) / 2
         f["f04_absorption"] = ((df["Volume"] / vol_ma20.replace(0, 1e-5)).clip(0, 5) / (rng / spread_ma20.replace(0, 1e-5)).clip(0.1, 5)) * (1.0 - ((df["Close"] - df["Low"].rolling(20).min()) / (df["High"].rolling(20).max() - df["Low"].rolling(20).min() + 1e-5)).clip(0, 1))
         f["f36_wyckoff_score"] = self._compute_quick_wyckoff(df)
         obv_cum = (np.sign(close_diff) * df["Volume"]).cumsum()
@@ -356,32 +383,54 @@ class FactorEngine:
         if len(df) < 60: return phases
         close, vol = df['Close'], df['Volume']
         sma20, sma50, sma200 = close.rolling(20).mean(), close.rolling(50).mean(), close.rolling(200).mean()
-        vol_ma, high60, low60, atr = vol.rolling(20).mean(), df['High'].rolling(60).max(), df['Low'].rolling(60).min(), (df['High'] - df['Low']).rolling(14).mean()
+        vol_ma = vol.rolling(20).mean()
+        high60, low60 = df['High'].rolling(60).max(), df['Low'].rolling(60).min()
+        atr = (df['High'] - df['Low']).rolling(14).mean()
         obv = (np.sign(close.diff()) * vol).cumsum()
-        obv_diff, obv_min60 = obv.diff(10), obv.rolling(60).min()
+        obv_diff = obv.diff(10)
+        obv_min60 = obv.rolling(60).min()
         rs_spy = (close.pct_change(20) - df["spy_close"].pct_change(20)).fillna(0) if "spy_close" in df.columns else pd.Series(0.0, index=df.index)
 
         for i in range(60, len(df)):
-            c, v, v_ma, h60, l60, a, s20, s50, s200, o_diff, rs = close.iloc[i], vol.iloc[i], vol_ma.iloc[i], high60.iloc[i-1], low60.iloc[i-1], atr.iloc[i], sma20.iloc[i], sma50.iloc[i], sma200.iloc[i] if not pd.isna(sma200.iloc[i]) else sma50.iloc[i], obv_diff.iloc[i], rs_spy.iloc[i]
+            c, v, v_ma = close.iloc[i], vol.iloc[i], vol_ma.iloc[i]
+            h60, l60, a = high60.iloc[i-1], low60.iloc[i-1], atr.iloc[i]
+            s20, s50, s200 = sma20.iloc[i], sma50.iloc[i], sma200.iloc[i] if not pd.isna(sma200.iloc[i]) else sma50.iloc[i]
+            o_diff, rs = obv_diff.iloc[i], rs_spy.iloc[i]
             prev_phase = phases.iloc[i-1]
 
-            if c > s20 > s50 > s200 and c >= h60 * 0.95: phases.iloc[i] = "Phase E (Markup)" if o_diff > 0 and rs > 0 else "TRANSITION / UNCERTAIN STATE"
-            elif "Markup" in prev_phase and c > s200 and c < h60 * 0.95 and v < v_ma: phases.iloc[i] = "Re-accumulation (LPS/BUEC)" if o_diff >= 0 else "TRANSITION / UNCERTAIN STATE"
-            elif c > s50 and v > v_ma * 1.5 and c >= h60 * 0.90 and c > df['Open'].iloc[i]: phases.iloc[i] = "Phase D (SOS / Breakout)" if o_diff > 0 else "TRANSITION / UNCERTAIN STATE"
+            if c > s20 > s50 > s200 and c >= h60 * 0.95: 
+                phases.iloc[i] = "Phase E (Markup)" if o_diff > 0 and rs > 0 else "TRANSITION / UNCERTAIN STATE"
+            elif "Markup" in prev_phase and c > s200 and c < h60 * 0.95 and v < v_ma: 
+                phases.iloc[i] = "Re-accumulation (LPS/BUEC)" if o_diff >= 0 else "TRANSITION / UNCERTAIN STATE"
+            elif c > s50 and v > v_ma * 1.5 and c >= h60 * 0.90 and c > df['Open'].iloc[i]: 
+                phases.iloc[i] = "Phase D (SOS / Breakout)" if o_diff > 0 else "TRANSITION / UNCERTAIN STATE"
             elif df['Low'].iloc[i] < l60 + a and c < s50:
-                is_new_low, positive_close, obv_min_prev = df['Low'].iloc[i] < l60, c > df['Open'].iloc[i], obv_min60.iloc[i-1] if i > 0 and not pd.isna(obv_min60.iloc[i-1]) else obv.iloc[i]
-                if is_new_low and v > v_ma * 1.5 and positive_close and obv.iloc[i] >= obv_min_prev: phases.iloc[i] = "Phase C (Strong Spring)"
-                elif is_new_low and (not positive_close or obv.iloc[i] < obv_min_prev): phases.iloc[i] = "Failed Sweep / Warning" 
-                elif positive_close and v > v_ma * 1.2: phases.iloc[i] = "Phase C (Spring / Liquidity Sweep)"
-                else: phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
+                is_new_low = df['Low'].iloc[i] < l60
+                positive_close = c > df['Open'].iloc[i]
+                obv_min_prev = obv_min60.iloc[i-1] if i > 0 and not pd.isna(obv_min60.iloc[i-1]) else obv.iloc[i]
+                if is_new_low and v > v_ma * 1.5 and positive_close and obv.iloc[i] >= obv_min_prev: 
+                    phases.iloc[i] = "Phase C (Strong Spring)"
+                elif is_new_low and (not positive_close or obv.iloc[i] < obv_min_prev): 
+                    phases.iloc[i] = "Failed Sweep / Warning" 
+                elif positive_close and v > v_ma * 1.2: 
+                    phases.iloc[i] = "Phase C (Spring / Liquidity Sweep)"
+                else: 
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
             elif "Spring" in prev_phase or "Accumulation" in prev_phase or "Phase C" in prev_phase:
-                if c > l60 + a * 2 and c < s50 and v < v_ma * 0.8: phases.iloc[i] = "Phase D (LPS)" if o_diff >= 0 and df['Low'].iloc[i] >= df['Low'].iloc[i-1] else "TRANSITION / UNCERTAIN STATE"
-                elif c < s50: phases.iloc[i] = "Phase B (Accumulation)"
-                else: phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
-            elif c < l60 * 1.05 and v > v_ma * 2.5 and df['Close'].iloc[i] > df['Low'].iloc[i] + (df['High'].iloc[i] - df['Low'].iloc[i]) * 0.5: phases.iloc[i] = "Phase A (Selling Climax)"
-            elif c < s20 < s50 and c < s200: phases.iloc[i] = "Markdown (Institutional Distribution)" if o_diff < 0 else "TRANSITION / UNCERTAIN STATE"
-            elif c < s50 and v > v_ma * 2.0 and c < df['Open'].iloc[i]: phases.iloc[i] = "Distribution (Heavy Supply)"
-            else: phases.iloc[i] = prev_phase if prev_phase not in ["TRANSITION / UNCERTAIN STATE", "לא בתהליך איסוף"] else "TRANSITION / UNCERTAIN STATE"
+                if c > l60 + a * 2 and c < s50 and v < v_ma * 0.8: 
+                    phases.iloc[i] = "Phase D (LPS)" if o_diff >= 0 and df['Low'].iloc[i] >= df['Low'].iloc[i-1] else "TRANSITION / UNCERTAIN STATE"
+                elif c < s50: 
+                    phases.iloc[i] = "Phase B (Accumulation)"
+                else: 
+                    phases.iloc[i] = "TRANSITION / UNCERTAIN STATE"
+            elif c < l60 * 1.05 and v > v_ma * 2.5 and df['Close'].iloc[i] > df['Low'].iloc[i] + (df['High'].iloc[i] - df['Low'].iloc[i]) * 0.5: 
+                phases.iloc[i] = "Phase A (Selling Climax)"
+            elif c < s20 < s50 and c < s200: 
+                phases.iloc[i] = "Markdown (Institutional Distribution)" if o_diff < 0 else "TRANSITION / UNCERTAIN STATE"
+            elif c < s50 and v > v_ma * 2.0 and c < df['Open'].iloc[i]: 
+                phases.iloc[i] = "Distribution (Heavy Supply)"
+            else: 
+                phases.iloc[i] = prev_phase if prev_phase not in ["TRANSITION / UNCERTAIN STATE", "לא בתהליך איסוף"] else "TRANSITION / UNCERTAIN STATE"
         return phases
 
 def run_wyckoff_anchored_backtest(ticker, use_ai, threshold, period=None, start=None, end=None, risk_profile="Balanced", stop_loss_pct=0.05, atr_multiplier=2.0):
@@ -389,8 +438,10 @@ def run_wyckoff_anchored_backtest(ticker, use_ai, threshold, period=None, start=
     if df is None: return None, pd.DataFrame()
     engine = FactorEngine(BacktestConfig(period=period if period else f"{start}/{end}", stop_loss_pct=stop_loss_pct, atr_multiplier=atr_multiplier))
     factors = engine.compute(df)
-    df['wyckoff_phase'], df['cis_score'] = engine.get_wyckoff_phase(df), engine.composite_cis(factors, df)
-    df['Daily_Return'], df['rs_spy_factor'] = df['Close'].pct_change().fillna(0), factors.get('f_rs_spy', 0.0)
+    df['wyckoff_phase'] = engine.get_wyckoff_phase(df)
+    df['cis_score'] = engine.composite_cis(factors, df)
+    df['Daily_Return'] = df['Close'].pct_change().fillna(0)
+    df['rs_spy_factor'] = factors.get('f_rs_spy', 0.0)
 
     atr_series = pd.concat([df['High']-df['Low'], (df['High']-df['Close'].shift(1)).abs(), (df['Low']-df['Close'].shift(1)).abs()], axis=1).max(axis=1).rolling(14).mean()
     positions, audit_logs = [], []
@@ -428,7 +479,9 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
     if df is None or df.empty: return "אין מספיק נתונים."
     close, vol = df['Close'].iloc[-1], df['Volume'].iloc[-1]
     vol_ma20 = df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else 1.0
-    sma20, sma50, sma200 = df['Close'].rolling(20).mean().iloc[-1] if len(df)>=20 else close, df['Close'].rolling(50).mean().iloc[-1] if len(df)>=50 else close, df['Close'].rolling(200).mean().iloc[-1] if len(df)>=200 else close
+    sma20 = df['Close'].rolling(20).mean().iloc[-1] if len(df)>=20 else close
+    sma50 = df['Close'].rolling(50).mean().iloc[-1] if len(df)>=50 else close
+    sma200 = df['Close'].rolling(200).mean().iloc[-1] if len(df)>=200 else close
     rs_spy = (df["Close"].pct_change(20).iloc[-1] - df["spy_close"].pct_change(20).iloc[-1]) if "spy_close" in df.columns else 0.0
     
     text = ["**📈 מה קורה למחיר?**"]
@@ -448,7 +501,9 @@ def explain_score_simple(df: pd.DataFrame, current_phase: str, cis_score: float,
 
 def explain_score(df: pd.DataFrame, current_phase: str, cis_score: float) -> str:
     if df is None or df.empty: return "אין נתונים."
-    close, vol_ratio, obv_diff = df['Close'].iloc[-1], df['Volume'].iloc[-1] / (df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else 1.0), (np.sign(df['Close'].diff()) * df['Volume']).cumsum().diff(10).iloc[-1] if len(df) >= 10 else 0
+    close = df['Close'].iloc[-1]
+    vol_ratio = df['Volume'].iloc[-1] / (df['Volume'].rolling(20).mean().iloc[-1] if len(df) >= 20 else 1.0)
+    obv_diff = (np.sign(df['Close'].diff()) * df['Volume']).cumsum().diff(10).iloc[-1] if len(df) >= 10 else 0
     rs_spy = (df["Close"].pct_change(20).iloc[-1] - df.get("spy_close", df["Close"]).pct_change(20).iloc[-1]) if "spy_close" in df.columns else 0.0
     pos, neg = [], []
     if close > df['Close'].rolling(20).mean().iloc[-1] > df['Close'].rolling(50).mean().iloc[-1]: pos.append("מבנה מחיר שוורי.")
