@@ -1,8 +1,10 @@
 """
 ============================================================
-TRADING SCOUT PRO V5.2
+TRADING SCOUT PRO V5.5
 מודול משלים ל-Wyckoff Institutional Analyst - רדאר כסף חכם
 (רזה וממוקד, נשען לחלוטין על מנוע scout_core החכם)
+V5.3: הבטחת ברזל - rec/action לעולם לא יסתרו את synthesize_verdict
+V5.4-V5.5: ללא שינוי לוגי - גרסה תואמת ל-scout_core V17.4
 ============================================================
 """
 
@@ -106,6 +108,18 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
         action = "הסתברות נמוכה לאיסוף. מומנטום הכסף החכם שלילי. חפש נקודות יציאה טקטית."
 
     reason = f"הסתברות מוסדית של {accum_prob}% מצביעה על {rec} בפאזת {current_phase}."
+
+    # === הבטחת ברזל נוספת (Defense-in-Depth): rec לעולם לא יסתור את verdict ===
+    # אם הסינתזה הקשיחה (synthesize_verdict) קבעה AVOID/STRONG_AVOID - חוסמים BUY/STRONG BUY
+    # כאן באופן בלתי תלוי, גם אם לוגיקת ה-rec המקומית (מבוססת accum_prob/allowed) הגיעה למסקנה אחרת.
+    if verdict["tier"] in ("STRONG_AVOID", "AVOID") and rec in ("STRONG BUY", "BUY"):
+        old_rec = rec
+        rec = "STRONG SELL" if verdict["tier"] == "STRONG_AVOID" else "SELL"
+        action = (
+            f"⚠️ המלצה שונתה אוטומטית מ-{old_rec} ל-{rec}: הסינתזה הקשיחה (Wyckoff + פונדמנטלי) "
+            f"חוסמת קנייה במצב זה - '{verdict['headline']}'. {verdict['detail']}"
+        )
+        reason = f"המלצה מקורית ({old_rec}) נחסמה ע\"י הסינתזה הקשיחה בשל '{verdict['headline']}' בפאזת {current_phase}."
 
     # === תוכנית מסחר מדורגת ומלאה (3 רמות פירוט) ===
     # כניסה מדורגת: חצי עכשיו, חצי בפולבק קל
