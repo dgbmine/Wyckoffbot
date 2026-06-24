@@ -107,6 +107,61 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
 
     reason = f"הסתברות מוסדית של {accum_prob}% מצביעה על {rec} בפאזת {current_phase}."
 
+    # === תוכנית מסחר מדורגת ומלאה (3 רמות פירוט) ===
+    # כניסה מדורגת: חצי עכשיו, חצי בפולבק קל
+    entry_now = round(close_price, 2)
+    entry_pullback = round(close_price - atr * 0.8, 2)
+    # סטופ מדורג: סטופ ראשוני (טכני) + סטופ הדוק יותר אחרי TP1
+    stop_initial = round(stop_loss_price, 2)
+    stop_after_tp1 = entry_now  # break-even אחרי מימוש חלקי
+    # יעדי שחרור חלקי
+    tp1 = round(tp1_price, 2)   # שחרור 1/3
+    tp2 = round(tp2_price, 2)   # שחרור 1/3
+    tp3 = round(close_price + atr * 11, 2)  # יתרה - trailing
+    # גידור: רמת היפוך תזה
+    invalidation = round(close_price - atr * 2.5, 2)
+    # גודל פוזיציה מומלץ לפי ביטחון (אחוז מהתיק, סיכון מוגבל)
+    if rec == "STRONG BUY":
+        pos_size_pct, risk_note = 8.0, "ביטחון גבוה - אך לעולם לא לסכן יותר מ-1.5% מהתיק על העסקה."
+    elif rec == "BUY":
+        pos_size_pct, risk_note = 5.0, "ביטחון בינוני-גבוה - סכן עד 1% מהתיק על העסקה."
+    elif rec == "HOLD":
+        pos_size_pct, risk_note = 2.5, "פוזיציית בדיקה (Starter) קטנה בלבד עד לאישור טרנד."
+    else:
+        pos_size_pct, risk_note = 0.0, "אין כניסה ללונג במצב זה."
+
+    trade_plan = {
+        # רמה 1 - בסיסי (תאימות מלאה לשדות הישנים)
+        "basic": {
+            "entry": entry_now,
+            "stop": stop_initial,
+            "stop_pct": round(stop_loss_pct, 2),
+            "tp1": tp1, "tp1_pct": round(tp1_pct, 2),
+            "tp2": tp2, "tp2_pct": round(tp2_pct, 2),
+            "rr": rr_ratio,
+        },
+        # רמה 2 - מלא: כניסה/סטופ מדורגים, יעדי שחרור חלקי, גידור
+        "full": {
+            "entry_now": entry_now,
+            "entry_pullback": entry_pullback,
+            "stop_initial": stop_initial,
+            "stop_after_tp1": stop_after_tp1,
+            "tp1": tp1, "tp1_pct": round(tp1_pct, 2), "tp1_action": "שחרר 1/3 מהפוזיציה, העלה סטופ לנקודת הכניסה (Break-Even).",
+            "tp2": tp2, "tp2_pct": round(tp2_pct, 2), "tp2_action": "שחרר 1/3 נוסף, הפעל Trailing Stop על היתרה.",
+            "tp3": tp3, "tp3_pct": round(((tp3 - close_price) / close_price) * 100, 2), "tp3_action": "יתרה אחרונה - רכיבה על המגמה עם סטופ נגרר.",
+            "invalidation": invalidation,
+            "invalidation_note": f"אם המחיר נסגר מתחת ל-${invalidation} - התזה הופרה, צא במלואך.",
+            "rr": rr_ratio,
+            "timeframe": "5-20 ימי מסחר",
+        },
+        # רמה 3 - מלא + גודל פוזיציה
+        "sizing": {
+            "position_pct": pos_size_pct,
+            "risk_note": risk_note,
+            "max_loss_at_stop_pct": round(abs(stop_loss_pct), 2),
+        },
+    }
+
     return {
         "recommendation": rec,
         "current_phase": current_phase,
@@ -128,5 +183,7 @@ def get_trading_recommendation(ticker: str, mode: str = "Balanced") -> dict:
         "fundamental_traps": fundamental_traps,
         "replay": replay,
         "roadmap": roadmap,
-        "fundamental": fund_data
+        "fundamental": fund_data,
+        "trade_plan": trade_plan,
+        "verdict": verdict,
     }
