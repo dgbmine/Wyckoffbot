@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V16.8
+INSTITUTIONAL SCOUT PRO V17.0 (Unified UX / Hamburger / Price Headers)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -35,6 +35,450 @@ logging.basicConfig(
     format='{"time": "%(asctime)s", "level": "%(levelname)s", "msg": "%(message)s"}',
     stream=sys.stdout,
 )
+logger = logging.getLogger("scout")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.append(BASE_DIR)
+
+_CLOUD_RUN = (
+    os.environ.get("K_SERVICE") is not None
+    or os.environ.get("CLOUD_RUN", "").lower() == "true"
+)
+_TMP_ROOT = "/tmp/scout" if _CLOUD_RUN else BASE_DIR
+
+MODEL_DIR = os.path.join(_TMP_ROOT, "models")
+BATCH_CONFIG_FILE = os.path.join(MODEL_DIR, "batch_config.json")
+AUTO_TRAINER_STATUS_FILE = os.path.join(MODEL_DIR, "auto_trainer_status.json")
+AUTO_TRAINER_DONE_FLAG = os.path.join(MODEL_DIR, "auto_trainer.done")
+AUTO_TRAINER_PID_FILE = os.path.join(MODEL_DIR, "auto_trainer.pid")
+AUTO_TRAINER_STOP_FILE = os.path.join(MODEL_DIR, "auto_trainer.stop")
+AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
+
+AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
+
+SCOUT_CORE_IMPORT_ERROR: Optional[str] = None
+
+try:
+    from scout_core import (
+        clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
+        BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
+        calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple,
+        build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
+        detect_failure_risks, generate_replay_analogies, get_fundamental_data,
+        synthesize_verdict
+    )
+    SCOUT_CORE_AVAILABLE = True
+except Exception as _imp_exc1:
+    _first_error = f"{type(_imp_exc1).__name__}: {_imp_exc1}"
+    try:
+        from scout import (
+            clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
+            BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
+            calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple
+        )
+        def build_smart_money_dashboard(f): return {}
+        def generate_roadmap(p): return {"previous_phase":"-", "next_phase":"-", "action_plan":"", "what_if_success":"", "what_if_fail":""}
+        def calculate_wyckoff_probability(d, f, p, m, c): return {"accumulation_chance": c, "breakout_30d": 0, "distribution_risk": 0, "educational_note": ""}
+        def detect_failure_risks(d, f, p, a, al, t): return ["מערכת הגנה אינה זמינה במלואה."]
+        def generate_replay_analogies(t, p, a, f): return []
+        def get_fundamental_data(t): return {}
+        def synthesize_verdict(fd, c, p, t=""): return {"headline":"-","detail":"-","color":"#94a3b8","tier":"NEUTRAL"}
+        
+        SCOUT_CORE_AVAILABLE = True
+    except Exception as _imp_exc2:
+        SCOUT_CORE_AVAILABLE = False
+        SCOUT_CORE_IMPORT_ERROR = f"scout_core: {_first_error} | scout (fallback): {type(_imp_exc2).__name__}: {_imp_exc2}"
+        logger.warning("scout module not available: %s", SCOUT_CORE_IMPORT_ERROR)
+
+        def explain_score(df: pd.DataFrame, phase: str, cis: float) -> str:
+            return "מערכת ניתוח חסרה. טען את הקובץ המתאים."
+            
+        def explain_score_simple(df: pd.DataFrame, phase: str, cis: float, allowed: bool) -> str:
+            return "חסר מודול."
+            
+        def calculate_advanced_metrics(trades, initial_capital=100000.0):
+            return {}
+        
+        def calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04):
+            return {}
+
+        def synthesize_verdict(fd, c, p, t=""):
+            return {"headline": "מערכת סינתזה חסרה.", "detail": "-", "color": "#94a3b8", "tier": "NEUTRAL"}
+
+
+st.set_page_config(
+    layout="wide",
+    page_title="Wyckoff Institutional Analyst",
+    page_icon="📈",
+    initial_sidebar_state="expanded",
+)
+
+GROWTH_TICKERS = [
+    "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","CRM","NFLX",
+    "AMD","ADBE","CSCO","TXN","QCOM","INTC","INTU","ADI",
+    "PANW","CRWD","FTNT","ZS","DDOG","SNOW","MDB","NET","PLTR",
+    "UBER","ABNB","COIN","SOFI","UPST","ONTO","KLAC","LRCX","AMAT",
+    "MRVL","SMCI","DELL","HPQ","RBLX","U","TTWO","EA"
+]
+
+VALUE_TICKERS = [
+    "BRK-B","JPM","JNJ","V","UNH","PG","MA","HD","MRK","ABBV","PEP","KO",
+    "COST","WMT","LLY","TMO","MCD","ACN","BAC","ABT","DHR",
+    "HON","NKE","AMGN","PM","IBM","SBUX","GS","CAT","BA"
+]
+
+COMMODITIES_TICKERS = [
+    "XOM","CVX","SLB","EOG","OXY","COP","PSX","VLO","FCX","NEM",
+    "GOLD","AEM","WPM","FNV","PAAS","AG","GLD","SLV",
+    "HAL","BKR","DVN","FANG","CTRA","MRO"
+]
+
+SECTOR_MAP: Dict[str, List[str]] = {
+    "הכול (כל השוק האמריקאי)": sorted(list(set(GROWTH_TICKERS + VALUE_TICKERS + COMMODITIES_TICKERS))),
+    "צמיחה וטכנולוגיה (Growth)": GROWTH_TICKERS,
+    "ערך ומדד (Value/Index)": VALUE_TICKERS,
+    "סחורות ואנרגיה (Commodities)": COMMODITIES_TICKERS,
+}
+
+MIN_TRADES_FOR_VALID_MODEL = 10
+TRADES_FALLBACK_THRESHOLD = 35
+
+def ensure_dirs() -> None:
+    os.makedirs(MODEL_DIR, exist_ok=True)
+
+def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
+    ensure_dirs()
+    loaded: Dict[str, Dict[str, Any]] = {}
+    try:
+        for filename in os.listdir(MODEL_DIR):
+            if not (filename.startswith("model_") and filename.endswith(".pkl")):
+                continue
+            filepath = os.path.join(MODEL_DIR, filename)
+            try:
+                with open(filepath, "rb") as f:
+                    data = pickle.load(f)
+                slot = data.get("metadata", {}).get("slot") or filename.replace("model_", "").replace(".pkl", "")
+                loaded[str(slot)] = data
+            except Exception as exc:
+                logger.warning("Could not load model %s: %s", filename, exc)
+    except Exception:
+        pass
+    return loaded
+
+def render_explain_score(df: pd.DataFrame, phase: str, cis: float, expanded: bool = False) -> None:
+    expander_label = f"🔬 מידע למקצוענים - Evidence Ledger ונתונים גולמיים (CIS: {cis:.1f})"
+    with st.expander(expander_label, expanded=expanded):
+        try:
+            explanation_md = explain_score(df, phase, cis)
+            st.markdown(explanation_md)
+        except Exception as exc:
+            st.warning(f"לא ניתן לחשב הסבר: {exc}")
+
+def render_monitor_metrics(metrics: dict):
+    st.markdown("### 📊 ביצועי מסחר (מערכת Backtest כספית)")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("רווח נקי (Total Profit)", f"${metrics['total_profit']:,.2f}")
+    with col2:
+        st.metric("דרואו דאון מקסימלי (Max DD)", f"{metrics['max_drawdown']:.2f}%")
+    with col3:
+        st.metric("סה\"כ עסקאות (Total Trades)", metrics['total_trades'])
+        st.caption(f"✅ {metrics['winning_trades']} מרוויחות | ❌ {metrics['losing_trades']} מפסידות")
+    with col4:
+        st.metric("אישורי וואיקוף - אחוזי הצלחה", f"{metrics['wyckoff_success_rate']:.1f}%")
+    
+    if metrics.get('annual_pnl'):
+        st.markdown("#### 📅 דוח רווח/הפסד שנתי")
+        annual_df = pd.DataFrame([
+            {"שנה": str(year), "רווח/הפסד ($)": pnl}
+            for year, pnl in metrics['annual_pnl'].items()
+        ]).sort_values("שנה")
+        
+        def color_pnl(val):
+            color = '#16a34a' if val > 0 else '#dc2626'
+            return f'color: {color}'
+            
+        st.dataframe(annual_df.style.map(color_pnl, subset=['רווח/הפסד ($)']), use_container_width=True, hide_index=True)
+    else:
+        st.info("אין נתוני מסחר שנתיים להצגה.")
+
+def inject_css() -> None:
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&display=swap');
+    html, body, [class*="css"] {
+        font-family: 'IBM Plex Sans Hebrew', sans-serif;
+        direction: rtl; text-align: right; background: #0b1220; color: #d9e6f2;
+    }
+    .main-header {
+        padding: 1.2rem 1.6rem; border-radius: 22px;
+        background: linear-gradient(135deg, rgba(7,14,25,0.88), rgba(13,25,43,0.92));
+        box-shadow: 0 18px 44px rgba(0,0,0,.28); margin-bottom: 1.5rem;
+        border: 1px solid rgba(125,155,190,0.18);
+    }
+    .main-header h1 { margin: 0; font-size: 2.2rem; color: #eaf4ff; font-weight: 700; }
+    .main-header p { color: #9db0c9; font-size: 1.1rem; margin-top: 5px; }
+    
+    [data-testid="stMetric"] {
+        background: rgba(15, 23, 42, 0.95) !important;
+        border: 1px solid rgba(56, 189, 248, 0.3) !important;
+        border-radius: 12px;
+        padding: 1.2rem;
+    }
+    [data-testid="stMetricValue"] { color: #38bdf8 !important; font-weight: 700 !important; }
+    [data-testid="stMetricLabel"] { color: #f1f5f9 !important; font-weight: 500 !important; }
+    [data-testid="stMetricDelta"] { color: #34d399 !important; }
+    
+    /* ======== Trading Scout Premium Cards ======== */
+    .scout-wrapper {
+        width: 100%;
+        margin-bottom: 40px; 
+    }
+    .scout-card {
+        background: linear-gradient(145deg, rgba(16, 24, 48, 0.95), rgba(28, 40, 68, 0.98));
+        border: 1px solid rgba(56, 189, 248, 0.28);
+        border-radius: 22px;
+        padding: 32px 28px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+        transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+        position: relative;
+        overflow: hidden;
+    }
+    .scout-card::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; height: 5px;
+        background: linear-gradient(90deg, transparent, #38bdf8, transparent);
+        opacity: 0.85;
+    }
+    .scout-card:hover {
+        transform: translateY(-4px);
+        border-color: rgba(56, 189, 248, 0.7);
+        box-shadow: 0 20px 55px rgba(0, 0, 0, 0.45);
+    }
+    .scout-header {
+        display: flex; justify-content: space-between; align-items: center; 
+        margin-bottom: 24px;
+    }
+    .scout-title { 
+        color: #f8fafc; font-size: 2rem; font-weight: 800; 
+        margin: 0; letter-spacing: 0.5px; display: flex; align-items: center;
+    }
+    .scout-title-sub { font-size: 1.1rem; color: #94a3b8; font-weight: 400; padding-right: 12px; }
+    .scout-badge {
+        padding: 8px 20px; border-radius: 30px; 
+        font-size: 1rem; font-weight: 700; letter-spacing: 0.5px;
+        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
+    }
+    .scout-prob-container { text-align: center; margin-bottom: 20px; }
+    .scout-prob-label { margin:0; color:#cbd5e1; font-weight: 600; letter-spacing: 1.5px; font-size: 1rem; text-transform: uppercase; }
+    .scout-prob { 
+        font-size: 4.8rem; font-weight: 800; color: #38bdf8; 
+        margin: 10px 0 16px 0; line-height: 1;
+        text-shadow: 0 0 35px rgba(56,189,248,0.45); 
+    }
+    .scout-phase-pill {
+        display: inline-block; background: rgba(0,0,0,0.35); padding: 10px 20px; 
+        border-radius: 25px; border: 1px solid rgba(255,255,255,0.08);
+    }
+    
+    /* ======== Roadmap In-Card ======== */
+    .roadmap-box {
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 14px;
+        padding: 22px 28px;
+        margin-top: 24px;
+        margin-bottom: 14px;
+        border-right: 3px solid #38bdf8;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 28px;
+        font-size: 1rem;
+        color: #94a3b8;
+        flex-wrap: wrap;
+    }
+    .roadmap-step {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+    }
+    .roadmap-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; color: #64748b; }
+    .roadmap-value { font-weight: 600; color: #f8fafc; font-size: 1.02rem; }
+    .roadmap-arrow { color: #475569; font-size: 1.3rem; font-weight: bold; }
+    
+    .scout-divider {
+        border-top: 1px solid rgba(255,255,255,0.08); margin: 28px 0;
+    }
+    
+    /* ======== Stacked Vertical Layout for Sections ======== */
+    .scout-stats-grid { 
+        display: flex; 
+        flex-direction: column; /* CHANGED FROM ROW TO COLUMN */
+        gap: 24px; 
+        margin-bottom: 24px; 
+    }
+    .scout-stat-box {
+        flex: 1; background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 16px; padding: 22px; display: flex; flex-direction: column;
+    }
+    .scout-section-title {
+        color: #e0f2fe; font-size: 1.15rem; font-weight: 700; 
+        margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
+    }
+    .scout-list-item {
+        font-size: 1.05rem; color: #cbd5e1; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;
+    }
+    .scout-alert-box {
+        padding: 20px 24px; border-radius: 14px; margin-top: 24px;
+        border-right: 5px solid #dc2626; background: rgba(220, 38, 38, 0.08);
+    }
+    .scout-alert-title { font-size: 1.1rem; color:#f8fafc; font-weight:bold; margin-bottom:12px; display:block; }
+    .scout-alert-text { font-size: 0.95rem; display:block; color:#cbd5e1; line-height: 1.6; margin-bottom: 6px; }
+    .trap-section-label {
+        font-size: 0.85rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.5px; margin: 14px 0 8px 0; display: block;
+    }
+    .trap-fund-highlight {
+        background: rgba(239, 68, 68, 0.12);
+        border-right: 3px solid #ef4444;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-weight: 600;
+        color: #fecaca !important;
+    }
+    
+    .edu-box {
+        background: rgba(56, 189, 248, 0.05);
+        border-right: 4px solid #38bdf8;
+        padding: 16px;
+        margin-top: 20px;
+        border-radius: 8px;
+        font-size: 0.95rem;
+        color: #e2e8f0;
+        line-height: 1.7;
+        flex-grow: 1; 
+    }
+    .edu-box-title {
+        color:#38bdf8; 
+        font-weight: 700;
+        display:block; 
+        margin-bottom:10px;
+        font-size: 1.05rem;
+    }
+
+    /* ======== Fundamental Analysis Screen ======== */
+    .fund-card {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 18px;
+        padding: 28px 30px;
+        margin-bottom: 22px;
+    }
+    .fund-verdict-box {
+        text-align: center;
+        border-radius: 18px;
+        padding: 26px;
+        margin-bottom: 22px;
+        border: 1px solid rgba(255,255,255,0.08);
+    }
+    .fund-verdict-label { font-size: 1rem; color: #94a3b8; margin-bottom: 6px; }
+    .fund-verdict-value { font-size: 2.4rem; font-weight: 800; letter-spacing: 0.5px; }
+    .fund-verdict-sub { font-size: 0.95rem; color: #cbd5e1; margin-top: 8px; }
+    .fund-synth-box {
+        background: rgba(56, 189, 248, 0.06);
+        border-right: 4px solid #38bdf8;
+        border-radius: 12px;
+        padding: 18px 22px;
+        margin-bottom: 22px;
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #f8fafc;
+    }
+    .fund-meta-row {
+        display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 22px;
+    }
+    .fund-meta-box {
+        flex: 1; min-width: 220px;
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 14px; padding: 18px 20px;
+    }
+    .fund-meta-label { font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; }
+    .fund-meta-value { font-size: 1.2rem; font-weight: 700; color: #f8fafc; }
+    .fund-table-title {
+        color: #e0f2fe; font-size: 1.15rem; font-weight: 700;
+        margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
+    }
+
+    /* ======== Institutional Map Visual Layout ======== */
+    .map-card {
+        background: linear-gradient(180deg, rgba(16, 24, 45, 0.95) 0%, rgba(12, 18, 36, 0.6) 100%);
+        padding: 32px 26px; border-radius: 20px; text-align: center;
+        box-shadow: 0 8px 30px rgba(0,0,0,0.3); margin-bottom: 30px;
+        border: 1px solid rgba(255,255,255,0.08);
+        transition: transform 0.25s ease, background 0.25s ease, border-color 0.25s ease;
+    }
+    .map-card:hover {
+        transform: translateY(-5px); border-color: rgba(56, 189, 248, 0.5);
+        background: linear-gradient(180deg, rgba(22, 36, 62, 0.98) 0%, rgba(12, 18, 36, 0.7) 100%);
+    }
+    .map-card h4 { margin:0; font-size:1.4rem; color:#f8fafc; font-weight:700; letter-spacing: 0.5px; }
+    .map-card-label { font-size:1rem; color:#94a3b8; margin: 12px 0 6px 0; font-weight:600; text-transform: uppercase; letter-spacing: 1px; }
+    .map-card-score { margin:0; font-size: 3.4rem; font-weight:800; line-height: 1.1; }
+    .map-desc {
+        font-size: 0.95rem; color: #cbd5e1; margin-top: 20px; line-height: 1.6; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,0.15);
+    }
+    /* ======== Top Navigation Bar (persistent hamburger, top-right) ======== */
+    .topnav-spacer { height: 8px; }
+    div[data-testid="stHorizontalBlock"] .nav-btn-wrap button {
+        background: rgba(255,255,255,0.04) !important;
+        border: 1px solid rgba(56,189,248,0.18) !important;
+        color: #cbd5e1 !important;
+        border-radius: 12px !important;
+        font-weight: 600 !important;
+    }
+
+    /* ======== Price + Timestamp Header (appears next to every ticker) ======== */
+    .price-header {
+        display: inline-flex; flex-direction: column; align-items: flex-start;
+        background: linear-gradient(145deg, rgba(30,41,59,0.7), rgba(15,23,42,0.92));
+        padding: 10px 22px; border-radius: 14px; margin: 6px 0 14px 0;
+        border: 1px solid rgba(56, 189, 248, 0.22);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.22);
+    }
+    .price-header .ph-ticker { font-size: 0.95rem; color: #94a3b8; font-weight: 600; }
+    .price-header .ph-price  { font-size: 1.9rem; color: #f8fafc; font-weight: 800; line-height: 1.1; }
+    .price-header .ph-time   { font-size: 0.78rem; color: #64748b; margin-top: 2px; }
+    .price-header .ph-chg-pos { color: #34d399; font-weight: 700; font-size: 1rem; }
+    .price-header .ph-chg-neg { color: #f87171; font-weight: 700; font-size: 1rem; }
+
+    /* ======== Unified Verdict Banner (Wyckoff + Fundamental in one) ======== */
+    .verdict-banner {
+        border-radius: 18px; padding: 22px 26px; margin: 8px 0 20px 0;
+        border: 1px solid rgba(255,255,255,0.08);
+        display: flex; flex-direction: column; gap: 8px;
+    }
+    .verdict-headline { font-size: 1.55rem; font-weight: 800; letter-spacing: 0.3px; }
+    .verdict-detail { font-size: 1rem; color: #e2e8f0; line-height: 1.6; }
+    .verdict-chips { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+    .verdict-chip {
+        background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 20px; padding: 6px 16px; font-size: 0.9rem; color: #cbd5e1; font-weight: 600;
+    }
+    .reason-box {
+        background: rgba(56, 189, 248, 0.05); border-right: 4px solid #38bdf8;
+        border-radius: 10px; padding: 14px 18px; margin: 6px 0 18px 0;
+        font-size: 0.98rem; color: #e2e8f0; line-height: 1.7;
+    }
+    </style>""", unsafe_allow_html=True)
+
+@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
+def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = )
 logger = logging.getLogger("scout")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
