@@ -1,6 +1,7 @@
 """
 ============================================================
-SCOUT CORE V16.7 — WYCKOFF INSTITUTIONAL ENGINE
+SCOUT CORE V17.4 — WYCKOFF INSTITUTIONAL ENGINE
+(Zero-Softening Risk Language - No Conditional Hedging in Danger Tiers)
 ============================================================
 """
 
@@ -261,7 +262,36 @@ def get_fundamental_data(ticker: str) -> dict:
             elif pe_for_valuation > bench["pe_exp"]:
                 valuation, color = "יקר", "#ef4444"
 
+        # ---------- תיקון קיצון (Ackman priority): מכפיל הרווח קובע ראשית, ----------
+        # ---------- שאר המרכיבים מתקנים *רק* במקרי קיצון בולטים. ----------
+        valuation_override_note = None
+        if valuation == "זול":
+            extreme_red = (
+                (net_debt_ebitda is not None and net_debt_ebitda > 4.0)
+                or (fcf_yield <= 0)
+                or (peg and peg > 3.0)
+            )
+            if extreme_red:
+                valuation, color = "הוגן", "#eab308"
+                flag = (f"מינוף קיצוני ({net_debt_ebitda:.1f}x)" if (net_debt_ebitda is not None and net_debt_ebitda > 4.0)
+                        else ("תזרים חופשי שלילי/אפסי" if fcf_yield <= 0 else f"PEG קיצוני ({peg:.2f})"))
+                valuation_override_note = f"מכפיל הרווח מצביע על 'זול', אך {flag} מהווה דגל אדום קיצוני - התמחור תוקן ל'הוגן' כאזהרה."
+        elif valuation == "יקר":
+            extreme_green = (
+                fcf_yield >= 6.0
+                and op_margin and op_margin > bench["om"] * 1.3
+                and (net_debt_ebitda is not None and net_debt_ebitda < 1.0)
+            )
+            if extreme_green:
+                valuation, color = "הוגן", "#eab308"
+                valuation_override_note = (
+                    f"מכפיל הרווח מצביע על 'יקר', אך שילוב קיצוני של תזרים חופשי גבוה ({fcf_yield:.1f}%), "
+                    f"שוליים גבוהים משמעותית מהסקטור ומאזן נטול מינוף מצדיק תיקון ל'הוגן' (פרמיית איכות)."
+                )
+
         reasons = []
+        if valuation_override_note:
+            reasons.append(valuation_override_note)
         if pe_for_valuation:
             tag = "עתידי" if pe_forward else "נוכחי (מחושב)"
             if pe_for_valuation < bench["pe_cheap"]:
@@ -377,6 +407,7 @@ def get_fundamental_data(ticker: str) -> dict:
             "rev_growth": f"{rev_growth:.1f}%" if rev_growth else "N/A",
             "net_debt_ebitda": f"{net_debt_ebitda:.2f}x" if net_debt_ebitda is not None else "N/A",
             "valuation_reason": valuation_reason,
+            "valuation_override": valuation_override_note,
             "explanations": explanations,
             "computed": True,
             "_raw": {
@@ -442,17 +473,15 @@ def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = No
     return "".join(parts)
 
 
-def synthesize_verdict(fund_data: dict, cis_score: float, current_phase: str, ticker: str = "") -> dict:
-    """
-    סינתזה קשיחה ודטרמיניסטית בין Wyckoff (טכני) לפונדמנטלי.
-    מחזירה מסר *אחד* חד-משמעי ללא סתירות, עם דירוג ביטחון וצבע.
-    זוהי נקודת האמת היחידה לסינתזה בכל המערכת (Home / Fundamental / Trading Scout).
-    """
+def _synthesize_verdict_core(fund_data: dict, cis_score: float, current_phase: str, ticker: str = "") -> dict:
+    """ליבת הסינתזה (ראו synthesize_verdict לעטיפת הבטחון הקשיחה הנוספת)."""
     if not fund_data or not fund_data.get("valuation"):
         return {
             "headline": "⚖️ נתונים פונדמנטליים חסרים",
             "detail": "לא נמצאו נתונים פונדמנטליים מספיקים. ההחלטה מתבססת על Wyckoff בלבד.",
             "color": "#94a3b8", "tier": "NEUTRAL",
+            "action_line": "המתן לנתונים מלאים לפני קבלת החלטה.",
+            "confidence": "נמוך",
         }
 
     val = fund_data.get("valuation", "הוגן")
@@ -479,11 +508,15 @@ def synthesize_verdict(fund_data: dict, cis_score: float, current_phase: str, ti
             return {"headline": "☠️ מלכודת ערך רעילה (Toxic Value Trap)",
                     "detail": f"הפאזה הטכנית '{current_phase}' שלילית והכסף החכם נוטש, "
                               f"בשילוב חולשה תזרימית/מינוף גבוה בליבת העסק מול סקטור ה{sector_he}. סכין נופלת — התרחק.",
-                    "color": "#ef4444", "tier": "STRONG_AVOID"}
+                    "color": "#ef4444", "tier": "STRONG_AVOID",
+                    "action_line": "אל תיגע. אם יש לך פוזיציה — צא ממנה. אין כאן הזדמנות, יש מלכודת מסוכנת.",
+                    "confidence": "גבוה"}
         return {"headline": "🚨 סכין נופלת (Falling Knife)",
                 "detail": f"הנתונים היבשים סבירים, אך הפאזה '{current_phase}' מצביעה על פיזור מוסדי אגרסיבי. "
                           f"מלכודת ערך קלאסית — אל תתפוס תחתיות.",
-                "color": "#ef4444", "tier": "AVOID"}
+                "color": "#ef4444", "tier": "AVOID",
+                "action_line": "אל תתפוס תחתיות. המתן לבלימה ולסימני איסוף לפני כל מחשבה על כניסה.",
+                "confidence": "גבוה"}
 
     # 2. שורי + ציון גבוה → הכרעה לפי איכות פונדמנטלית
     if is_bullish_phase and cis_score >= 65:
@@ -491,34 +524,148 @@ def synthesize_verdict(fund_data: dict, cis_score: float, current_phase: str, ti
             return {"headline": "🔥 שכנוע גבוה (High Conviction)",
                     "detail": f"שילוב אידיאלי: תזרים בריא ({fund_data.get('fcf_yield','-')}), יעילות מעל הסקטור, "
                               f"ואיסוף מוסדי מובהק בפאזה '{current_phase}'. פוזיציית לונג איכותית.",
-                    "color": "#16a34a", "tier": "STRONG_BUY"}
+                    "color": "#16a34a", "tier": "STRONG_BUY",
+                    "action_line": "זו ההזדמנות. כניסה מועדפת לפי תוכנית הסיכונים — הטכני והפונדמנטלי מיושרים.",
+                    "confidence": "גבוה"}
         if val == "יקר" and strong_cash:
             return {"headline": "🚀 פרמיית איכות (Quality Premium)",
                     "detail": f"המוסדיים משלמים פרמיה על {ticker} בזכות הנהלה שמדפיסה מזומן ומכה את הסקטור. "
                               f"הטרנד נתמך — יקר אך מוצדק.",
-                    "color": "#4ade80", "tier": "BUY"}
+                    "color": "#4ade80", "tier": "BUY",
+                    "action_line": "כניסה אפשרית — אך זכור שאתה משלם פרמיה. נהל סטופ הדוק.",
+                    "confidence": "בינוני-גבוה"}
         if high_debt or not strong_cash:
             return {"headline": "⚠️ ספקולציית מומנטום",
                     "detail": f"קיים איסוף מוסדי, אך חולשה במאזן/תזרים מעידה על מהלך טכני ספקולטיבי. "
                               f"סיכון גבוה להחזקה ארוכה — נהל בקפדנות.",
-                    "color": "#facc15", "tier": "HOLD"}
+                    "color": "#facc15", "tier": "HOLD",
+                    "action_line": "אם נכנסת — זו עסקה טקטית קצרה בלבד, לא החזקה. סטופ קצר וחובה.",
+                    "confidence": "בינוני"}
         return {"headline": "✅ קנייה (Buy)",
                 "detail": f"איסוף מוסדי בפאזה חיובית '{current_phase}' עם תמחור {val}. שילוב תומך כניסה.",
-                "color": "#4ade80", "tier": "BUY"}
+                "color": "#4ade80", "tier": "BUY",
+                "action_line": "כניסה לפי תוכנית — השילוב תומך, אך לא חף מסיכון. נהל סיכונים.",
+                "confidence": "בינוני-גבוה"}
 
     # 3. אזור ביניים — איסוף שקט / כסף מת
     if cis_score >= 55 and strong_cash:
         return {"headline": "⚖️ איסוף שקט (Quiet Accumulation)",
                 "detail": f"{ticker} מדפיסה מזומן ונאספת בהדרגה מתחת לרדאר. "
                           f"המתנה לאישור פריצה (Phase D) לפני כניסה אגרסיבית.",
-                "color": "#eab308", "tier": "WATCH"}
+                "color": "#eab308", "tier": "WATCH",
+                "action_line": "שים ברשימת מעקב. המתן לפריצה (Phase D) כאות כניסה — עדיין מוקדם.",
+                "confidence": "בינוני"}
     if is_uncertain:
         return {"headline": "🔍 שלב מעבר (Transition)",
                 "detail": f"הפאזה הטכנית אינה חד-משמעית. תמחור {val}, אך אין עדיין טביעת אצבע מוסדית ברורה. המתן.",
-                "color": "#94a3b8", "tier": "NEUTRAL"}
+                "color": "#94a3b8", "tier": "NEUTRAL",
+                "action_line": "השוק מבולבל כאן. אל תפעל — חכה שהמבנה יתבהר.",
+                "confidence": "נמוך"}
     return {"headline": "💤 כסף מת (Dead Money)",
             "detail": f"חוסר קצה פונדמנטלי וטכני ביחס למתחרות בסקטור ה{sector_he}. תמחור {val} ללא זרז מוסדי.",
-            "color": "#94a3b8", "tier": "NEUTRAL"}
+            "color": "#94a3b8", "tier": "NEUTRAL",
+            "action_line": "אין כאן יתרון. הון מושקע כאן הוא הון מבוזבז — חפש הזדמנות אחרת.",
+            "confidence": "בינוני"}
+
+
+# רשימת מילות-מפתח דוביות/מלכודת-ערך - מקור אמת יחיד לבדיקת הבטחון הקשיח למטה
+_BEARISH_PHASE_KEYWORDS = ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax", "Supply"]
+_VALUE_TRAP_KEYWORDS = ["Toxic Value Trap", "Falling Knife", "סכין נופלת", "מלכודת ערך"]
+_FORBIDDEN_TIERS_IN_BEARISH = ("STRONG_BUY", "BUY")
+
+
+def synthesize_verdict(fund_data: dict, cis_score: float, current_phase: str, ticker: str = "") -> dict:
+    """
+    סינתזה קשיחה ודטרמיניסטית בין Wyckoff (טכני) לפונדמנטלי.
+    מחזירה מסר *אחד* חד-משמעי ללא סתירות, עם דירוג ביטחון וצבע.
+    זוהי נקודת האמת היחידה לסינתזה בכל המערכת (Home / Fundamental / Trading Scout).
+
+    הבטחת ברזל (Defense-in-Depth): מעבר להיררכיית ההכרעה הפנימית ב-_synthesize_verdict_core
+    (שכבר אינה יכולה להחזיר BUY/STRONG_BUY בפאזה דובית), שכבה זו מהווה בדיקת בטיחות נוספת,
+    בלתי תלויה, שמבטלת לחלוטין כל אפשרות שמסקנה תכלול BUY/STRONG_BUY/High Conviction
+    כאשר הפאזה הטכנית דובית או כאשר אותרה מלכודת ערך - ללא יוצא מן הכלל.
+    """
+    verdict = _synthesize_verdict_core(fund_data, cis_score, current_phase, ticker)
+
+    is_bearish_phase = any(p in (current_phase or "") for p in _BEARISH_PHASE_KEYWORDS)
+    is_value_trap_headline = any(k in verdict.get("headline", "") for k in _VALUE_TRAP_KEYWORDS)
+
+    if (is_bearish_phase or is_value_trap_headline) and verdict.get("tier") in _FORBIDDEN_TIERS_IN_BEARISH:
+        # מצב שלא צריך להתרחש לפי הלוגיקה הקיימת - אך אם קרה, התיקון הוא חד-משמעי ומיידי.
+        logger.warning(
+            "synthesize_verdict: hard guard triggered - blocked %s tier for %s in bearish phase '%s'.",
+            verdict.get("tier"), ticker, current_phase
+        )
+        verdict = {
+            "headline": "🚨 סכין נופלת (Falling Knife) — נחסם אוטומטית",
+            "detail": (
+                f"זוהתה פאזה טכנית דובית ('{current_phase}') עבור {ticker}. המערכת חוסמת באופן מוחלט "
+                f"כל המלצת קנייה במצב זה, ללא יוצא מן הכלל, גם אם נתונים פונדמנטליים אחרים נראו חיוביים."
+            ),
+            "color": "#ef4444", "tier": "AVOID",
+            "action_line": "אל תתפוס תחתיות. המתן לבלימה ולסימני איסוף מוסדי מאומתים לפני כל כניסה.",
+            "confidence": "גבוה",
+        }
+
+    return verdict
+
+
+def render_verdict_banner_html(verdict: dict, ticker: str = "", cis_score: float = None,
+                               current_phase: str = "", valuation: str = None,
+                               valuation_color: str = "#94a3b8", extra_chips: list = None) -> str:
+    """
+    רכיב 'שורה תחתונה' אחיד — נקודת האמת הוויזואלית היחידה בכל המערכת.
+    מחזיר HTML מוכן (ללא תלות ב-Streamlit). מבנה היררכי:
+    שורה תחתונה בולטת → פקודת פעולה → הסבר → צ'יפים (drill-down קצר).
+
+    אסרטיביות: בפאזות סיכון (STRONG_AVOID/AVOID) הבאנר מקבל הדגשה ויזואלית חזקה
+    משמעותית יותר (פס הדגשה עבה, תג סיכון בוהק) - האזהרה חייבת להיות בלתי ניתנת לפספוס.
+    """
+    color = verdict.get("color", "#94a3b8")
+    headline = verdict.get("headline", "-")
+    detail = verdict.get("detail", "")
+    action_line = verdict.get("action_line", "")
+    confidence = verdict.get("confidence", "")
+    tier = verdict.get("tier", "")
+    is_danger = tier in ("STRONG_AVOID", "AVOID")
+
+    chips = []
+    if valuation:
+        chips.append(f"<span class='vb-chip'>תמחור <b style='color:{valuation_color}'>{valuation}</b></span>")
+    if current_phase:
+        chips.append(f"<span class='vb-chip'>Wyckoff <b>{current_phase}</b></span>")
+    if cis_score is not None:
+        chips.append(f"<span class='vb-chip'>ציון מוסדי <b>{cis_score:.0f}</b></span>")
+    if confidence:
+        chips.append(f"<span class='vb-chip'>ביטחון <b>{confidence}</b></span>")
+    if extra_chips:
+        for c in extra_chips:
+            chips.append(f"<span class='vb-chip'>{c}</span>")
+    if is_danger:
+        chips.insert(0, "<span class='vb-chip' style='background:rgba(239,68,68,0.18); color:#fecaca; border-color:rgba(239,68,68,0.4); font-weight:800;'>⚠️ סיכון גבוה - הימנע</span>")
+    chips_html = "".join(chips)
+
+    action_weight = "800" if is_danger else "700"
+    action_size = "1.12rem" if is_danger else "1.05rem"
+    action_html = (
+        f"<div class='vb-action' style='color:{color}; font-weight:{action_weight}; font-size:{action_size};'>▸ {action_line}</div>"
+        if action_line else ""
+    )
+    ticker_html = (f"<span class='vb-ticker'>{ticker}</span>" if ticker else "")
+    accent_width = "9px" if is_danger else "6px"
+    banner_shadow = f"0 0 0 1px {color}55, 0 14px 36px rgba(0,0,0,0.4)" if is_danger else ""
+    extra_style = f" box-shadow:{banner_shadow};" if is_danger else ""
+
+    return (
+        f"<div class='verdict-banner' style='--vb-color:{color};{extra_style}'>"
+        f"<div class='vb-accent' style='width:{accent_width}; flex:0 0 {accent_width};'></div>"
+        f"<div class='vb-body'>"
+        f"<div class='vb-top'>{ticker_html}<div class='vb-headline' style='color:{color};'>{headline}</div></div>"
+        f"{action_html}"
+        f"<div class='vb-detail'>{detail}</div>"
+        f"<div class='vb-chips'>{chips_html}</div>"
+        f"</div></div>"
+    )
 
 def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) -> dict:
     if not trades:
@@ -1254,11 +1401,17 @@ def build_smart_money_dashboard(factors: pd.DataFrame) -> dict:
     stopping_vol = _extract_last(factors, 'f_stopping_volume')
 
     return {
-        "OBV Velocity": "✅ כניסה אגרסיבית" if obv_vel > 0.02 else ("❌ יציאת הון" if obv_vel < -0.02 else "⚠️ נייטרלי / מעורב"),
-        "Price Structure": "✅ שבירת מבנה (BOS)" if struct_break > 0 else "❌ דשדוש או ירידה",
-        "Supply Absorption": "✅ ספיגה עמוקה" if absorption > 1.2 else "⚠️ אין ספיגה משמעותית",
-        "Relative Strength": "✅ מוביל על השוק" if rs_spy > 0 else "❌ מפגר אחרי השוק",
-        "Volume Anomalies": "✅ בלימת מחזורים" if stopping_vol > 0 else "⚠️ מחזורים שגרתיים"
+        "OBV Velocity": (f"✅ כניסה אגרסיבית ({obv_vel:+.2f})" if obv_vel > 0.02 else
+                         (f"❌ יציאת הון ({obv_vel:+.2f})" if obv_vel < -0.02 else
+                          f"⚠️ נייטרלי / מעורב ({obv_vel:+.2f})")),
+        "Price Structure": (f"✅ שבירת מבנה (BOS, ציון {struct_break:+.2f})" if struct_break > 0 else
+                            f"❌ דשדוש או ירידה (ציון {struct_break:+.2f})"),
+        "Supply Absorption": (f"✅ ספיגה עמוקה (יחס {absorption:.2f})" if absorption > 1.2 else
+                              f"⚠️ אין ספיגה משמעותית (יחס {absorption:.2f})"),
+        "Relative Strength": (f"✅ מוביל על השוק ({rs_spy:+.1%})" if rs_spy > 0 else
+                              f"❌ מפגר אחרי השוק ({rs_spy:+.1%})"),
+        "Volume Anomalies": (f"✅ בלימת מחזורים (ציון {stopping_vol:.2f})" if stopping_vol > 0 else
+                            f"⚠️ מחזורים שגרתיים (ציון {stopping_vol:.2f})")
     }
 
 def generate_roadmap(current_phase: str) -> dict:
@@ -1512,6 +1665,8 @@ def scan_top_opportunities(tickers: list, top_n: int = 5, mode: str = "Balanced"
                 "sector_he": fdata.get("sector_he", ""),
                 "headline": verdict.get("headline", ""),
                 "detail": verdict.get("detail", ""),
+                "action_line": verdict.get("action_line", ""),
+                "confidence": verdict.get("confidence", ""),
                 "tier": verdict.get("tier", ""),
                 "color": verdict.get("color", "#16a34a"),
                 "composite": composite,
@@ -1533,7 +1688,7 @@ _REQUIRED_EXPORTS = [
     "build_smart_money_dashboard", "generate_roadmap", "calculate_wyckoff_probability",
     "detect_failure_risks", "generate_replay_analogies", "get_fundamental_data", "_extract_last",
     "synthesize_verdict",
-    "build_fundamental_narrative", "scan_top_opportunities",
+    "build_fundamental_narrative", "scan_top_opportunities", "render_verdict_banner_html",
 ]
 _missing_exports = [name for name in _REQUIRED_EXPORTS if name not in globals()]
 if _missing_exports:
