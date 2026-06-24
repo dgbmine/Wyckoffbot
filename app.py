@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V17.0 (Unified UX / Hamburger / Price Headers)
+INSTITUTIONAL SCOUT PRO V17.4 (Banner-First on Home Fixed + Deep-Dive Expander + Wider Whitespace)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -66,7 +66,7 @@ try:
         calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple,
         build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
         detect_failure_risks, generate_replay_analogies, get_fundamental_data,
-        synthesize_verdict, build_fundamental_narrative, scan_top_opportunities
+        synthesize_verdict, build_fundamental_narrative, scan_top_opportunities, render_verdict_banner_html
     )
     SCOUT_CORE_AVAILABLE = True
 except Exception as _imp_exc1:
@@ -86,6 +86,7 @@ except Exception as _imp_exc1:
         def synthesize_verdict(fd, c, p, t=""): return {"headline":"-","detail":"-","color":"#94a3b8","tier":"NEUTRAL"}
         def build_fundamental_narrative(fd, t, v=None): return "מודול ניתוח חסר."
         def scan_top_opportunities(tickers, top_n=5, mode="Balanced"): return []
+        def render_verdict_banner_html(v, ticker="", cis_score=None, current_phase="", valuation=None, valuation_color="#94a3b8", extra_chips=None): return ""
         
         SCOUT_CORE_AVAILABLE = True
     except Exception as _imp_exc2:
@@ -113,6 +114,9 @@ except Exception as _imp_exc1:
 
         def scan_top_opportunities(tickers, top_n=5, mode="Balanced"):
             return []
+
+        def render_verdict_banner_html(v, ticker="", cis_score=None, current_phase="", valuation=None, valuation_color="#94a3b8", extra_chips=None):
+            return ""
 
 
 st.set_page_config(
@@ -215,311 +219,291 @@ def render_monitor_metrics(metrics: dict):
 def inject_css() -> None:
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+
+    /* ============================================================
+       INSTITUTIONAL MINIMALIST DESIGN SYSTEM (V17.1)
+       Palette: deep navy canvas, single cyan accent, semantic RGB
+       ============================================================ */
+    :root {
+        --bg-0: #0a0e1a;          /* canvas */
+        --bg-1: #0f1626;          /* surface */
+        --bg-2: #151d30;          /* raised surface */
+        --bg-3: #1c2640;          /* hover / active */
+        --line: rgba(148,163,184,0.12);
+        --line-strong: rgba(148,163,184,0.20);
+        --txt-1: #e8eef7;         /* primary text */
+        --txt-2: #9fb0c8;         /* secondary */
+        --txt-3: #64748b;         /* muted */
+        --accent: #38bdf8;        /* single brand accent */
+        --pos: #22c55e;
+        --pos-soft: #4ade80;
+        --neg: #ef4444;
+        --warn: #eab308;
+        --warn-soft: #facc15;
+        --radius: 16px;
+        --radius-lg: 22px;
+        --shadow: 0 10px 40px rgba(0,0,0,0.35);
+    }
+
     html, body, [class*="css"] {
-        font-family: 'IBM Plex Sans Hebrew', sans-serif;
-        direction: rtl; text-align: right; background: #0b1220; color: #d9e6f2;
+        font-family: 'IBM Plex Sans Hebrew', 'Inter', sans-serif;
+        direction: rtl; text-align: right;
+        background: var(--bg-0); color: var(--txt-1);
+        letter-spacing: 0.1px;
     }
+    .block-container { padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1180px; }
+
+    /* generous whitespace between stacked blocks */
+    .element-container { margin-bottom: 2px; }
+
+    h1,h2,h3,h4 { letter-spacing: -0.2px; }
+    hr { border-color: var(--line) !important; }
+
+    /* ---------- Header ---------- */
     .main-header {
-        padding: 1.2rem 1.6rem; border-radius: 22px;
-        background: linear-gradient(135deg, rgba(7,14,25,0.88), rgba(13,25,43,0.92));
-        box-shadow: 0 18px 44px rgba(0,0,0,.28); margin-bottom: 1.5rem;
-        border: 1px solid rgba(125,155,190,0.18);
+        padding: 1.3rem 1.7rem; border-radius: var(--radius-lg);
+        background:
+            radial-gradient(120% 140% at 100% 0%, rgba(56,189,248,0.10), transparent 55%),
+            linear-gradient(135deg, rgba(10,16,28,0.92), rgba(15,22,40,0.96));
+        box-shadow: var(--shadow); margin-bottom: 0;
+        border: 1px solid var(--line);
     }
-    .main-header h1 { margin: 0; font-size: 2.2rem; color: #eaf4ff; font-weight: 700; }
-    .main-header p { color: #9db0c9; font-size: 1.1rem; margin-top: 5px; }
-    
+    .main-header h1 { margin: 0; font-size: 1.9rem; color: var(--txt-1); font-weight: 800; }
+    .main-header p { color: var(--txt-2); font-size: 0.98rem; margin-top: 6px; font-weight: 400; }
+
+    /* ---------- Metrics ---------- */
     [data-testid="stMetric"] {
-        background: rgba(15, 23, 42, 0.95) !important;
-        border: 1px solid rgba(56, 189, 248, 0.3) !important;
-        border-radius: 12px;
-        padding: 1.2rem;
+        background: var(--bg-1) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: var(--radius); padding: 1.1rem 1.2rem;
     }
-    [data-testid="stMetricValue"] { color: #38bdf8 !important; font-weight: 700 !important; }
-    [data-testid="stMetricLabel"] { color: #f1f5f9 !important; font-weight: 500 !important; }
-    [data-testid="stMetricDelta"] { color: #34d399 !important; }
-    
-    /* ======== Trading Scout Premium Cards ======== */
-    .scout-wrapper {
-        width: 100%;
-        margin-bottom: 40px; 
+    [data-testid="stMetricValue"] { color: var(--accent) !important; font-weight: 800 !important; }
+    [data-testid="stMetricLabel"] { color: var(--txt-2) !important; font-weight: 500 !important; }
+    [data-testid="stMetricDelta"] { color: var(--pos-soft) !important; }
+
+    /* ---------- Buttons ---------- */
+    .stButton > button {
+        border-radius: 12px !important; font-weight: 600 !important;
+        border: 1px solid var(--line-strong) !important;
+        background: var(--bg-2) !important; color: var(--txt-1) !important;
+        transition: all 0.18s ease !important;
     }
-    .scout-card {
-        background: linear-gradient(145deg, rgba(16, 24, 48, 0.95), rgba(28, 40, 68, 0.98));
-        border: 1px solid rgba(56, 189, 248, 0.28);
-        border-radius: 22px;
-        padding: 32px 28px;
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
-        transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-        position: relative;
-        overflow: hidden;
+    .stButton > button:hover {
+        border-color: var(--accent) !important;
+        background: var(--bg-3) !important;
+        transform: translateY(-1px);
     }
-    .scout-card::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; height: 5px;
-        background: linear-gradient(90deg, transparent, #38bdf8, transparent);
-        opacity: 0.85;
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #0ea5e9, #38bdf8) !important;
+        color: #04121f !important; border: none !important; font-weight: 700 !important;
+        box-shadow: 0 6px 20px rgba(56,189,248,0.25) !important;
     }
-    .scout-card:hover {
-        transform: translateY(-4px);
-        border-color: rgba(56, 189, 248, 0.7);
-        box-shadow: 0 20px 55px rgba(0, 0, 0, 0.45);
-    }
-    .scout-header {
-        display: flex; justify-content: space-between; align-items: center; 
-        margin-bottom: 24px;
-    }
-    .scout-title { 
-        color: #f8fafc; font-size: 2rem; font-weight: 800; 
-        margin: 0; letter-spacing: 0.5px; display: flex; align-items: center;
-    }
-    .scout-title-sub { font-size: 1.1rem; color: #94a3b8; font-weight: 400; padding-right: 12px; }
-    .scout-badge {
-        padding: 8px 20px; border-radius: 30px; 
-        font-size: 1rem; font-weight: 700; letter-spacing: 0.5px;
-        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
-    }
-    .scout-prob-container { text-align: center; margin-bottom: 20px; }
-    .scout-prob-label { margin:0; color:#cbd5e1; font-weight: 600; letter-spacing: 1.5px; font-size: 1rem; text-transform: uppercase; }
-    .scout-prob { 
-        font-size: 4.8rem; font-weight: 800; color: #38bdf8; 
-        margin: 10px 0 16px 0; line-height: 1;
-        text-shadow: 0 0 35px rgba(56,189,248,0.45); 
-    }
-    .scout-phase-pill {
-        display: inline-block; background: rgba(0,0,0,0.35); padding: 10px 20px; 
-        border-radius: 25px; border: 1px solid rgba(255,255,255,0.08);
-    }
-    
-    /* ======== Roadmap In-Card ======== */
-    .roadmap-box {
-        background: rgba(255, 255, 255, 0.03);
-        border-radius: 14px;
-        padding: 22px 28px;
-        margin-top: 24px;
-        margin-bottom: 14px;
-        border-right: 3px solid #38bdf8;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        gap: 28px;
-        font-size: 1rem;
-        color: #94a3b8;
-        flex-wrap: wrap;
-    }
-    .roadmap-step {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 4px;
-    }
-    .roadmap-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; color: #64748b; }
-    .roadmap-value { font-weight: 600; color: #f8fafc; font-size: 1.02rem; }
-    .roadmap-arrow { color: #475569; font-size: 1.3rem; font-weight: bold; }
-    
-    .scout-divider {
-        border-top: 1px solid rgba(255,255,255,0.08); margin: 28px 0;
-    }
-    
-    /* ======== Stacked Vertical Layout for Sections ======== */
-    .scout-stats-grid { 
-        display: flex; 
-        flex-direction: column; /* CHANGED FROM ROW TO COLUMN */
-        gap: 24px; 
-        margin-bottom: 24px; 
-    }
-    .scout-stat-box {
-        flex: 1; background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 16px; padding: 22px; display: flex; flex-direction: column;
-    }
-    .scout-section-title {
-        color: #e0f2fe; font-size: 1.15rem; font-weight: 700; 
-        margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
-    }
-    .scout-list-item {
-        font-size: 1.05rem; color: #cbd5e1; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;
-    }
-    .scout-alert-box {
-        padding: 20px 24px; border-radius: 14px; margin-top: 24px;
-        border-right: 5px solid #dc2626; background: rgba(220, 38, 38, 0.08);
-    }
-    .scout-alert-title { font-size: 1.1rem; color:#f8fafc; font-weight:bold; margin-bottom:12px; display:block; }
-    .scout-alert-text { font-size: 0.95rem; display:block; color:#cbd5e1; line-height: 1.6; margin-bottom: 6px; }
-    .trap-section-label {
-        font-size: 0.85rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;
-        letter-spacing: 0.5px; margin: 14px 0 8px 0; display: block;
-    }
-    .trap-fund-highlight {
-        background: rgba(239, 68, 68, 0.12);
-        border-right: 3px solid #ef4444;
-        padding: 10px 14px;
-        border-radius: 8px;
-        font-weight: 600;
-        color: #fecaca !important;
-    }
-    
-    .edu-box {
-        background: rgba(56, 189, 248, 0.05);
-        border-right: 4px solid #38bdf8;
-        padding: 16px;
-        margin-top: 20px;
-        border-radius: 8px;
-        font-size: 0.95rem;
-        color: #e2e8f0;
-        line-height: 1.7;
-        flex-grow: 1; 
-    }
-    .edu-box-title {
-        color:#38bdf8; 
-        font-weight: 700;
-        display:block; 
-        margin-bottom:10px;
-        font-size: 1.05rem;
+    .stButton > button[kind="primary"]:hover { filter: brightness(1.08); transform: translateY(-1px); }
+
+    /* selectbox / radio / inputs */
+    .stTextInput input, .stSelectbox div[data-baseweb="select"] > div {
+        background: var(--bg-1) !important; border-color: var(--line-strong) !important;
+        border-radius: 10px !important; color: var(--txt-1) !important;
     }
 
-    /* ======== Fundamental Analysis Screen ======== */
-    .fund-card {
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 18px;
-        padding: 28px 30px;
-        margin-bottom: 22px;
-    }
-    .fund-verdict-box {
-        text-align: center;
-        border-radius: 18px;
-        padding: 26px;
-        margin-bottom: 22px;
-        border: 1px solid rgba(255,255,255,0.08);
-    }
-    .fund-verdict-label { font-size: 1rem; color: #94a3b8; margin-bottom: 6px; }
-    .fund-verdict-value { font-size: 2.4rem; font-weight: 800; letter-spacing: 0.5px; }
-    .fund-verdict-sub { font-size: 0.95rem; color: #cbd5e1; margin-top: 8px; }
-    .fund-synth-box {
-        background: rgba(56, 189, 248, 0.06);
-        border-right: 4px solid #38bdf8;
-        border-radius: 12px;
-        padding: 18px 22px;
-        margin-bottom: 22px;
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #f8fafc;
-    }
-    .fund-meta-row {
-        display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 22px;
-    }
-    .fund-meta-box {
-        flex: 1; min-width: 220px;
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 14px; padding: 18px 20px;
-    }
-    .fund-meta-label { font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; }
-    .fund-meta-value { font-size: 1.2rem; font-weight: 700; color: #f8fafc; }
-    .fund-table-title {
-        color: #e0f2fe; font-size: 1.15rem; font-weight: 700;
-        margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
+    /* expander */
+    .streamlit-expanderHeader, [data-testid="stExpander"] summary {
+        background: var(--bg-1) !important; border-radius: 12px !important;
+        border: 1px solid var(--line) !important; font-weight: 600 !important;
     }
 
-    /* ======== Institutional Map Visual Layout ======== */
-    .map-card {
-        background: linear-gradient(180deg, rgba(16, 24, 45, 0.95) 0%, rgba(12, 18, 36, 0.6) 100%);
-        padding: 32px 26px; border-radius: 20px; text-align: center;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.3); margin-bottom: 30px;
-        border: 1px solid rgba(255,255,255,0.08);
-        transition: transform 0.25s ease, background 0.25s ease, border-color 0.25s ease;
-    }
-    .map-card:hover {
-        transform: translateY(-5px); border-color: rgba(56, 189, 248, 0.5);
-        background: linear-gradient(180deg, rgba(22, 36, 62, 0.98) 0%, rgba(12, 18, 36, 0.7) 100%);
-    }
-    .map-card h4 { margin:0; font-size:1.4rem; color:#f8fafc; font-weight:700; letter-spacing: 0.5px; }
-    .map-card-label { font-size:1rem; color:#94a3b8; margin: 12px 0 6px 0; font-weight:600; text-transform: uppercase; letter-spacing: 1px; }
-    .map-card-score { margin:0; font-size: 3.4rem; font-weight:800; line-height: 1.1; }
-    .map-desc {
-        font-size: 0.95rem; color: #cbd5e1; margin-top: 20px; line-height: 1.6; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,0.15);
-    }
-    /* ======== Top Navigation Bar (persistent hamburger, top-right) ======== */
-    .topnav-spacer { height: 8px; }
-    div[data-testid="stHorizontalBlock"] .nav-btn-wrap button {
-        background: rgba(255,255,255,0.04) !important;
-        border: 1px solid rgba(56,189,248,0.18) !important;
-        color: #cbd5e1 !important;
-        border-radius: 12px !important;
-        font-weight: 600 !important;
+    /* ---------- Section eyebrow label ---------- */
+    .section-label {
+        font-size: 0.74rem; letter-spacing: 2px; text-transform: uppercase;
+        color: var(--txt-3); font-weight: 700; margin: 4px 0 10px 0; display:block;
     }
 
-    /* ======== Price + Timestamp Header (appears next to every ticker) ======== */
+    /* ============================================================
+       PRICE HEADER (price + timestamp next to every ticker)
+       ============================================================ */
     .price-header {
         display: inline-flex; flex-direction: column; align-items: flex-start;
-        background: linear-gradient(145deg, rgba(30,41,59,0.7), rgba(15,23,42,0.92));
-        padding: 10px 22px; border-radius: 14px; margin: 6px 0 14px 0;
-        border: 1px solid rgba(56, 189, 248, 0.22);
-        box-shadow: 0 4px 15px rgba(0,0,0,0.22);
+        background: linear-gradient(145deg, var(--bg-2), var(--bg-1));
+        padding: 12px 24px; border-radius: var(--radius); margin: 6px 0 22px 0;
+        border: 1px solid var(--line-strong);
+        box-shadow: 0 4px 18px rgba(0,0,0,0.25);
     }
-    .price-header .ph-ticker { font-size: 0.95rem; color: #94a3b8; font-weight: 600; }
-    .price-header .ph-price  { font-size: 1.9rem; color: #f8fafc; font-weight: 800; line-height: 1.1; }
-    .price-header .ph-time   { font-size: 0.78rem; color: #64748b; margin-top: 2px; }
-    .price-header .ph-chg-pos { color: #34d399; font-weight: 700; font-size: 1rem; }
-    .price-header .ph-chg-neg { color: #f87171; font-weight: 700; font-size: 1rem; }
+    .price-header .ph-ticker { font-size: 0.82rem; color: var(--txt-2); font-weight: 600; letter-spacing: 0.5px; }
+    .price-header .ph-price  { font-size: 2.05rem; color: var(--txt-1); font-weight: 800; line-height: 1.05; margin-top: 2px; }
+    .price-header .ph-time   { font-size: 0.76rem; color: var(--txt-3); margin-top: 4px; }
+    .price-header .ph-chg-pos { color: var(--pos-soft); font-weight: 700; font-size: 1rem; }
+    .price-header .ph-chg-neg { color: var(--neg); font-weight: 700; font-size: 1rem; }
 
-    /* ======== Unified Verdict Banner (Wyckoff + Fundamental in one) ======== */
+    /* ============================================================
+       VERDICT BANNER — the single unified "bottom line" component
+       ============================================================ */
     .verdict-banner {
-        border-radius: 18px; padding: 22px 26px; margin: 8px 0 20px 0;
-        border: 1px solid rgba(255,255,255,0.08);
-        display: flex; flex-direction: column; gap: 8px;
+        position: relative; display: flex; gap: 0;
+        background:
+            radial-gradient(140% 120% at 100% 0%, color-mix(in srgb, var(--vb-color) 12%, transparent), transparent 60%),
+            linear-gradient(135deg, var(--bg-2), var(--bg-1));
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-lg); overflow: hidden;
+        margin: 10px 0 28px 0; box-shadow: var(--shadow);
     }
-    .verdict-headline { font-size: 1.55rem; font-weight: 800; letter-spacing: 0.3px; }
-    .verdict-detail { font-size: 1rem; color: #e2e8f0; line-height: 1.6; }
-    .verdict-chips { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
-    .verdict-chip {
-        background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 20px; padding: 6px 16px; font-size: 0.9rem; color: #cbd5e1; font-weight: 600;
+    .verdict-banner .vb-accent {
+        width: 6px; flex: 0 0 6px; background: var(--vb-color);
+        box-shadow: 0 0 24px color-mix(in srgb, var(--vb-color) 60%, transparent);
     }
-    .reason-box {
-        background: rgba(56, 189, 248, 0.05); border-right: 4px solid #38bdf8;
-        border-radius: 10px; padding: 14px 18px; margin: 6px 0 18px 0;
-        font-size: 0.98rem; color: #e2e8f0; line-height: 1.7;
+    .verdict-banner .vb-body { padding: 26px 28px; flex: 1; }
+    .vb-top { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom: 6px; }
+    .vb-ticker {
+        font-family:'Inter',sans-serif; font-weight:800; font-size:1.05rem; color:var(--txt-2);
+        background: var(--bg-3); padding: 4px 12px; border-radius: 8px; letter-spacing:0.5px;
     }
+    .vb-headline { font-size: 1.55rem; font-weight: 800; line-height: 1.15; }
+    .vb-action { font-size: 1.05rem; font-weight: 700; margin: 6px 0 10px 0; line-height: 1.5; }
+    .vb-detail { font-size: 0.98rem; color: var(--txt-2); line-height: 1.7; }
+    .vb-chips { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+    .vb-chip {
+        background: var(--bg-3); border: 1px solid var(--line);
+        border-radius: 20px; padding: 5px 14px; font-size: 0.82rem; color: var(--txt-2); font-weight: 600;
+    }
+    .vb-chip b { color: var(--txt-1); }
 
-    /* ======== Home: Top Opportunity Picks ======== */
+    /* legacy verdict-* classes kept as aliases so nothing breaks */
+    .verdict-eyebrow { font-size:0.74rem; letter-spacing:2px; text-transform:uppercase; color:var(--txt-3); font-weight:700; }
+    .verdict-headline { font-size: 1.5rem; font-weight: 800; }
+    .verdict-detail { font-size: 0.98rem; color: var(--txt-2); line-height: 1.7; }
+    .verdict-chips { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+    .verdict-chip { background:var(--bg-3); border:1px solid var(--line); border-radius:20px; padding:5px 14px; font-size:0.82rem; color:var(--txt-2); font-weight:600; }
+    .verdict-accent-bar { height:4px; border-radius:4px; }
+
+    /* ============================================================
+       REASON / NARRATIVE boxes (the human "why")
+       ============================================================ */
+    .reason-box {
+        background: var(--bg-1); border-right: 3px solid var(--accent);
+        border-radius: 12px; padding: 15px 20px; margin: 4px 0 20px 0;
+        font-size: 0.97rem; color: var(--txt-1); line-height: 1.75;
+    }
+    .narrative-box {
+        background: linear-gradient(145deg, var(--bg-2), var(--bg-1));
+        border: 1px solid var(--line); border-right: 3px solid var(--accent);
+        border-radius: var(--radius); padding: 24px 28px; margin: 12px 0 28px 0;
+        font-size: 1.0rem; color: var(--txt-1); line-height: 1.9;
+    }
+    .narrative-title { color: var(--accent); font-weight: 800; font-size: 1.05rem; display:block; margin-bottom: 12px; letter-spacing:0.3px; }
+
+    /* ============================================================
+       HOME — Opportunity pick cards
+       ============================================================ */
     .pick-card {
-        background: linear-gradient(145deg, rgba(16,24,48,0.92), rgba(22,34,58,0.96));
-        border: 1px solid rgba(56,189,248,0.25); border-radius: 16px;
-        padding: 18px 20px; margin-bottom: 14px; height: 100%;
+        background: linear-gradient(155deg, var(--bg-2), var(--bg-1));
+        border: 1px solid var(--line); border-radius: var(--radius);
+        padding: 18px 20px; margin-bottom: 12px; height: 100%;
         transition: transform 0.2s ease, border-color 0.2s ease;
     }
-    .pick-card:hover { transform: translateY(-3px); border-color: rgba(56,189,248,0.6); }
-    .pick-rank { font-size: 0.8rem; color: #64748b; font-weight: 700; letter-spacing: 1px; }
-    .pick-ticker { font-size: 1.6rem; font-weight: 800; color: #f8fafc; line-height: 1.1; }
-    .pick-headline { font-size: 0.95rem; font-weight: 700; margin: 8px 0 6px 0; }
-    .pick-meta { font-size: 0.82rem; color: #94a3b8; line-height: 1.5; }
+    .pick-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+    .pick-rank { font-family:'Inter'; font-size: 0.72rem; color: var(--txt-3); font-weight: 800; letter-spacing: 1.5px; }
+    .pick-ticker { font-family:'Inter'; font-size: 1.7rem; font-weight: 800; color: var(--txt-1); line-height: 1.05; margin: 2px 0; }
+    .pick-headline { font-size: 0.92rem; font-weight: 700; margin: 8px 0 8px 0; line-height:1.4; }
+    .pick-meta { font-size: 0.8rem; color: var(--txt-2); line-height: 1.65; }
     .pick-score-pill {
-        display:inline-block; background: rgba(56,189,248,0.12); color:#38bdf8;
-        border-radius: 14px; padding: 3px 12px; font-size: 0.8rem; font-weight: 700; margin-top: 8px;
+        display:inline-block; background: rgba(56,189,248,0.12); color: var(--accent);
+        border-radius: 14px; padding: 3px 12px; font-size: 0.78rem; font-weight: 700; margin-top: 10px;
     }
 
-    /* ======== Narrative free-text box (Ackman analysis) ======== */
-    .narrative-box {
-        background: linear-gradient(145deg, rgba(20,30,52,0.6), rgba(14,22,40,0.85));
-        border: 1px solid rgba(56,189,248,0.18); border-right: 4px solid #38bdf8;
-        border-radius: 14px; padding: 20px 24px; margin: 10px 0 20px 0;
-        font-size: 1.02rem; color: #e2e8f0; line-height: 1.85;
+    /* ============================================================
+       FUNDAMENTAL screen
+       ============================================================ */
+    .fund-card {
+        background: var(--bg-1); border: 1px solid var(--line);
+        border-radius: var(--radius); padding: 24px 26px; margin-bottom: 20px;
     }
-    .narrative-title { color:#38bdf8; font-weight:800; font-size:1.1rem; display:block; margin-bottom:10px; }
+    .fund-table-title {
+        color: var(--txt-1); font-size: 1.1rem; font-weight: 700;
+        margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line);
+    }
+    .fund-meta-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 20px; }
+    .fund-meta-box {
+        flex: 1; min-width: 200px; background: var(--bg-1);
+        border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px;
+    }
+    .fund-meta-label { font-size: 0.8rem; color: var(--txt-2); margin-bottom: 6px; }
+    .fund-meta-value { font-size: 1.25rem; font-weight: 700; color: var(--txt-1); }
+    /* legacy fund verdict box aliases */
+    .fund-verdict-box { text-align:center; border-radius:var(--radius); padding:24px; margin-bottom:20px; border:1px solid var(--line); }
+    .fund-verdict-label { font-size:0.9rem; color:var(--txt-2); margin-bottom:6px; }
+    .fund-verdict-value { font-size:2.2rem; font-weight:800; }
+    .fund-verdict-sub { font-size:0.9rem; color:var(--txt-2); margin-top:8px; }
+    .fund-synth-box { background:var(--bg-1); border-right:3px solid var(--accent); border-radius:12px; padding:16px 20px; margin-bottom:20px; font-size:1.05rem; font-weight:700; color:var(--txt-1); }
 
-    /* ======== Staged Trade Plan ======== */
-    .plan-stage {
-        background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07);
-        border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;
-        display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;
+    /* ============================================================
+       TRADING SCOUT — premium cards
+       ============================================================ */
+    .scout-wrapper { width: 100%; margin-bottom: 34px; }
+    .scout-card {
+        background: linear-gradient(155deg, var(--bg-2), var(--bg-1));
+        border: 1px solid var(--line-strong); border-radius: var(--radius-lg);
+        padding: 30px 28px; box-shadow: var(--shadow);
+        position: relative; overflow: hidden;
+        transition: border-color 0.2s ease, transform 0.2s ease;
     }
-    .plan-stage-label { font-weight:700; color:#f8fafc; font-size:1rem; }
-    .plan-stage-val { font-weight:800; font-size:1.15rem; }
-    .plan-stage-note { font-size:0.85rem; color:#94a3b8; width:100%; margin-top:4px; }
-    </style>""", unsafe_allow_html=True)
+    .scout-card::before {
+        content:''; position:absolute; top:0; left:0; right:0; height:4px;
+        background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity:0.8;
+    }
+    .scout-card:hover { transform: translateY(-3px); border-color: rgba(56,189,248,0.5); }
+    .scout-header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 22px; }
+    .scout-title { color: var(--txt-1); font-size: 1.8rem; font-weight: 800; margin:0; display:flex; align-items:center; }
+    .scout-title-sub { font-size: 1rem; color: var(--txt-2); font-weight: 400; padding-right: 12px; }
+    .scout-badge { padding: 8px 20px; border-radius: 30px; font-size: 0.95rem; font-weight: 700; background: var(--bg-3); border: 1px solid var(--line-strong); }
+    .scout-prob-container { text-align: center; margin-bottom: 18px; }
+    .scout-prob-label { margin:0; color: var(--txt-2); font-weight:600; letter-spacing:1.5px; font-size:0.85rem; text-transform:uppercase; }
+    .scout-prob { font-size: 4.4rem; font-weight: 800; color: var(--accent); margin: 8px 0 14px 0; line-height: 1; text-shadow: 0 0 35px rgba(56,189,248,0.4); }
+    .scout-phase-pill { display:inline-block; background: var(--bg-0); padding: 9px 20px; border-radius: 25px; border: 1px solid var(--line); }
+    .scout-divider { border-top: 1px solid var(--line); margin: 24px 0; }
+    .scout-stats-grid { display:flex; flex-direction:column; gap: 20px; margin-bottom: 22px; }
+    .scout-stat-box { flex:1; background: var(--bg-1); border:1px solid var(--line); border-radius:16px; padding: 20px; display:flex; flex-direction:column; }
+    .scout-section-title { color: var(--txt-1); font-size: 1.08rem; font-weight: 700; margin-bottom: 14px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+    .scout-list-item { font-size: 1.0rem; color: var(--txt-2); margin-bottom: 12px; display:flex; justify-content:space-between; align-items:center; }
+    .scout-alert-box { padding: 18px 22px; border-radius: 14px; margin-top: 22px; border-right: 4px solid var(--neg); background: rgba(239,68,68,0.06); }
+    .scout-alert-title { font-size: 1.05rem; color: var(--txt-1); font-weight:bold; margin-bottom:12px; display:block; }
+    .scout-alert-text { font-size: 0.92rem; display:block; color: var(--txt-2); line-height: 1.6; margin-bottom: 6px; }
+    .trap-section-label { font-size: 0.82rem; color: var(--txt-2); font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; margin: 14px 0 8px 0; display:block; }
+    .trap-fund-highlight { background: rgba(239,68,68,0.10); border-right: 3px solid var(--neg); padding: 10px 14px; border-radius: 8px; font-weight: 600; color: #fecaca !important; }
+    .edu-box { background: rgba(56,189,248,0.05); border-right: 3px solid var(--accent); padding: 16px; margin-top: 18px; border-radius: 10px; font-size: 0.93rem; color: var(--txt-1); line-height: 1.75; flex-grow: 1; }
+    .edu-box-title { color: var(--accent); font-weight: 700; display:block; margin-bottom: 10px; font-size: 1.0rem; }
+
+    /* Roadmap inside scout card */
+    .roadmap-box { background: var(--bg-1); border-radius: 14px; padding: 20px 26px; margin-top: 22px; margin-bottom: 12px; border-right: 3px solid var(--accent); display:flex; justify-content:center; align-items:center; gap: 26px; font-size: 0.95rem; color: var(--txt-2); flex-wrap: wrap; }
+    .roadmap-step { display:flex; flex-direction:column; align-items:center; gap: 4px; }
+    .roadmap-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; color: var(--txt-3); }
+    .roadmap-value { font-weight: 600; color: var(--txt-1); font-size: 1.0rem; }
+    .roadmap-arrow { color: var(--txt-3); font-size: 1.3rem; font-weight: bold; }
+
+    /* Staged trade plan */
+    .plan-stage { background: var(--bg-1); border:1px solid var(--line); border-radius: 12px; padding: 14px 18px; margin-bottom: 10px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+    .plan-stage-label { font-weight: 700; color: var(--txt-1); font-size: 1.0rem; }
+    .plan-stage-val { font-weight: 800; font-size: 1.15rem; }
+    .plan-stage-note { font-size: 0.84rem; color: var(--txt-2); width:100%; margin-top: 4px; line-height:1.5; }
+
+    /* ============================================================
+       INSTITUTIONAL MAP cards
+       ============================================================ */
+    .map-card {
+        background: linear-gradient(180deg, var(--bg-2) 0%, var(--bg-1) 100%);
+        padding: 30px 24px; border-radius: var(--radius-lg); text-align: center;
+        box-shadow: var(--shadow); margin-bottom: 26px; border: 1px solid var(--line);
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .map-card:hover { transform: translateY(-4px); border-color: rgba(56,189,248,0.5); }
+    .map-card h4 { margin:0; font-size: 1.3rem; color: var(--txt-1); font-weight: 700; }
+    .map-card-label { font-size: 0.88rem; color: var(--txt-2); margin: 12px 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
+    .map-card-score { margin:0; font-size: 3.2rem; font-weight: 800; line-height: 1.1; }
+    .map-desc { font-size: 0.9rem; color: var(--txt-2); margin-top: 18px; line-height: 1.6; padding-top: 16px; border-top: 1px dashed var(--line-strong); }
+
+    /* nav */
+    .topnav-spacer { height: 8px; }
+    </style>
+    """, unsafe_allow_html=True)
 
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = None, end: Optional[str] = None):
@@ -578,6 +562,7 @@ def go_to_screen(page: str, ticker: str = None) -> None:
     if ticker:
         st.session_state.handoff_ticker = ticker.strip().upper()
     st.session_state.current_page = page
+    st.session_state["nav_select"] = page  # סנכרון מצב התפריט עצמו, כדי שלא "יקפוץ" חזרה
     st.rerun()
 
 
@@ -601,103 +586,186 @@ def get_price_and_time(ticker: str) -> tuple:
 
 
 def render_price_header(ticker: str) -> None:
-    """כותרת מחיר אחידה: מופיעה ליד כל טיקר בכל מסך, עם 'מעודכן לשעה ותאריך'."""
-    if not ticker or not SCOUT_CORE_AVAILABLE:
+    """
+    כותרת מחיר אחידה - מחיר נוכחי + 'מעודכן ל: תאריך ושעה' + שינוי יומי.
+    חייבת להופיע בכל מקום שמוצג טיקר (Home, Fundamental, Trading Scout, Backtest, Monitor).
+    """
+    if not ticker:
         return
-    price, chg, tstr = get_price_and_time(ticker)
+    price, chg_pct, last_time = get_price_and_time(ticker)
     if price <= 0:
+        st.caption(f"⚠️ לא ניתן היה לשאוב מחיר עדכני עבור {ticker} כרגע.")
         return
-    chg_cls = "ph-chg-pos" if chg >= 0 else "ph-chg-neg"
-    chg_sign = "▲" if chg >= 0 else "▼"
+    chg_cls = "ph-chg-pos" if chg_pct >= 0 else "ph-chg-neg"
+    chg_sign = "+" if chg_pct >= 0 else ""
     st.markdown(
         f"""<div class='price-header'>
-            <span class='ph-ticker'>{ticker} — מחיר נוכחי</span>
-            <span class='ph-price'>${price:,.2f} <span class='{chg_cls}'>{chg_sign} {abs(chg):.2f}%</span></span>
-            <span class='ph-time'>🕒 מעודכן ל: {tstr}</span>
+            <span class='ph-ticker'>{ticker}</span>
+            <span class='ph-price'>${price:,.2f} <span class='{chg_cls}'>{chg_sign}{chg_pct:.2f}%</span></span>
+            <span class='ph-time'>🕒 מעודכן ל: {last_time}</span>
         </div>""",
         unsafe_allow_html=True,
     )
+
+
+def render_price_inline(ticker: str) -> str:
+    """גרסה מוקטנת של כותרת המחיר, מוטבעת בתוך כרטיסים צפופים (Picks, סריקת סקטור)."""
+    if not ticker:
+        return ""
+    price, chg_pct, last_time = get_price_and_time(ticker)
+    if price <= 0:
+        return "<span style='color:#64748b; font-size:0.78rem;'>מחיר לא זמין</span>"
+    chg_cls = "ph-chg-pos" if chg_pct >= 0 else "ph-chg-neg"
+    chg_sign = "+" if chg_pct >= 0 else ""
+    return (
+        f"<span style='font-weight:800; color:#e8eef7;'>${price:,.2f}</span> "
+        f"<span class='{chg_cls}' style='font-size:0.82rem;'>{chg_sign}{chg_pct:.2f}%</span>"
+        f"<br><span style='font-size:0.72rem; color:#64748b;'>🕒 {last_time}</span>"
+    )
+
+
+def render_verdict_banner(verdict: dict, ticker: str = "", cis_score: float = None,
+                          current_phase: str = "", valuation: str = None,
+                          valuation_color: str = "#94a3b8", extra_chips: list = None) -> None:
+    """
+    רכיב 'שורה תחתונה' אחיד - נקודת האמת הוויזואלית היחידה בכל המסכים.
+    מאציל ל-render_verdict_banner_html שב-scout_core (כולל שורת פקודה אסרטיבית).
+    היררכיה: כותרת הכרעה -> פקודת פעולה -> הסבר אנושי -> צ'יפים (ראיות).
+    """
+    if not verdict:
+        return
+    html = render_verdict_banner_html(
+        verdict, ticker=ticker, cis_score=cis_score, current_phase=current_phase,
+        valuation=valuation, valuation_color=valuation_color, extra_chips=extra_chips,
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ============================================================
 # Screens
 # ============================================================
 
+def _get_home_scan_pool(width_label: str) -> list:
+    """בונה את יקום הסריקה בפועל לפי רוחב החיפוש שנבחר."""
+    master = SECTOR_MAP.get("הכול (כל השוק האמריקאי)", [])
+    if width_label == "24":
+        return HOME_SCAN_UNIVERSE
+    if width_label == "50":
+        pool = list(HOME_SCAN_UNIVERSE)
+        for t in master:
+            if t not in pool:
+                pool.append(t)
+            if len(pool) >= 50:
+                break
+        return pool
+    # "100+"
+    pool = list(HOME_SCAN_UNIVERSE)
+    for t in master:
+        if t not in pool:
+            pool.append(t)
+    return pool
+
+
 def _render_top_picks() -> None:
     """מציג עד 5 מניות בהזדמנות מצוינת (Wyckoff + פונדמנטלי איכותי). לחיצה -> ניתוח מלא."""
     st.markdown("#### 🌟 ההזדמנויות הבולטות בשוק כרגע (Wyckoff + פונדמנטלי)")
-    st.caption("המערכת סורקת 24 מניות מובילות ומציגה רק שילובים איכותיים: איסוף מוסדי מובהק יחד עם תמחור/איכות פונדמנטלית. לחיצה על מניה פותחת ניתוח מלא.")
+    st.caption("המערכת סורקת מניות מובילות ומציגה רק שילובים איכותיים: איסוף מוסדי מובהק יחד עם תמחור/איכות פונדמנטלית (סדר עדיפות אקמני). לחיצה על מניה פותחת ניתוח מלא.")
+
+    if "home_scan_width" not in st.session_state:
+        st.session_state.home_scan_width = "24"
+    width_label = st.select_slider(
+        "🔧 רוחב חיפוש (כמה מניות לסרוק)",
+        options=["24", "50", "100+"],
+        key="home_scan_width",
+        help="יקום גדול יותר = סיכוי גבוה יותר למצוא הזדמנות, אך הסריקה איטית יותר.",
+    )
+    pool = _get_home_scan_pool(width_label)
+    eta = {"24": "10-15 שניות", "50": "כ-25-35 שניות", "100+": "כ-45-70 שניות"}[width_label]
 
     c1, c2 = st.columns([1, 3])
     with c1:
-        if st.button("🔍 סרוק הזדמנויות", use_container_width=True, type="primary", key="scan_picks_btn"):
+        if st.button(f"🔍 סרוק {len(pool)} מניות", use_container_width=True, type="primary", key="scan_picks_btn"):
             if not SCOUT_CORE_AVAILABLE:
                 st.error("מודול הליבה חסר.")
             else:
-                with st.spinner("סורק 24 מניות מובילות לאיתור שילובי איכות (10-15 שניות)..."):
-                    st.session_state.home_top_picks = scan_top_opportunities(HOME_SCAN_UNIVERSE, top_n=5, mode="Balanced")
+                with st.spinner(f"סורק {len(pool)} מניות לאיתור שילובי איכות ({eta})..."):
+                    st.session_state.home_top_picks = scan_top_opportunities(pool, top_n=5, mode="Balanced")
     with c2:
-        st.caption("")
+        st.caption(f"זמן משוער לסריקה: {eta}")
 
     picks = st.session_state.get("home_top_picks")
     if picks is None:
-        st.info("לחץ על 'סרוק הזדמנויות' כדי לקבל את 5 המניות הבולטות ביותר כרגע לפי שכלול וואיקוף + פונדמנטלי.")
-        return
-    if not picks:
-        st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק) ביקום הסריקה. השוק עשוי להיות במצב המתנה.")
-        return
+        st.info("בחר רוחב חיפוש ולחץ 'סרוק' כדי לקבל את 5 המניות הבולטות ביותר כרגע לפי שכלול וואיקוף + פונדמנטלי.")
+    elif not picks:
+        st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק) ביקום הסריקה. נסה רוחב חיפוש גדול יותר, או שהשוק במצב המתנה.")
+    else:
+        cols = st.columns(len(picks))
+        for i, (col, p) in enumerate(zip(cols, picks)):
+            with col:
+                price_html = render_price_inline(p['ticker'])
+                st.markdown(
+                    f"""<div class='pick-card' style='border-top:4px solid {p['color']}; padding-bottom:10px;'>
+                        <div class='pick-rank'>#{i+1}</div>
+                        <div class='pick-ticker'>{p['ticker']}</div>
+                        <div style='margin:4px 0 10px 0;'>{price_html}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                # --- אותו רכיב Verdict Banner בדיוק כמו בכל מסך אחר (עקביות) ---
+                verdict_like = {
+                    "headline": p["headline"], "detail": p["detail"], "color": p["color"],
+                    "tier": p["tier"], "action_line": p.get("action_line", ""),
+                    "confidence": p.get("confidence", ""),
+                }
+                render_verdict_banner(
+                    verdict_like, cis_score=p["cis"], current_phase=p.get("phase", ""),
+                    valuation=p["valuation"], valuation_color=p["valuation_color"],
+                    extra_chips=[f"FCF <b>{p['fcf_yield']}</b>", f"P/E <b>{p['pe']}</b>"],
+                )
+                st.markdown(
+                    f"<div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f} · {p['sector_he']}</div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button(f"📊 נתח את {p['ticker']}", key=f"pick_{p['ticker']}_{i}", use_container_width=True):
+                    go_to_screen("📊 ניתוח פונדמנטלי", p["ticker"])
 
-    cols = st.columns(len(picks))
-    for i, (col, p) in enumerate(zip(cols, picks)):
-        with col:
-            st.markdown(
-                f"""<div class='pick-card' style='border-top:4px solid {p['color']};'>
-                    <div class='pick-rank'>#{i+1}</div>
-                    <div class='pick-ticker'>{p['ticker']}</div>
-                    <div class='pick-headline' style='color:{p['color']};'>{p['headline']}</div>
-                    <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}<br>
-                    FCF: {p['fcf_yield']} · P/E: {p['pe']}<br>{p['sector_he']}</div>
-                    <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
-            if st.button(f"📊 נתח את {p['ticker']}", key=f"pick_{p['ticker']}_{i}", use_container_width=True):
-                go_to_screen("📊 ניתוח פונדמנטלי", p["ticker"])
+    st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
+    if st.button("🗺️ אפשרות לסריקות נוספות (לפי סקטור)", use_container_width=True, key="more_scans_btn"):
+        go_to_screen("🗺️ מפה מוסדית")
 
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
 
 
 def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phase: str) -> None:
-    """סיכום פונדמנטלי קצר בסטייל אקמן במסך הבית + כפתור מעבר לאסטרטגיית מסחר."""
-    fdata = get_fundamental_data(ticker)
-    if not fdata:
-        st.info("לא ניתן היה לשאוב נתונים פונדמנטליים עבור מניה זו כרגע.")
-        return
+    """
+    השורה התחתונה האחידה במסך הבית: סינתזת Wyckoff + פונדמנטלי בסטייל אקמן.
+    הבאנר חייב להופיע *תמיד* - גם אם שאיבת הנתונים הפונדמנטליים נכשלה (synthesize_verdict
+    יודע להתמודד עם fund_data חסר ולהציג הודעה ניטרלית ברורה, ולא לדלג על הרכיב כליל).
+    """
+    fdata = get_fundamental_data(ticker) or {}
 
     verdict = synthesize_verdict(fdata, cis_score, current_phase, ticker)
-    v_color_val = fdata.get("valuation_color", "#94a3b8")
-    valuation = fdata.get("valuation", "-")
+    valuation = fdata.get("valuation", "-") if fdata else None
+    pe_disp = (fdata.get('pe_forward') if fdata.get('pe_forward') != 'N/A' else fdata.get('pe_trailing', 'N/A')) if fdata else "N/A"
 
-    st.markdown("#### 🏢 סיכום פונדמנטלי (בסטייל Ackman)")
-    st.markdown(
-        f"""<div class='verdict-banner' style='border-color:{verdict['color']}55; background:{verdict['color']}12;'>
-            <div class='verdict-headline' style='color:{verdict['color']};'>{verdict['headline']}</div>
-            <div class='verdict-detail'>{verdict['detail']}</div>
-            <div class='verdict-chips'>
-                <span class='verdict-chip'>תמחור: <b style='color:{v_color_val}'>{valuation}</b></span>
-                <span class='verdict-chip'>מכפיל רווח: <b>{fdata.get('pe_forward') if fdata.get('pe_forward')!='N/A' else fdata.get('pe_trailing','N/A')}</b></span>
-                <span class='verdict-chip'>FCF Yield: <b>{fdata.get('fcf_yield','N/A')}</b></span>
-                <span class='verdict-chip'>צמיחה: <b>{fdata.get('rev_growth','N/A')}</b></span>
-            </div>
-        </div>""",
-        unsafe_allow_html=True,
+    render_verdict_banner(
+        verdict, ticker=ticker, cis_score=cis_score, current_phase=current_phase,
+        valuation=valuation, valuation_color=fdata.get("valuation_color", "#94a3b8"),
+        extra_chips=([
+            f"מכפיל רווח <b>{pe_disp}</b>",
+            f"FCF <b>{fdata.get('fcf_yield', 'N/A')}</b>",
+            f"צמיחה <b>{fdata.get('rev_growth', 'N/A')}</b>",
+        ] if fdata else None),
     )
 
-    narrative = build_fundamental_narrative(fdata, ticker, verdict)
-    st.markdown(
-        f"<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח חופשי - מצב המניה הספציפי</span>{narrative}</div>",
-        unsafe_allow_html=True,
-    )
+    if fdata:
+        narrative = build_fundamental_narrative(fdata, ticker, verdict)
+        st.markdown(
+            f"<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח חופשי - מצב המניה הספציפי</span>{narrative}</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("⚠️ לא ניתן היה לשאוב נתונים פונדמנטליים עבור מניה זו כרגע - ההכרעה לעיל מבוססת על Wyckoff בלבד.")
 
     cta1, cta2 = st.columns([1, 2])
     with cta1:
@@ -746,153 +814,154 @@ def screen_home() -> None:
 
         render_price_header(ticker)
 
-        if result["allowed"] and result["current_cis"] >= 65:
-            st.success("🟢 **סיכום כניסה (Wyckoff):** השלב הנוכחי חיובי מאוד ותומך בכניסה. ההסתברות לצבירה מוסדית גבוהה.")
-        elif result["allowed"]:
-            st.warning("🟡 **סיכום כניסה (Wyckoff):** השלב הטכני מתאים, אך המומנטום עדיין חלש (ציון נמוך מ-65). המתן לאישור.")
-        else:
-            st.error("🔴 **סיכום כניסה (Wyckoff):** לא מומלץ. הנכס אינו בשלב שמתאים לכניסה.")
+        # === השורה התחתונה (Verdict Banner) - ראשון ובולט, לפני כל פירוט טכני ===
+        _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"])
 
-        st.markdown("<hr style='border-color: rgba(255,255,255,0.1); margin:10px 0;'>", unsafe_allow_html=True)
+        # === מכאן ואילך: עומק טכני (Deep Dive) - וואיקוף מפורט ===
+        st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin:26px 0 18px 0;'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-label'>🔍 ניתוח טכני מעמיק - Wyckoff Deep Dive</div>", unsafe_allow_html=True)
 
-        left, right = st.columns([1, 1.3])
+        with st.expander("📈 מד הסתברות, מפת פאזות Wyckoff וגרף מחיר/נפח (Deep Dive)", expanded=True):
+            left, right = st.columns([1, 1.3])
 
-        with left:
-            fig_gauge = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=result["current_cis"],
-                title={'text': "הסתברות לצבירה (CIS)", 'font': {'color': "#d9e6f2", 'size': 18}},
-                number={'font': {'color': "#d9e6f2"}},
-                gauge={
-                    'axis': {'range': [0, 100], 'tickcolor': "white"},
-                    'bar': {'color': "rgba(255,255,255,0.4)"},
-                    'steps': [
-                        {'range': [0, 40], 'color': "#dc2626"},
-                        {'range': [40, 65], 'color': "#eab308"},
-                        {'range': [65, 100], 'color': "#16a34a"}
-                    ],
-                }
-            ))
-            fig_gauge.update_layout(height=230, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_gauge, use_container_width=True)
-            st.caption("ציון 0-100 המודד את עוצמת כניסת הכספים המוסדיים.")
+            with left:
+                fig_gauge = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=result["current_cis"],
+                    title={'text': "הסתברות לצבירה (CIS)", 'font': {'color': "#d9e6f2", 'size': 18}},
+                    number={'font': {'color': "#d9e6f2"}},
+                    gauge={
+                        'axis': {'range': [0, 100], 'tickcolor': "white"},
+                        'bar': {'color': "rgba(255,255,255,0.4)"},
+                        'steps': [
+                            {'range': [0, 40], 'color': "#dc2626"},
+                            {'range': [40, 65], 'color': "#eab308"},
+                            {'range': [65, 100], 'color': "#16a34a"}
+                        ],
+                    }
+                ))
+                fig_gauge.update_layout(height=230, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_gauge, use_container_width=True)
+                st.caption("ציון 0-100 המודד את עוצמת כניסת הכספים המוסדיים.")
 
-        with right:
-            st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
-            cp = result["current_phase"]
-            is_transition = any(x in cp for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"])
-            if is_transition:
-                st.info("ℹ️ לא נמצא שלב Wyckoff מובהק כרגע (מעבר/חוסר ודאות).")
-                st.caption(f"**זיהוי מלא:** `{cp}`")
-            else:
-                is_bearish = any(x in cp for x in ["Distribution", "Markdown", "Supply"])
-                def get_bg(phase_markers):
-                    if isinstance(phase_markers, str):
-                        phase_markers = [phase_markers]
-                    if any(m in cp for m in phase_markers):
-                        return "background:#38bdf8; color:#0f172a; font-weight:bold; border:2px solid #fff; transform:scale(1.05);"
-                    return "background:rgba(255,255,255,0.05); color:#64748b;"
-                if is_bearish:
-                    html = f"""
-                    <div style="display:flex; justify-content:space-around; align-items:center; background:#1e293b; padding:20px; border-radius:12px; margin-top:10px;">
-                        <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg(['Distribution', 'Supply'])}">הפצה (Distribution)<br><span style="font-size:0.85em">מוסדיים מוכרים</span></div>
-                        <div style="color:#475569; font-size:1.8em;">←</div>
-                        <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Markdown')}">ירידות (Markdown)<br><span style="font-size:0.85em">פיזור סחורה</span></div>
-                    </div>
-                    """
+            with right:
+                st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
+                cp = result["current_phase"]
+                is_transition = any(x in cp for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"])
+                if is_transition:
+                    st.info("ℹ️ לא נמצא שלב Wyckoff מובהק כרגע (מעבר/חוסר ודאות).")
+                    st.caption(f"**זיהוי מלא:** `{cp}`")
                 else:
-                    html = f"""
-                    <div style="display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:15px 10px; border-radius:12px; margin-top:10px; font-size:0.9em;">
-                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase A'])}">שלב A<br><span style="font-size:0.8em">בלימה</span></div>
-                        <div style="color:#475569;">←</div>
-                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase B', 'Accumulation'])}">שלב B<br><span style="font-size:0.8em">בניית כוח</span></div>
-                        <div style="color:#475569;">←</div>
-                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase C', 'Spring'])}">שלב C<br><span style="font-size:0.8em">ניעור</span></div>
-                        <div style="color:#475569;">←</div>
-                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase D', 'Re-accumulation'])}">שלב D<br><span style="font-size:0.8em">פריצה</span></div>
-                        <div style="color:#475569;">←</div>
-                        <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase E', 'Markup'])}">שלב E<br><span style="font-size:0.8em">מגמה</span></div>
-                    </div>
-                    """
-                st.markdown(html, unsafe_allow_html=True)
-                st.caption(f"**זיהוי מלא:** `{cp}`")
+                    is_bearish = any(x in cp for x in ["Distribution", "Markdown", "Supply"])
+                    def get_bg(phase_markers):
+                        if isinstance(phase_markers, str):
+                            phase_markers = [phase_markers]
+                        if any(m in cp for m in phase_markers):
+                            return "background:#38bdf8; color:#0f172a; font-weight:bold; border:2px solid #fff; transform:scale(1.05);"
+                        return "background:rgba(255,255,255,0.05); color:#64748b;"
+                    if is_bearish:
+                        html = f"""
+                        <div style="display:flex; justify-content:space-around; align-items:center; background:#1e293b; padding:20px; border-radius:12px; margin-top:10px;">
+                            <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg(['Distribution', 'Supply'])}">הפצה (Distribution)<br><span style="font-size:0.85em">מוסדיים מוכרים</span></div>
+                            <div style="color:#475569; font-size:1.8em;">←</div>
+                            <div style="text-align:center; padding:15px; border-radius:8px; width:45%; transition:0.3s; {get_bg('Markdown')}">ירידות (Markdown)<br><span style="font-size:0.85em">פיזור סחורה</span></div>
+                        </div>
+                        """
+                    else:
+                        html = f"""
+                        <div style="display:flex; justify-content:space-between; align-items:center; background:#1e293b; padding:15px 10px; border-radius:12px; margin-top:10px; font-size:0.9em;">
+                            <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase A'])}">שלב A<br><span style="font-size:0.8em">בלימה</span></div>
+                            <div style="color:#475569;">←</div>
+                            <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase B', 'Accumulation'])}">שלב B<br><span style="font-size:0.8em">בניית כוח</span></div>
+                            <div style="color:#475569;">←</div>
+                            <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase C', 'Spring'])}">שלב C<br><span style="font-size:0.8em">ניעור</span></div>
+                            <div style="color:#475569;">←</div>
+                            <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase D', 'Re-accumulation'])}">שלב D<br><span style="font-size:0.8em">פריצה</span></div>
+                            <div style="color:#475569;">←</div>
+                            <div style="text-align:center; padding:10px 5px; border-radius:8px; width:18%; transition:0.3s; {get_bg(['Phase E', 'Markup'])}">שלב E<br><span style="font-size:0.8em">מגמה</span></div>
+                        </div>
+                        """
+                    st.markdown(html, unsafe_allow_html=True)
+                    st.caption(f"**זיהוי מלא:** `{cp}`")
 
-        st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
+            st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
 
-        st.markdown("#### 📉 ניתוח ויזואלי של המחיר והנפח (Price & Volume Action)")
-        chart_df = result["df"].iloc[-150:]
-        fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-        fig_chart.add_trace(go.Candlestick(
-            x=chart_df.index, open=chart_df['Open'], high=chart_df['High'],
-            low=chart_df['Low'], close=chart_df['Close'], name="Price"),
-            row=1, col=1)
-        colors = ['#16a34a' if c >= o else '#dc2626' for c, o in zip(chart_df['Close'], chart_df['Open'])]
-        fig_chart.add_trace(go.Bar(
-            x=chart_df.index, y=chart_df['Volume'], marker_color=colors, name="Volume"),
-            row=2, col=1)
-        last_date = chart_df.index[-1]
-        last_low = chart_df['Low'].iloc[-1]
-        cp_marker = result['current_phase']
-        if any(x in cp_marker for x in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "Accumulation", "Re-accumulation"]):
-            marker_color = "#16a34a"
-        elif any(x in cp_marker for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"]):
-            marker_color = "#eab308"
-        else:
-            marker_color = "#dc2626"
-        fig_chart.add_annotation(
-            x=last_date, y=last_low, text=f"📌 {cp_marker}", showarrow=True, arrowhead=2,
-            arrowsize=1.2, arrowwidth=2, arrowcolor=marker_color, ax=0, ay=45,
-            font=dict(color="white", size=11, weight="bold"), bgcolor=marker_color,
-            bordercolor="rgba(255,255,255,0.7)", borderwidth=1, borderpad=3, opacity=0.95
-        )
-        fig_chart.update_layout(
-            height=450, margin=dict(l=20, r=20, t=20, b=20),
-            xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-        )
-        st.plotly_chart(fig_chart, use_container_width=True)
+            st.markdown("#### 📉 ניתוח ויזואלי של המחיר והנפח (Price & Volume Action)")
+            chart_df = result["df"].iloc[-150:]
+            fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+            fig_chart.add_trace(go.Candlestick(
+                x=chart_df.index, open=chart_df['Open'], high=chart_df['High'],
+                low=chart_df['Low'], close=chart_df['Close'], name="Price"),
+                row=1, col=1)
+            colors = ['#16a34a' if c >= o else '#dc2626' for c, o in zip(chart_df['Close'], chart_df['Open'])]
+            fig_chart.add_trace(go.Bar(
+                x=chart_df.index, y=chart_df['Volume'], marker_color=colors, name="Volume"),
+                row=2, col=1)
+            last_date = chart_df.index[-1]
+            last_low = chart_df['Low'].iloc[-1]
+            cp_marker = result['current_phase']
+            if any(x in cp_marker for x in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "Accumulation", "Re-accumulation"]):
+                marker_color = "#16a34a"
+            elif any(x in cp_marker for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"]):
+                marker_color = "#eab308"
+            else:
+                marker_color = "#dc2626"
+            fig_chart.add_annotation(
+                x=last_date, y=last_low, text=f"📌 {cp_marker}", showarrow=True, arrowhead=2,
+                arrowsize=1.2, arrowwidth=2, arrowcolor=marker_color, ax=0, ay=45,
+                font=dict(color="white", size=11, weight="bold"), bgcolor=marker_color,
+                bordercolor="rgba(255,255,255,0.7)", borderwidth=1, borderpad=3, opacity=0.95
+            )
+            fig_chart.update_layout(
+                height=450, margin=dict(l=20, r=20, t=20, b=20),
+                xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+            )
+            st.plotly_chart(fig_chart, use_container_width=True)
 
         with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=True):
             st.markdown(explain_score_simple(result["df"], result["current_phase"], result["current_cis"], result["allowed"]))
 
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
 
-        # --- סיכום פונדמנטלי בסטייל אקמן + מעבר לאסטרטגיה ---
-        st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
-        _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"])
-
 
 def screen_institutional_map() -> None:
     st.markdown("### 🗺️ Institutional Map - מפת כסף חכם סקטוריאלית")
     st.markdown("מסך זה ממפה את הסקטורים המרכזיים בשוק ומציג את ממוצע ה-**Institutional Accumulation Probability** (הסתברות לצבירה מוסדית) שלהם. הנתונים מתעדכנים על בסיס מניות מובילות בכל סקטור ומוצגים מהגבוה לנמוך.")
-    
+
     MAP_SECTORS = {
         "טכנולוגיה (Technology)": {
-            "tickers": ["AAPL", "MSFT", "NVDA", "AVGO", "CRM"],
+            "tickers": ["AAPL", "MSFT", "NVDA", "AVGO", "CRM", "ADBE", "CSCO", "ACN",
+                        "INTU", "IBM", "TXN", "QCOM", "AMD", "DELL", "HPQ"],
             "desc": "סקטור עתיר צמיחה, משמש לעיתים קרובות כמוביל מומנטום שוק ומאופיין בכניסת הון מוסדי טרנדי."
         },
         "סמיקונדקטורס (Semiconductors)": {
-            "tickers": ["AMD", "TXN", "QCOM", "INTC", "SMCI"],
+            "tickers": ["AMD", "TXN", "QCOM", "INTC", "SMCI", "AVGO", "AMAT", "LRCX",
+                        "KLAC", "ONTO", "MRVL", "ADI"],
             "desc": "תעשיית השבבים - מתפקדת כברומטר מוביל לתיאבון הסיכון של המוסדיים לשוק כולו."
         },
         "פיננסים (Financials)": {
-            "tickers": ["JPM", "V", "MA", "BAC", "GS"],
+            "tickers": ["JPM", "V", "MA", "BAC", "GS", "BRK-B", "WMT",
+                        "COST", "MCD", "HD"],
             "desc": "מוטה ריבית ומחזור כלכלי. איסוף כאן מעיד לרוב על ציפייה מוסדית להתרחבות כלכלית."
         },
         "בריאות (Healthcare)": {
-            "tickers": ["JNJ", "UNH", "LLY", "MRK", "ABBV"],
+            "tickers": ["JNJ", "UNH", "LLY", "MRK", "ABBV", "ABT", "AMGN", "TMO", "DHR"],
             "desc": "סקטור דפנסיבי המשולב בצמיחה. משמש מקלט בטוח בעת אי-ודאות מוסדית לחלוקת סיכונים."
         },
         "אנרגיה וסחורות (Energy & Commodities)": {
-            "tickers": ["XOM", "CVX", "GLD", "SLV", "COP"],
+            "tickers": ["XOM", "CVX", "GLD", "SLV", "COP", "SLB", "EOG", "OXY", "PSX",
+                        "VLO", "FCX", "NEM", "GOLD", "AEM", "WPM", "PAAS", "AG"],
             "desc": "גידור אינפלציוני ונכסים קשים. כסף חכם זורם לכאן להגנה או ספקולציות מאקרו."
         }
     }
-    
+    for _sec, _d in MAP_SECTORS.items():
+        _d["tickers"] = list(dict.fromkeys([t for t in _d["tickers"] if t and isinstance(t, str)]))
+
     if st.button("🗺️ טען מפה מוסדית מחושבת", type="primary"):
-        with st.spinner("סורק מניות מובילות בכל סקטור לחילוץ נתוני איסוף (Smart Money Flow)..."):
+        with st.spinner("סורק מניות בכל סקטור לחילוץ נתוני איסוף (Smart Money Flow) - יכול לקחת כדקה עם רשימות מורחבות..."):
             engine = FactorEngine(BacktestConfig())
             sector_results = {}
-            
+
             for sector, data in MAP_SECTORS.items():
                 sector_cis = []
                 for t in data["tickers"]:
@@ -901,32 +970,66 @@ def screen_institutional_map() -> None:
                         factors = engine.compute(df)
                         cis = engine.composite_cis(factors, df)
                         sector_cis.append(float(cis.iloc[-1]))
-                
+
                 if sector_cis:
                     avg_cis = sum(sector_cis) / len(sector_cis)
                     sector_results[sector] = {"score": avg_cis, "desc": data["desc"]}
-            
-            if sector_results:
-                sorted_sectors = sorted(sector_results.items(), key=lambda item: item[1]["score"], reverse=True)
-                
-                cols = st.columns(3)
-                for i, (sector, data) in enumerate(sorted_sectors):
-                    avg_cis = data["score"]
-                    with cols[i % 3]:
-                        color = "#16a34a" if avg_cis >= 65 else ("#eab308" if avg_cis >= 50 else "#dc2626")
-                        st.markdown(f"""
-                        <div class='map-card' style='border-top: 6px solid {color};'>
-                            <h4>{sector}</h4>
-                            <p class='map-card-label'>Smart Money Index</p>
-                            <h2 class='map-card-score' style='color:{color}; text-shadow: 0 0 25px {color}40;'>{avg_cis:.1f}%</h2>
-                            <p class='map-desc'>{data['desc']}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                st.markdown("---")
-                st.info("💡 **תובנה מוסדית (Smart Money Insight):** סקטורים עם אינדקס מעל 65% נתונים כעת תחת פעילות איסוף מוסדית עקבית ויש לחפש בהם הזדמנויות למגמת עליה (Long). סקטורים מתחת ל-50% נמצאים תחת לחץ פיזור או התעלמות מוסדית.")
+
+            st.session_state["map_sector_results"] = sector_results
+
+    sector_results = st.session_state.get("map_sector_results")
+    if sector_results:
+        sorted_sectors = sorted(sector_results.items(), key=lambda item: item[1]["score"], reverse=True)
+        cols = st.columns(3)
+        for i, (sector, data) in enumerate(sorted_sectors):
+            avg_cis = data["score"]
+            with cols[i % 3]:
+                color = "#16a34a" if avg_cis >= 65 else ("#eab308" if avg_cis >= 50 else "#dc2626")
+                st.markdown(f"""
+                <div class='map-card' style='border-top: 6px solid {color};'>
+                    <h4>{sector}</h4>
+                    <p class='map-card-label'>Smart Money Index</p>
+                    <h2 class='map-card-score' style='color:{color}; text-shadow: 0 0 25px {color}40;'>{avg_cis:.1f}%</h2>
+                    <p class='map-desc'>{data['desc']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown("---")
+        st.info("💡 **תובנה מוסדית (Smart Money Insight):** סקטורים עם אינדקס מעל 65% נתונים כעת תחת פעילות איסוף מוסדית עקבית ויש לחפש בהם הזדמנויות למגמת עליה (Long). סקטורים מתחת ל-50% נמצאים תחת לחץ פיזור או התעלמות מוסדית.")
+
+    st.markdown("---")
+    st.markdown("### 🔍 סריקת מניות מעניינות בתוך סקטור")
+    st.caption("לכל סקטור ניתן להריץ סריקה מלאה (15-20 מניות) ולקבל רק שילובים איכותיים של Wyckoff + פונדמנטלי. לחיצה על 'ניתוח עומק' פותחת ניתוח מלא במסך הבית.")
+
+    for sector, data in MAP_SECTORS.items():
+        with st.expander(f"{sector} ({len(data['tickers'])} מניות)", expanded=False):
+            st.caption(data["desc"])
+            scan_key = f"sector_picks::{sector}"
+            if st.button(f"🔍 סרוק מניות מעניינות ב{sector}", key=f"sector_scan_btn::{sector}", use_container_width=True):
+                if not SCOUT_CORE_AVAILABLE:
+                    st.error("מודול הליבה חסר.")
+                else:
+                    with st.spinner(f"סורק {len(data['tickers'])} מניות ב{sector}..."):
+                        st.session_state[scan_key] = scan_top_opportunities(data["tickers"], top_n=6, mode="Balanced")
+
+            results = st.session_state.get(scan_key)
+            if results is None:
+                st.caption("לחץ על הכפתור לעיל כדי לסרוק את הסקטור.")
+            elif not results:
+                st.info("לא נמצאו כרגע שילובים איכותיים בסקטור זה.")
             else:
-                st.error("לא ניתן היה לטעון נתונים מספיקים עבור המפה.")
+                for r in results:
+                    rcol1, rcol2 = st.columns([3, 1])
+                    with rcol1:
+                        st.markdown(
+                            f"**{r['ticker']}** &nbsp; {render_price_inline(r['ticker'])}<br>"
+                            f"<span style='color:{r['color']}'>{r['headline']}</span> · "
+                            f"תמחור: <b style='color:{r['valuation_color']}'>{r['valuation']}</b> · CIS {r['cis']:.0f} · ציון {r['composite']:.0f}",
+                            unsafe_allow_html=True,
+                        )
+                    with rcol2:
+                        if st.button("📊 ניתוח עומק", key=f"sector_deep::{sector}::{r['ticker']}", use_container_width=True):
+                            go_to_screen("🏠 בית", r["ticker"])
+
 
 def screen_fundamental() -> None:
     st.markdown("### 📊 Fundamental Analysis - ניתוח ערך וחברה")
@@ -972,18 +1075,11 @@ def screen_fundamental() -> None:
         v_color_val = fdata.get("valuation_color", "#94a3b8")
         valuation = fdata.get("valuation", "-")
 
-        # === באנר הכרעה מאוחד: Wyckoff + פונדמנטלי במשפט אחד ===
-        st.markdown(
-            f"""<div class='verdict-banner' style='border-color:{verdict_obj['color']}55; background:{verdict_obj['color']}12;'>
-                <div class='verdict-headline' style='color:{verdict_obj['color']};'>{verdict_obj['headline']}</div>
-                <div class='verdict-detail'>{verdict_obj['detail']}</div>
-                <div class='verdict-chips'>
-                    <span class='verdict-chip'>תמחור: <b style='color:{v_color_val}'>{valuation}</b></span>
-                    <span class='verdict-chip'>Wyckoff: <b>{current_phase or '—'}</b></span>
-                    <span class='verdict-chip'>ציון מוסדי (CIS): <b>{cis_score:.0f}</b></span>
-                </div>
-            </div>""",
-            unsafe_allow_html=True
+        # === השורה התחתונה האחידה (אותו רכיב בכל המסכים) ===
+        st.markdown("<div class='section-label'>השורה התחתונה — הכרעה מאוחדת</div>", unsafe_allow_html=True)
+        render_verdict_banner(
+            verdict_obj, ticker=tkr, cis_score=cis_score, current_phase=(current_phase or "—"),
+            valuation=valuation, valuation_color=v_color_val,
         )
 
         # === למה היא זולה/יקרה, וביחס למה (נימוק מפורש) ===
@@ -1027,51 +1123,47 @@ def screen_fundamental() -> None:
             unsafe_allow_html=True,
         )
 
-        # === טבלת מכפילים - מסודרת לפי סדר חשיבות אקמני ===
+        # === טבלת מכפילים - מסודרת לפי סדר חשיבות אקמני (Deep Dive - בתוך expander) ===
         ex = fdata.get("explanations", {})
-        st.markdown("<div class='fund-card'>", unsafe_allow_html=True)
-        st.markdown("<div class='fund-table-title'>📐 מכפילים ויחסים (מחושבים עצמית - בסדר חשיבות אקמני)</div>", unsafe_allow_html=True)
+        with st.expander("📐 מכפילים ויחסים מלאים (Deep Dive - מחושבים עצמית, בסדר חשיבות אקמני)", expanded=True):
+            metrics = [
+                # (1) מכפיל רווח - הראשון שאקמן בוחן
+                ("Forward P/E (מכפיל רווח עתידי)", fdata.get("pe_forward", "-"), ex.get("pe_forward", "")),
+                ("Trailing P/E (מכפיל רווח נוכחי)", fdata.get("pe_trailing", "-"), ex.get("pe_trailing", "")),
+                # (2) תזרים מזומנים
+                ("FCF Yield (תשואת תזרים חופשי)", fdata.get("fcf_yield", "-"), ex.get("fcf_yield", "")),
+                # (3) צמיחה
+                ("צמיחת הכנסות (YoY)", fdata.get("rev_growth", "-"), ex.get("rev_growth", "")),
+                ("EPS Growth (צמיחת רווח)", fdata.get("eps_growth", "-"), ex.get("eps_growth", "")),
+                ("PEG Ratio", fdata.get("peg", "-"), ex.get("peg", "")),
+                # (4) איכות
+                ("שולי תפעול (Op. Margin)", fdata.get("op_margin", "-"), ex.get("op_margin", "")),
+                ("ROE (תשואה להון)", fdata.get("roe", "-"), ex.get("roe", "")),
+                # (5) תמחור משלים
+                ("EV/EBITDA", fdata.get("ev_ebitda", "-"), ex.get("ev_ebitda", "")),
+                ("P/S (מכירות)", fdata.get("ps", "-"), ex.get("ps", "")),
+                ("P/B (הון)", fdata.get("pb", "-"), ex.get("pb", "")),
+                # (6) מינוף/בטחון
+                ("חוב נטו / EBITDA (מינוף)", fdata.get("net_debt_ebitda", "-"), ex.get("net_debt_ebitda", "")),
+            ]
 
-        metrics = [
-            # (1) מכפיל רווח - הראשון שאקמן בוחן
-            ("Forward P/E (מכפיל רווח עתידי)", fdata.get("pe_forward", "-"), ex.get("pe_forward", "")),
-            ("Trailing P/E (מכפיל רווח נוכחי)", fdata.get("pe_trailing", "-"), ex.get("pe_trailing", "")),
-            # (2) תזרים מזומנים
-            ("FCF Yield (תשואת תזרים חופשי)", fdata.get("fcf_yield", "-"), ex.get("fcf_yield", "")),
-            # (3) צמיחה
-            ("צמיחת הכנסות (YoY)", fdata.get("rev_growth", "-"), ex.get("rev_growth", "")),
-            ("EPS Growth (צמיחת רווח)", fdata.get("eps_growth", "-"), ex.get("eps_growth", "")),
-            ("PEG Ratio", fdata.get("peg", "-"), ex.get("peg", "")),
-            # (4) איכות
-            ("שולי תפעול (Op. Margin)", fdata.get("op_margin", "-"), ex.get("op_margin", "")),
-            ("ROE (תשואה להון)", fdata.get("roe", "-"), ex.get("roe", "")),
-            # (5) תמחור משלים
-            ("EV/EBITDA", fdata.get("ev_ebitda", "-"), ex.get("ev_ebitda", "")),
-            ("P/S (מכירות)", fdata.get("ps", "-"), ex.get("ps", "")),
-            ("P/B (הון)", fdata.get("pb", "-"), ex.get("pb", "")),
-            # (6) מינוף/בטחון
-            ("חוב נטו / EBITDA (מינוף)", fdata.get("net_debt_ebitda", "-"), ex.get("net_debt_ebitda", "")),
-        ]
+            header_l, header_r1, header_r2 = st.columns([2.2, 1.6, 1])
+            with header_l:
+                st.markdown("**מדד**")
+            with header_r1:
+                st.markdown("**ערך**")
+            with header_r2:
+                st.markdown("**הסבר**")
 
-        header_l, header_r1, header_r2 = st.columns([2.2, 1.6, 1])
-        with header_l:
-            st.markdown("**מדד**")
-        with header_r1:
-            st.markdown("**ערך**")
-        with header_r2:
-            st.markdown("**הסבר**")
-
-        for name, val, desc in metrics:
-            row_l, row_r1, row_r2 = st.columns([2.2, 1.6, 1])
-            with row_l:
-                st.markdown(name)
-            with row_r1:
-                st.markdown(f"**{val}**")
-            with row_r2:
-                with st.popover("מה זה?"):
-                    st.write(desc if desc else "אין הסבר זמין למדד זה.")
-
-        st.markdown("</div>", unsafe_allow_html=True)
+            for name, val, desc in metrics:
+                row_l, row_r1, row_r2 = st.columns([2.2, 1.6, 1])
+                with row_l:
+                    st.markdown(name)
+                with row_r1:
+                    st.markdown(f"**{val}**")
+                with row_r2:
+                    with st.popover("מה זה?"):
+                        st.write(desc if desc else "אין הסבר זמין למדד זה.")
 
         # === מעבר לאסטרטגיית מסחר עם הטיקר הנוכחי ===
         cta1, cta2 = st.columns([1, 2])
@@ -1168,6 +1260,19 @@ def screen_trading_scout() -> None:
                     continue
 
                 render_price_header(tkr)
+
+                # === השורה התחתונה האחידה (אותו רכיב כמו בית/פונדמנטלי) ===
+                _verdict = rec_data.get("verdict")
+                if _verdict:
+                    _fund = rec_data.get("fundamental", {}) or {}
+                    render_verdict_banner(
+                        _verdict, ticker=tkr,
+                        cis_score=rec_data.get('prob_engine', {}).get('accumulation_chance'),
+                        current_phase=rec_data.get('current_phase', ''),
+                        valuation=_fund.get('valuation'),
+                        valuation_color=_fund.get('valuation_color', '#94a3b8'),
+                        extra_chips=[f"המלצה <b>{rec_data.get('recommendation','-')}</b>"],
+                    )
 
                 rec = rec_data["recommendation"]
                 color_map = {
@@ -1270,10 +1375,9 @@ def screen_trading_scout() -> None:
                     "</div>",
                     
                     "<div class='scout-stat-box'>",
-                    "<div class='scout-section-title'>🏢 סיכום פונדמנטלי מהיר</div>",
-                    f"<div class='scout-list-item'><span>מכפיל רווח עתידי (Fwd P/E):</span> <span style='font-weight:bold; color:{rec_data.get('fundamental', {}).get('valuation_color', '#fff')}'>{rec_data.get('fundamental', {}).get('pe_forward', 'N/A')} ({rec_data.get('fundamental', {}).get('valuation', '-')})</span></div>",
+                    "<div class='scout-section-title'>🏢 תמחור פונדמנטלי</div>",
+                    f"<div class='scout-list-item'><span>הערכת תמחור כוללת:</span> <span style='font-weight:800; font-size:1.3rem; color:{rec_data.get('fundamental', {}).get('valuation_color', '#fff')}'>{rec_data.get('fundamental', {}).get('valuation', '-')}</span></div>",
                     f"<div class='scout-list-item'><span>דוח רווחים קרוב:</span> <span>{rec_data.get('fundamental', {}).get('next_earnings', 'N/A')}</span></div>",
-                    f"<div class='scout-list-item'><span>סינתזה (Wyckoff + Fund):</span> <span style='font-weight:bold;'>{rec_data.get('fundamental', {}).get('synthesis', '-')}</span></div>",
                     "</div>",
                     
                     "</div>", # Close scout-stats-grid
@@ -1285,7 +1389,11 @@ def screen_trading_scout() -> None:
                     "</div>",
                     "</div>",
                 ]
-                st.markdown("".join(card_parts), unsafe_allow_html=True)
+                with st.expander(f"🔍 ניתוח טכני מעמיק ל-{tkr} (Wyckoff, Smart Money, Failure Detection)", expanded=True):
+                    st.markdown("".join(card_parts), unsafe_allow_html=True)
+
+                if st.button(f"📊 פירוט פונדמנטלי מלא ל-{tkr}", key=f"scout_to_fund_{tkr}", use_container_width=True):
+                    go_to_screen("📊 ניתוח פונדמנטלי", tkr)
                 
                 with st.expander(f"📝 אסטרטגיית מסחר מלאה ל-{tkr}", expanded=True):
                     st.markdown("#### 🗺️ תרחישי מפת הדרכים (What-if Analysis)")
