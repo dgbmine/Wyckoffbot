@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V17.4 (Banner-First on Home Fixed + Deep-Dive Expander + Wider Whitespace)
+INSTITUTIONAL SCOUT PRO V17.5 (Trading Scout: Banner -> Why -> Drill-down Hierarchy)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -1261,10 +1261,10 @@ def screen_trading_scout() -> None:
 
                 render_price_header(tkr)
 
-                # === השורה התחתונה האחידה (אותו רכיב כמו בית/פונדמנטלי) ===
+                # === שלב 1: השורה התחתונה האחידה (Verdict Banner) - ראשון ובולט ===
                 _verdict = rec_data.get("verdict")
+                _fund = rec_data.get("fundamental", {}) or {}
                 if _verdict:
-                    _fund = rec_data.get("fundamental", {}) or {}
                     render_verdict_banner(
                         _verdict, ticker=tkr,
                         cis_score=rec_data.get('prob_engine', {}).get('accumulation_chance'),
@@ -1272,6 +1272,14 @@ def screen_trading_scout() -> None:
                         valuation=_fund.get('valuation'),
                         valuation_color=_fund.get('valuation_color', '#94a3b8'),
                         extra_chips=[f"המלצה <b>{rec_data.get('recommendation','-')}</b>"],
+                    )
+
+                # === שלב 2: הסבר קצר ואנושי - למה דווקא המניה הזו, עכשיו ===
+                if _fund:
+                    why_narrative = build_fundamental_narrative(_fund, tkr, _verdict, current_phase=rec_data.get('current_phase', ''))
+                    st.markdown(
+                        f"<div class='narrative-box'><span class='narrative-title'>🦅 למה דווקא {tkr}, עכשיו?</span>{why_narrative}</div>",
+                        unsafe_allow_html=True,
                     )
 
                 rec = rec_data["recommendation"]
@@ -1389,13 +1397,14 @@ def screen_trading_scout() -> None:
                     "</div>",
                     "</div>",
                 ]
-                with st.expander(f"🔍 ניתוח טכני מעמיק ל-{tkr} (Wyckoff, Smart Money, Failure Detection)", expanded=True):
+
+                # === שלב 3: Drill-down אחד מאוחד - ניתוח טכני + אסטרטגיית מסחר, עם whitespace ברור בין החלקים ===
+                with st.expander(f"🔍 Drill-down מלא ל-{tkr}: Wyckoff, Smart Money ואסטרטגיית מסחר", expanded=True):
                     st.markdown("".join(card_parts), unsafe_allow_html=True)
 
-                if st.button(f"📊 פירוט פונדמנטלי מלא ל-{tkr}", key=f"scout_to_fund_{tkr}", use_container_width=True):
-                    go_to_screen("📊 ניתוח פונדמנטלי", tkr)
-                
-                with st.expander(f"📝 אסטרטגיית מסחר מלאה ל-{tkr}", expanded=True):
+                    st.markdown("<div style='height:34px;'></div>", unsafe_allow_html=True)
+                    st.markdown("<hr style='border-color: rgba(148,163,184,0.18); margin-bottom:28px;'>", unsafe_allow_html=True)
+
                     st.markdown("#### 🗺️ תרחישי מפת הדרכים (What-if Analysis)")
                     st.markdown(f"**✅ אם התבנית מצליחה:** {roadmap_success}")
                     st.markdown(f"**❌ אם התבנית נכשלת:** {roadmap_fail}")
@@ -1453,6 +1462,10 @@ def screen_trading_scout() -> None:
                     st.markdown(f"תרחישים מוסדיים אנלוגיים מהעבר המצליבים את נתוני הכסף החכם הנוכחיים של **{tkr}**:")
                     for rep in rec_data['replay']:
                         st.markdown(f"- {rep}")
+
+                st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+                if st.button(f"📊 פירוט פונדמנטלי מלא ל-{tkr}", key=f"scout_to_fund_{tkr}", use_container_width=True):
+                    go_to_screen("📊 ניתוח פונדמנטלי", tkr)
 
 def screen_backtest() -> None:
     st.markdown("### 📊 Backtest Engine")
