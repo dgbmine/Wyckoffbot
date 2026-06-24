@@ -1,7 +1,6 @@
 """
 ============================================================
-SCOUT CORE V16.12 — WYCKOFF INSTITUTIONAL ENGINE
-(Ackman Fundamental Integration & Iron Rules)
+SCOUT CORE V16.7 — WYCKOFF INSTITUTIONAL ENGINE
 ============================================================
 """
 
@@ -16,7 +15,9 @@ warnings.filterwarnings("ignore")
 
 # הגדרת לוגר מקומי לדיאגנוסטיקה
 logger = logging.getLogger("scout_core")
-logger.info("scout_core.py: התחלת טעינת מודול (V16.12).")
+
+# --- DEBUG: נקודת בדיקה לתחילת טעינת המודול (אם זה לא מופיע בלוגים, הקובץ לא נטען בכלל) ---
+logger.info("scout_core.py: התחלת טעינת מודול (V16.7).")
 
 # ---------- Helper Functions ----------
 def clean_filename(name: str) -> str:
@@ -33,8 +34,367 @@ def get_data(ticker, period="2y", start=None, end=None):
     try:
         tkr = yf.Ticker(ticker)
         
+        # ניסיון ראשון - הגישה המועדפת
         if start is not None and end is not None:
             df = tkr.history(start=start, end=end, auto_adjust=False)
+            if df is None or df.empty or len(df) < 40:
+                df = tkr.history(start=start, end=end)
+        else:
+            df = tkr.history(period=period, auto_adjust=False)
+            if df is None or df.empty or len(df) < 40:
+                df = tkr.history(period=period)
+
+        if df is None or df.empty or len(df) < 40:
+            return None
+
+        def _safe_tz_drop(idx):
+            idx = pd.to_datetime(idx)
+            if getattr(idx, 'tz', None) is not None:
+                return idx.tz_convert(None)
+            return idx
+
+        df.index = _safe_tz_drop(df.index)
+        
+        df = df[~df.index.duplicated(keep='first')]
+        df.dropna(subset=['Close', 'Volume'], inplace=True)
+        df = df.sort_index()
+
+        if start is not None and end is not None:
+            spy_df = yf.Ticker("SPY").history(start=start, end=end, auto_adjust=False)
+            if spy_df is None or spy_df.empty:
+                spy_df = yf.Ticker("SPY").history(start=start, end=end)
+                
+            vix_df = yf.Ticker("^VIX").history(start=start, end=end, auto_adjust=False)
+            if vix_df is None or vix_df.empty:
+                vix_df = yf.Ticker("^VIX").history(start=start, end=end)
+        else:
+            spy_df = yf.Ticker("SPY").history(period=period, auto_adjust=False)
+            if spy_df is None or spy_df.empty:
+                spy_df = yf.Ticker("SPY").history(period=period)
+
+            vix_df = yf.Ticker("^VIX").history(period=period, auto_adjust=False)
+            if vix_df is None or vix_df.empty:
+                vix_df = yf.Ticker("^VIX").history(period=period)
+
+        if spy_df is not None and not spy_df.empty:
+            spy_df.index = _safe_tz_drop(spy_df.index)
+            spy_df = spy_df[~spy_df.index.duplicated(keep='first')]
+            spy_df.dropna(subset=['Close'], inplace=True)
+            df = df.join(spy_df[["Close"]].rename(columns={"Close": "spy_close"}), how="left")
+            df['spy_close'] = df['spy_close'].ffill()
+        else:
+            df["spy_close"] = np.nan
+
+        if vix_df is not None and not vix_df.empty:
+            vix_df.index = _safe_tz_drop(vix_df.index)
+            vix_df = vix_df[~vix_df.index.duplicated(keep='first')]
+            vix_df.dropna(subset=['Close'], inplace=True)
+            df = df.join(vix_df[["Close"]].rename(columns={"Close": "vix_close"}), how="left")
+            df['vix_close'] = df['vix_close'].ffill()
+        else:
+            df["vix_close"] = np.nan
+
+        return df
+    except Exception as e:
+        logger.error(f"Error in get_data for {ticker}: {e}")
+        return None
+
+# ---------- Sector Benchmarks (used for context-aware valuation & explanations) ----------
+_SECTOR_BENCHMARKS = {
+    "Technology":            {"pe_cheap": 22, "pe_exp": 35, "om": 22.0, "rg": 15.0, "label": "טכנולוגיה"},
+    "Communication Services": {"pe_cheap": 20, "pe_exp": 32, "om": 18.0, "rg": 12.0, "label": "תקשורת"},
+    "Financial Services":    {"pe_cheap": 12, "pe_exp": 18, "om": 30.0, "rg": 8.0,  "label": "פיננסים"},
+    "Energy":                {"pe_cheap": 10, "pe_exp": 18, "om": 15.0, "rg": 5.0,  "label": "אנרגיה"},
+    "Healthcare":            {"pe_cheap": 16, "pe_exp": 26, "om": 16.0, "rg": 10.0, "label": "בריאות"},
+    "Consumer Cyclical":     {"pe_cheap": 15, "pe_exp": 25, "om": 10.0, "rg": 8.0,  "label": "צריכה מחזורית"},
+    "Consumer Defensive":    {"pe_cheap": 16, "pe_exp": 24, "om": 9.0,  "rg": 5.0,  "label": "צריכה בסיסית"},
+    "Industrials":           {"pe_cheap": 15, "pe_exp": 24, "om": 12.0, "rg": 7.0,  "label": "תעשייה"},
+    "Basic Materials":       {"pe_cheap": 11, "pe_exp": 20, "om": 12.0, "rg": 5.0,  "label": "חומרי גלם"},
+    "Utilities":             {"pe_cheap": 14, "pe_exp": 22, "om": 14.0, "rg": 4.0,  "label": "תשתיות"},
+    "Real Estate":           {"pe_cheap": 14, "pe_exp": 24, "om": 25.0, "rg": 6.0,  "label": "נדל\"ן"},
+}
+_SECTOR_DEFAULT = {"pe_cheap": 16, "pe_exp": 26, "om": 12.0, "rg": 8.0, "label": "כללי"}
+
+
+def _get_sector_bench(sector: str) -> dict:
+    return _SECTOR_BENCHMARKS.get(sector, _SECTOR_DEFAULT)
+
+
+def get_fundamental_data(ticker: str) -> dict:
+    """
+    שואב נתונים פונדמנטליים ויחסי תמחור מ-Yahoo Finance.
+    גרסה משודרגת: מוסיפה תזרים חופשי (FCF Yield), שולי רווח, מינוף (Net Debt/EBITDA),
+    הסבר ספציפי לכל מכפיל, ונימוק מפורש *למה* המניה זולה/יקרה וביחס למה.
+    כל המפתחות המקוריים נשמרים לתאימות לאחור.
+    """
+    try:
+        tkr = yf.Ticker(ticker)
+        info = tkr.info
+        if not info:
+            return {}
+
+        pe_trailing = info.get("trailingPE")
+        pe_forward = info.get("forwardPE")
+        peg = info.get("pegRatio")
+        ev_ebitda = info.get("enterpriseToEbitda")
+        ps = info.get("priceToSalesTrailing12Months")
+        pb = info.get("priceToBook")
+        roe = info.get("returnOnEquity")
+        eps_growth = info.get("earningsGrowth")
+        sector = info.get("sector", "Unknown")
+        market_cap = info.get("marketCap", 0) or 0
+
+        bench = _get_sector_bench(sector)
+        sector_he = bench["label"]
+
+        # ---------- חישובי עומק: תזרים, שוליים, מינוף ----------
+        try: cf = tkr.cashflow
+        except Exception: cf = pd.DataFrame()
+        try: bs = tkr.balance_sheet
+        except Exception: bs = pd.DataFrame()
+        try: fin = tkr.financials
+        except Exception: fin = pd.DataFrame()
+
+        ocf, fcf = 0.0, 0.0
+        if cf is not None and not cf.empty and "Operating Cash Flow" in cf.index:
+            try:
+                ocf = float(cf.loc["Operating Cash Flow"].iloc[0])
+                if "Capital Expenditure" in cf.index:
+                    fcf = ocf + float(cf.loc["Capital Expenditure"].iloc[0])  # CapEx שלילי בד"כ
+                else:
+                    fcf = ocf
+            except Exception:
+                pass
+        fcf_yield = (fcf / market_cap * 100) if market_cap > 0 and fcf > 0 else 0.0
+
+        op_margin, rev_growth = 0.0, 0.0
+        if fin is not None and not fin.empty and "Total Revenue" in fin.index:
+            try:
+                rev_curr = float(fin.loc["Total Revenue"].iloc[0])
+                if len(fin.columns) > 1:
+                    rev_prev = float(fin.loc["Total Revenue"].iloc[1])
+                    if rev_prev:
+                        rev_growth = ((rev_curr - rev_prev) / abs(rev_prev)) * 100
+                if "Operating Income" in fin.index and rev_curr:
+                    op_margin = (float(fin.loc["Operating Income"].iloc[0]) / rev_curr) * 100
+            except Exception:
+                pass
+
+        net_debt_ebitda = None
+        if bs is not None and not bs.empty and fin is not None and not fin.empty:
+            try:
+                total_debt = float(bs.loc["Total Debt"].iloc[0]) if "Total Debt" in bs.index else 0.0
+                cash = float(bs.loc["Cash And Cash Equivalents"].iloc[0]) if "Cash And Cash Equivalents" in bs.index else 0.0
+                ebitda = float(fin.loc["EBITDA"].iloc[0]) if "EBITDA" in fin.index else 0.0
+                if ebitda > 0:
+                    net_debt_ebitda = (total_debt - cash) / ebitda
+            except Exception:
+                net_debt_ebitda = None
+
+        # ---------- תמחור מול הסקטור + נימוק מפורש ----------
+        valuation = "הוגן"
+        color = "#eab308"
+        reasons = []
+        if pe_forward:
+            if pe_forward < bench["pe_cheap"]:
+                valuation, color = "זול", "#16a34a"
+            elif pe_forward > bench["pe_exp"]:
+                valuation, color = "יקר", "#ef4444"
+
+        # נימוקים שמסבירים *ביחס למה* ולמה
+        if pe_forward:
+            if pe_forward < bench["pe_cheap"]:
+                reasons.append(f"מכפיל הרווח העתידי ({pe_forward:.1f}) נמוך מסף הזול של סקטור ה{sector_he} (~{bench['pe_cheap']}).")
+            elif pe_forward > bench["pe_exp"]:
+                reasons.append(f"מכפיל הרווח העתידי ({pe_forward:.1f}) גבוה מסף היוקר של סקטור ה{sector_he} (~{bench['pe_exp']}).")
+            else:
+                reasons.append(f"מכפיל הרווח העתידי ({pe_forward:.1f}) בתוך טווח ההוגן של סקטור ה{sector_he} ({bench['pe_cheap']}-{bench['pe_exp']}).")
+        if peg:
+            if peg < 1.0:
+                reasons.append(f"יחס PEG ({peg:.2f}) מתחת ל-1 — המניה צומחת מהר יותר ממה שהמכפיל מתמחר (זול ביחס לצמיחה).")
+            elif peg > 2.0:
+                reasons.append(f"יחס PEG ({peg:.2f}) מעל 2 — משלמים פרמיה כבדה על כל יחידת צמיחה.")
+        if fcf_yield:
+            if fcf_yield >= 4.0:
+                reasons.append(f"תשואת תזרים חופשי בריאה ({fcf_yield:.1f}%) — העסק מייצר מזומן אמיתי ביחס לשוויו.")
+            elif fcf_yield < 2.0 and fcf_yield > 0:
+                reasons.append(f"תשואת תזרים חופשי דקה ({fcf_yield:.1f}%) — מעט מזומן חופשי ביחס לשווי השוק.")
+        if op_margin:
+            if op_margin > bench["om"]:
+                reasons.append(f"שולי תפעול ({op_margin:.1f}%) מעל ממוצע הסקטור ({bench['om']:.0f}%) — חפיר תחרותי וכוח תמחור.")
+            elif op_margin < bench["om"] * 0.7:
+                reasons.append(f"שולי תפעול ({op_margin:.1f}%) מתחת לסקטור ({bench['om']:.0f}%) — יעילות נמוכה מהמתחרים.")
+        if net_debt_ebitda is not None and net_debt_ebitda > 3.0:
+            reasons.append(f"מינוף גבוה (חוב/EBITDA {net_debt_ebitda:.1f}x) — דגל אדום על המאזן.")
+
+        valuation_reason = " ".join(reasons) if reasons else "אין מספיק נתונים פונדמנטליים מובהקים לנימוק מפורט."
+
+        next_earnings = "לא ידוע"
+        try:
+            calendar = tkr.calendar
+            if calendar is not None and not getattr(calendar, "empty", True):
+                if "Earnings Date" in calendar.index:
+                    dates = calendar.loc["Earnings Date"]
+                    if isinstance(dates, list) and len(dates) > 0:
+                        next_earnings = dates[0].strftime("%Y-%m-%d")
+                    elif hasattr(dates, "strftime"):
+                        next_earnings = dates.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+        # ---------- הסבר ספציפי לכל מכפיל (פר-מטריקה, לא גנרי) ----------
+        explanations = {
+            "pe_trailing": (
+                f"מכפיל הרווח ההיסטורי של {ticker} עומד על {round(pe_trailing,1) if pe_trailing else 'N/A'}. "
+                f"הוא מודד כמה משלמים על כל דולר רווח שכבר נוצר ב-12 החודשים האחרונים. "
+                f"בסקטור ה{sector_he}, מתחת ל-{bench['pe_cheap']} נחשב זול ומעל {bench['pe_exp']} יקר."
+            ),
+            "pe_forward": (
+                f"מכפיל הרווח העתידי ({round(pe_forward,1) if pe_forward else 'N/A'}) מבוסס על תחזיות רווח קדימה — "
+                f"המדד המרכזי לתמחור. ביחס לסקטור ה{sector_he} (זול<{bench['pe_cheap']}, יקר>{bench['pe_exp']}), "
+                f"{ticker} מתומחרת כעת כ'{valuation}'."
+            ),
+            "peg": (
+                f"יחס PEG ({round(peg,2) if peg else 'N/A'}) משקלל את המכפיל מול קצב צמיחת הרווח. "
+                f"מתחת ל-1 = הצמיחה 'משלמת' על המכפיל (הזדמנות); מעל 2 = פרמיה יקרה על הצמיחה."
+            ),
+            "ev_ebitda": (
+                f"EV/EBITDA ({round(ev_ebitda,1) if ev_ebitda else 'N/A'}) מנקה הבדלי מבנה-הון, מס ופחת, "
+                f"ולכן מאפשר השוואה הוגנת בין חברות בסקטור ה{sector_he} עם רמות חוב שונות."
+            ),
+            "ps": (
+                f"מכפיל מכירות P/S ({round(ps,2) if ps else 'N/A'}) — שווי שוק חלקי הכנסות. "
+                f"קריטי לחברות צמיחה שעדיין אינן רווחיות, שם מכפיל הרווח אינו רלוונטי."
+            ),
+            "pb": (
+                f"מכפיל הון P/B ({round(pb,2) if pb else 'N/A'}) — שווי שוק חלקי ההון העצמי המאזני. "
+                f"רלוונטי במיוחד לבנקים ולחברות עתירות נכסים מוחשיים{' (כמו בסקטור ה'+sector_he+')' if sector in ['Financial Services','Real Estate','Utilities'] else ''}."
+            ),
+            "roe": (
+                f"תשואה להון ROE ({f'{round(roe*100,1)}%' if roe else 'N/A'}) — כמה רווח מפיקה ההנהלה על כל דולר "
+                f"של בעלי המניות. מעל 15% נחשב לאיכות ניהולית גבוהה."
+            ),
+            "eps_growth": (
+                f"צמיחת הרווח למניה ({f'{round(eps_growth*100,1)}%' if eps_growth else 'N/A'}) מול התקופה המקבילה — "
+                f"מדד הצמיחה הבסיסי. בסקטור ה{sector_he} צמיחה אופיינית היא סביב {bench['rg']:.0f}%."
+            ),
+            "fcf_yield": (
+                f"תשואת תזרים חופשי (FCF Yield) של {fcf_yield:.1f}% — המזומן האמיתי שהעסק מייצר ביחס לשווי השוק. "
+                f"מעל 3-4% מעיד על חוסן תזרימי; מתחת ל-2% מחייב הצדקה בצמיחה."
+            ),
+            "op_margin": (
+                f"שולי תפעול {op_margin:.1f}% מול ~{bench['om']:.0f}% בסקטור ה{sector_he}. "
+                + ("מצביע על חפיר תחרותי וכוח תמחור." if op_margin > bench['om'] else "מצביע על לחץ עלויות/יעילות נמוכה מהמתחרים.")
+            ),
+            "net_debt_ebitda": (
+                (f"מינוף חוב נטו/EBITDA של {net_debt_ebitda:.2f}x. " if net_debt_ebitda is not None else "אין נתוני מינוף זמינים. ")
+                + ("מתחת ל-3x נחשב בטוח." if (net_debt_ebitda is not None and net_debt_ebitda < 3) else
+                   ("מעל 3x — דגל אדום על המאזן בעת משבר." if net_debt_ebitda is not None else ""))
+            ),
+        }
+
+        return {
+            # --- מפתחות מקוריים (תאימות לאחור) ---
+            "pe_trailing": round(pe_trailing, 2) if pe_trailing else "N/A",
+            "pe_forward": round(pe_forward, 2) if pe_forward else "N/A",
+            "peg": round(peg, 2) if peg else "N/A",
+            "ev_ebitda": round(ev_ebitda, 2) if ev_ebitda else "N/A",
+            "ps": round(ps, 2) if ps else "N/A",
+            "pb": round(pb, 2) if pb else "N/A",
+            "roe": f"{round(roe * 100, 1)}%" if roe else "N/A",
+            "eps_growth": f"{round(eps_growth * 100, 1)}%" if eps_growth else "N/A",
+            "sector": sector,
+            "valuation": valuation,
+            "valuation_color": color,
+            "next_earnings": next_earnings,
+            # --- שדות חדשים (עומק) ---
+            "sector_he": sector_he,
+            "fcf_yield": f"{fcf_yield:.1f}%" if fcf_yield else "N/A",
+            "op_margin": f"{op_margin:.1f}%" if op_margin else "N/A",
+            "rev_growth": f"{rev_growth:.1f}%" if rev_growth else "N/A",
+            "net_debt_ebitda": f"{net_debt_ebitda:.2f}x" if net_debt_ebitda is not None else "N/A",
+            "valuation_reason": valuation_reason,
+            "explanations": explanations,
+            # ערכים גולמיים לשימוש בסינתזה הקשיחה
+            "_raw": {
+                "fcf_yield": fcf_yield, "op_margin": op_margin, "rev_growth": rev_growth,
+                "net_debt_ebitda": net_debt_ebitda if net_debt_ebitda is not None else 0.0,
+                "pe_forward": pe_forward or 0.0, "bench_om": bench["om"], "peg": peg or 0.0,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error fetching fundamentals for {ticker}: {e}")
+        return {}
+
+
+def synthesize_verdict(fund_data: dict, cis_score: float, current_phase: str, ticker: str = "") -> dict:
+    """
+    סינתזה קשיחה ודטרמיניסטית בין Wyckoff (טכני) לפונדמנטלי.
+    מחזירה מסר *אחד* חד-משמעי ללא סתירות, עם דירוג ביטחון וצבע.
+    זוהי נקודת האמת היחידה לסינתזה בכל המערכת (Home / Fundamental / Trading Scout).
+    """
+    if not fund_data or not fund_data.get("valuation"):
+        return {
+            "headline": "⚖️ נתונים פונדמנטליים חסרים",
+            "detail": "לא נמצאו נתונים פונדמנטליים מספיקים. ההחלטה מתבססת על Wyckoff בלבד.",
+            "color": "#94a3b8", "tier": "NEUTRAL",
+        }
+
+    val = fund_data.get("valuation", "הוגן")
+    raw = fund_data.get("_raw", {})
+    fcf_y = raw.get("fcf_yield", 0.0)
+    om = raw.get("op_margin", 0.0)
+    bench_om = raw.get("bench_om", 12.0)
+    nde = raw.get("net_debt_ebitda", 0.0)
+    sector_he = fund_data.get("sector_he", "הסקטור")
+
+    is_bearish_phase = any(p in current_phase for p in
+                           ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax", "Supply"])
+    is_bullish_phase = any(p in current_phase for p in
+                           ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "LPS", "SOS", "Re-accumulation"])
+    is_uncertain = any(p in current_phase for p in ["TRANSITION", "UNCERTAIN", "לא בתהליך"])
+
+    strong_cash = (fcf_y > 3.0) and (om >= bench_om * 0.8)
+    high_debt = nde > 3.0
+
+    # ----- היררכיית הכרעה דטרמיניסטית (הראשון שמתאים זוכה) -----
+    # 1. דובי / חלש מאוד → תמיד אזהרה, גם אם "זול"
+    if is_bearish_phase or cis_score <= 40:
+        if high_debt or not strong_cash:
+            return {"headline": "☠️ מלכודת ערך רעילה (Toxic Value Trap)",
+                    "detail": f"הפאזה הטכנית '{current_phase}' שלילית והכסף החכם נוטש, "
+                              f"בשילוב חולשה תזרימית/מינוף גבוה בליבת העסק מול סקטור ה{sector_he}. סכין נופלת — התרחק.",
+                    "color": "#ef4444", "tier": "STRONG_AVOID"}
+        return {"headline": "🚨 סכין נופלת (Falling Knife)",
+                "detail": f"הנתונים היבשים סבירים, אך הפאזה '{current_phase}' מצביעה על פיזור מוסדי אגרסיבי. "
+                          f"מלכודת ערך קלאסית — אל תתפוס תחתיות.",
+                "color": "#ef4444", "tier": "AVOID"}
+
+    # 2. שורי + ציון גבוה → הכרעה לפי איכות פונדמנטלית
+    if is_bullish_phase and cis_score >= 65:
+        if strong_cash and val != "יקר" and not high_debt:
+            return {"headline": "🔥 שכנוע גבוה (High Conviction)",
+                    "detail": f"שילוב אידיאלי: תזרים בריא ({fund_data.get('fcf_yield','-')}), יעילות מעל הסקטור, "
+                              f"ואיסוף מוסדי מובהק בפאזה '{current_phase}'. פוזיציית לונג איכותית.",
+                    "color": "#16a34a", "tier": "STRONG_BUY"}
+        if val == "יקר" and strong_cash:
+            return {"headline": "🚀 פרמיית איכות (Quality Premium)",
+                    "detail": f"המוסדיים משלמים פרמיה על {ticker} בזכות הנהלה שמדפיסה מזומן ומכה את הסקטור. "
+                              f"הטרנד נתמך — יקר אך מוצדק.",
+                    "color": "#4ade80", "tier": "BUY"}
+        if high_debt or not strong_cash:
+            return {"headline": "⚠️ ספקולציית מומנטום",
+                    "detail": f"קיים איסוף מוסדי, אך חולשה במאזן/תזרים מעידה על מהלך טכני ספקולטיבי. "
+                              f"סיכון גבוה להחזקה ארוכה — נהל בקפדנות.",
+                    "color": "#facc15", "tier": "HOLD"}
+        return {"headline": "✅ קנייה (Buy)",
+                "detail": f"איסוף מוסדי בפאזה חיובית '{current_phase}' עם תמחור {val}. שילוב תומך כניסה.",
+                "color": "#4ade80", "tier": "BUY"}
+
+    # 3. אזור ביניים — איסוף שקט / כסף מת
+    if cis_score >= 55 and strong_cash:
+        return {"headline": "⚖️ איסוף שקט (Quiet Accumulation)",
+                "detail": f"{ticker} מדפיסה מזומן ונאספת בהדרגה מתחת לרדאר            df = tkr.history(start=start, end=end, auto_adjust=False)
             if df is None or df.empty or len(df) < 40:
                 df = tkr.history(start=start, end=end)
         else:
