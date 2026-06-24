@@ -1,7 +1,7 @@
 """
 ============================================================
-SCOUT CORE V17.4 — WYCKOFF INSTITUTIONAL ENGINE
-(Zero-Softening Risk Language - No Conditional Hedging in Danger Tiers)
+SCOUT CORE V17.5 — WYCKOFF INSTITUTIONAL ENGINE
+(Shouting Risk Language + Phase-Aware Personalized Narrative)
 ============================================================
 """
 
@@ -422,8 +422,12 @@ def get_fundamental_data(ticker: str) -> dict:
         return {}
 
 
-def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = None) -> str:
-    """נרטיב חופשי בעברית בסטייל אקמן על מצב המניה הספציפי."""
+def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = None, current_phase: str = "") -> str:
+    """
+    נרטיב חופשי בעברית בסטייל אקמן על מצב המניה הספציפי.
+    אם current_phase מועבר - הנרטיב נפתח בהקשר הטכני המדויק (איזו פאזה, עכשיו, למה זה חשוב
+    בדיוק למניה הזו) ולא רק בניתוח פונדמנטלי כללי - כך שההסבר מרגיש אישי לרגע הנוכחי.
+    """
     if not fund_data:
         return "אין מספיק נתונים פונדמנטליים לבניית ניתוח עבור מניה זו."
     raw = fund_data.get("_raw", {})
@@ -438,6 +442,8 @@ def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = No
     roe = raw.get("roe_pct", 0)
     rg = raw.get("rev_growth", 0)
     parts = []
+    if current_phase:
+        parts.append(f"בדיוק עכשיו, {ticker} נמצאת בפאזת '{current_phase}' - וזה הרגע הנכון לשאול אם התמונה הפונדמנטלית מצדיקה פעולה. ")
     if val == "זול":
         parts.append(f"מבט אקמני על {ticker}: השוק מתמחר אותה בזול ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + ". ")
     elif val == "יקר":
@@ -469,7 +475,7 @@ def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = No
     elif nde and 0 < nde < 1:
         parts.append(f"המאזן איתן (מינוף נמוך {nde:.1f}x) - כרית ביטחון מצוינת. ")
     if verdict and verdict.get("headline"):
-        parts.append(f"\n\n**שורה תחתונה:** {verdict['headline']} - {verdict.get('detail','')}")
+        parts.append(f"\n\n**שורה תחתונה ל-{ticker}:** {verdict['headline']} - {verdict.get('detail','')}")
     return "".join(parts)
 
 
@@ -505,18 +511,20 @@ def _synthesize_verdict_core(fund_data: dict, cis_score: float, current_phase: s
     # 1. דובי / חלש מאוד → תמיד אזהרה, גם אם "זול"
     if is_bearish_phase or cis_score <= 40:
         if high_debt or not strong_cash:
-            return {"headline": "☠️ מלכודת ערך רעילה (Toxic Value Trap)",
+            return {"headline": "☠️ מלכודת רעילה — התרחק מיד",
                     "detail": f"הפאזה הטכנית '{current_phase}' שלילית והכסף החכם נוטש, "
-                              f"בשילוב חולשה תזרימית/מינוף גבוה בליבת העסק מול סקטור ה{sector_he}. סכין נופלת — התרחק.",
+                              f"בשילוב חולשה תזרימית/מינוף גבוה בליבת העסק מול סקטור ה{sector_he}. "
+                              f"סכנה גבוהה — זו סכין נופלת, לא הזדמנות.",
                     "color": "#ef4444", "tier": "STRONG_AVOID",
-                    "action_line": "אל תיגע. אם יש לך פוזיציה — צא ממנה. אין כאן הזדמנות, יש מלכודת מסוכנת.",
+                    "action_line": "צא עכשיו אם יש לך פוזיציה. אל תיגע אם אין. סכנה גבוהה — אין כאן הזדמנות, יש מלכודת.",
                     "confidence": "גבוה"}
-        return {"headline": "🚨 סכין נופלת (Falling Knife)",
+        return {"headline": "🚨 סכין נופלת — אל תיגע",
                 "detail": f"הנתונים היבשים סבירים, אך הפאזה '{current_phase}' מצביעה על פיזור מוסדי אגרסיבי. "
-                          f"מלכודת ערך קלאסית — אל תתפוס תחתיות.",
+                          f"מלכודת ערך קלאסית — סכנה גבוהה לכל מי שמנסה לתפוס תחתית.",
                 "color": "#ef4444", "tier": "AVOID",
-                "action_line": "אל תתפוס תחתיות. המתן לבלימה ולסימני איסוף לפני כל מחשבה על כניסה.",
+                "action_line": "אל תתפוס תחתיות. סכנה גבוהה. המתן לבלימה ולסימני איסוף מוסדי מאומתים לפני כל מחשבה על כניסה.",
                 "confidence": "גבוה"}
+
 
     # 2. שורי + ציון גבוה → הכרעה לפי איכות פונדמנטלית
     if is_bullish_phase and cis_score >= 65:
@@ -570,7 +578,7 @@ def _synthesize_verdict_core(fund_data: dict, cis_score: float, current_phase: s
 
 # רשימת מילות-מפתח דוביות/מלכודת-ערך - מקור אמת יחיד לבדיקת הבטחון הקשיח למטה
 _BEARISH_PHASE_KEYWORDS = ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax", "Supply"]
-_VALUE_TRAP_KEYWORDS = ["Toxic Value Trap", "Falling Knife", "סכין נופלת", "מלכודת ערך"]
+_VALUE_TRAP_KEYWORDS = ["מלכודת רעילה", "סכין נופלת", "מלכודת ערך", "Toxic Value Trap", "Falling Knife"]
 _FORBIDDEN_TIERS_IN_BEARISH = ("STRONG_BUY", "BUY")
 
 
@@ -597,13 +605,13 @@ def synthesize_verdict(fund_data: dict, cis_score: float, current_phase: str, ti
             verdict.get("tier"), ticker, current_phase
         )
         verdict = {
-            "headline": "🚨 סכין נופלת (Falling Knife) — נחסם אוטומטית",
+            "headline": "🚨 סכין נופלת — אל תיגע (נחסם אוטומטית)",
             "detail": (
-                f"זוהתה פאזה טכנית דובית ('{current_phase}') עבור {ticker}. המערכת חוסמת באופן מוחלט "
+                f"זוהתה פאזה טכנית דובית ('{current_phase}') עבור {ticker}. סכנה גבוהה. המערכת חוסמת באופן מוחלט "
                 f"כל המלצת קנייה במצב זה, ללא יוצא מן הכלל, גם אם נתונים פונדמנטליים אחרים נראו חיוביים."
             ),
             "color": "#ef4444", "tier": "AVOID",
-            "action_line": "אל תתפוס תחתיות. המתן לבלימה ולסימני איסוף מוסדי מאומתים לפני כל כניסה.",
+            "action_line": "אל תתפוס תחתיות. סכנה גבוהה. המתן לבלימה ולסימני איסוף מוסדי מאומתים לפני כל כניסה.",
             "confidence": "גבוה",
         }
 
