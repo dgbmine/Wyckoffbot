@@ -120,34 +120,69 @@ def _get_sector_bench(sector: str) -> dict:
     return _SECTOR_BENCHMARKS.get(sector, _SECTOR_DEFAULT)
 
 
+def _safe_row(frame, *names):
+    """מחזיר את הערך האחרון (העדכני) של השורה הראשונה שנמצאת מבין השמות, אחרת None."""
+    if frame is None or getattr(frame, "empty", True):
+        return None
+    for nm in names:
+        if nm in frame.index:
+            try:
+                val = frame.loc[nm].iloc[0]
+                if val is not None and not (isinstance(val, float) and (val != val)):
+                    return float(val)
+            except Exception:
+                continue
+    return None
+
+
+def _safe_row_prev(frame, *names):
+    """כמו _safe_row אבל מהעמודה הקודמת (שנה שעברה) לחישוב צמיחה."""
+    if frame is None or getattr(frame, "empty", True) or len(frame.columns) < 2:
+        return None
+    for nm in names:
+        if nm in frame.index:
+            try:
+                val = frame.loc[nm].iloc[1]
+                if val is not None and not (isinstance(val, float) and (val != val)):
+                    return float(val)
+            except Exception:
+                continue
+    return None
+
+
 def get_fundamental_data(ticker: str) -> dict:
     """
-    שואב נתונים פונדמנטליים ויחסי תמחור מ-Yahoo Finance.
-    גרסה משודרגת: מוסיפה תזרים חופשי (FCF Yield), שולי רווח, מינוף (Net Debt/EBITDA),
-    הסבר ספציפי לכל מכפיל, ונימוק מפורש *למה* המניה זולה/יקרה וביחס למה.
-    כל המפתחות המקוריים נשמרים לתאימות לאחור.
+    מנוע פונדמנטלי בסטייל Bill Ackman - *מחשב בעצמו* את כל המכפילים מנתוני הליבה
+    (מחיר נוכחי x מניות / רווח/הכנסות/תזרים), במקום לשאוב מכפילים מוכנים מ-Yahoo.
+    כך נמנעים מ-N/A: לכל מכפיל מקור ראשי (חישוב עצמי) ונפילה למקור משני (info).
+    סדר אקמני: (1) מכפיל רווח, (2) FCF Yield, (3) צמיחה/איכות, (4) מינוף.
+    מחזיר גם נרטיב חופשי. כל המפתחות הישנים נשמרים.
     """
     try:
         tkr = yf.Ticker(ticker)
-        info = tkr.info
-        if not info:
-            return {}
+        try:
+            info = tkr.info or {}
+        except Exception:
+            info = {}
 
-        pe_trailing = info.get("trailingPE")
-        pe_forward = info.get("forwardPE")
-        peg = info.get("pegRatio")
-        ev_ebitda = info.get("enterpriseToEbitda")
-        ps = info.get("priceToSalesTrailing12Months")
-        pb = info.get("priceToBook")
-        roe = info.get("returnOnEquity")
-        eps_growth = info.get("earningsGrowth")
-        sector = info.get("sector", "Unknown")
-        market_cap = info.get("marketCap", 0) or 0
-
+        sector = info.get("sector", "Unknown") or "Unknown"
         bench = _get_sector_bench(sector)
         sector_he = bench["label"]
 
-        # ---------- חישובי עומק: תזרים, שוליים, מינוף ----------
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        if not price:
+            try:
+                hist = tkr.history(period="5d")
+                if hist is not None and not hist.empty:
+                    price = float(hist["Close"].iloc[-1])
+            except Exception:
+                price = None
+        shares = info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")
+        market_cap = info.get("marketCap")
+        if (not market_cap) and price and shares:
+            market_cap = price * shares
+        market_cap = market_cap or 0.0
+
         try: cf = tkr.cashflow
         except Exception: cf = pd.DataFrame()
         try: bs = tkr.balance_sheet
@@ -155,78 +190,101 @@ def get_fundamental_data(ticker: str) -> dict:
         try: fin = tkr.financials
         except Exception: fin = pd.DataFrame()
 
-        ocf, fcf = 0.0, 0.0
-        if cf is not None and not cf.empty and "Operating Cash Flow" in cf.index:
-            try:
-                ocf = float(cf.loc["Operating Cash Flow"].iloc[0])
-                if "Capital Expenditure" in cf.index:
-                    fcf = ocf + float(cf.loc["Capital Expenditure"].iloc[0])  # CapEx שלילי בד"כ
-                else:
-                    fcf = ocf
-            except Exception:
-                pass
-        fcf_yield = (fcf / market_cap * 100) if market_cap > 0 and fcf > 0 else 0.0
+        net_income   = _safe_row(fin, "Net Income", "Net Income Common Stockholders", "Net Income Continuous Operations")
+        revenue      = _safe_row(fin, "Total Revenue", "Operating Revenue")
+        revenue_prev = _safe_row_prev(fin, "Total Revenue", "Operating Revenue")
+        op_income    = _safe_row(fin, "Operating Income", "Total Operating Income As Reported")
+        ebitda_raw   = _safe_row(fin, "EBITDA", "Normalized EBITDA")
+        ni_prev      = _safe_row_prev(fin, "Net Income", "Net Income Common Stockholders")
 
-        op_margin, rev_growth = 0.0, 0.0
-        if fin is not None and not fin.empty and "Total Revenue" in fin.index:
-            try:
-                rev_curr = float(fin.loc["Total Revenue"].iloc[0])
-                if len(fin.columns) > 1:
-                    rev_prev = float(fin.loc["Total Revenue"].iloc[1])
-                    if rev_prev:
-                        rev_growth = ((rev_curr - rev_prev) / abs(rev_prev)) * 100
-                if "Operating Income" in fin.index and rev_curr:
-                    op_margin = (float(fin.loc["Operating Income"].iloc[0]) / rev_curr) * 100
-            except Exception:
-                pass
+        ocf   = _safe_row(cf, "Operating Cash Flow", "Cash Flow From Continuing Operating Activities", "Total Cash From Operating Activities")
+        capex = _safe_row(cf, "Capital Expenditure", "Capital Expenditures")
+        fcf = None
+        if ocf is not None:
+            fcf = ocf + capex if capex is not None else ocf
+
+        total_debt = _safe_row(bs, "Total Debt")
+        if total_debt is None:
+            ld = _safe_row(bs, "Long Term Debt") or 0.0
+            sd = _safe_row(bs, "Current Debt", "Short Term Debt", "Other Current Borrowings") or 0.0
+            total_debt = (ld + sd) if (ld or sd) else None
+        cash = _safe_row(bs, "Cash And Cash Equivalents", "Cash Cash Equivalents And Short Term Investments", "Cash Financial")
+        equity = _safe_row(bs, "Stockholders Equity", "Total Equity Gross Minority Interest", "Common Stock Equity")
+
+        pe_trailing = None
+        if price and net_income and shares and net_income > 0:
+            eps_ttm = net_income / shares
+            if eps_ttm > 0:
+                pe_trailing = price / eps_ttm
+        if pe_trailing is None:
+            pe_trailing = info.get("trailingPE")
+
+        pe_forward = info.get("forwardPE")
+
+        fcf_yield = (fcf / market_cap * 100) if (fcf and market_cap > 0 and fcf > 0) else 0.0
+
+        rev_growth = ((revenue - revenue_prev) / abs(revenue_prev) * 100) if (revenue and revenue_prev) else 0.0
+        ni_growth  = ((net_income - ni_prev) / abs(ni_prev) * 100) if (net_income and ni_prev) else None
+        op_margin  = (op_income / revenue * 100) if (op_income and revenue) else 0.0
+        roe = None
+        if net_income and equity and equity > 0:
+            roe = net_income / equity
+        if roe is None:
+            roe = info.get("returnOnEquity")
+
+        growth_for_peg = ni_growth if (ni_growth and ni_growth > 0) else (rev_growth if rev_growth > 0 else None)
+        peg = None
+        pe_for_peg = pe_forward or pe_trailing
+        if pe_for_peg and growth_for_peg and growth_for_peg > 0:
+            peg = pe_for_peg / growth_for_peg
+        if peg is None:
+            peg = info.get("pegRatio")
+
+        ps = (market_cap / revenue) if (market_cap > 0 and revenue and revenue > 0) else info.get("priceToSalesTrailing12Months")
+        pb = (market_cap / equity) if (market_cap > 0 and equity and equity > 0) else info.get("priceToBook")
+        ev_ebitda = None
+        if ebitda_raw and ebitda_raw > 0 and market_cap > 0:
+            ev = market_cap + (total_debt or 0.0) - (cash or 0.0)
+            ev_ebitda = ev / ebitda_raw
+        if ev_ebitda is None:
+            ev_ebitda = info.get("enterpriseToEbitda")
 
         net_debt_ebitda = None
-        if bs is not None and not bs.empty and fin is not None and not fin.empty:
-            try:
-                total_debt = float(bs.loc["Total Debt"].iloc[0]) if "Total Debt" in bs.index else 0.0
-                cash = float(bs.loc["Cash And Cash Equivalents"].iloc[0]) if "Cash And Cash Equivalents" in bs.index else 0.0
-                ebitda = float(fin.loc["EBITDA"].iloc[0]) if "EBITDA" in fin.index else 0.0
-                if ebitda > 0:
-                    net_debt_ebitda = (total_debt - cash) / ebitda
-            except Exception:
-                net_debt_ebitda = None
+        if ebitda_raw and ebitda_raw > 0 and total_debt is not None:
+            net_debt_ebitda = (total_debt - (cash or 0.0)) / ebitda_raw
 
-        # ---------- תמחור מול הסקטור + נימוק מפורש ----------
-        valuation = "הוגן"
-        color = "#eab308"
-        reasons = []
-        if pe_forward:
-            if pe_forward < bench["pe_cheap"]:
+        pe_for_valuation = pe_forward or pe_trailing
+        valuation, color = "הוגן", "#eab308"
+        if pe_for_valuation:
+            if pe_for_valuation < bench["pe_cheap"]:
                 valuation, color = "זול", "#16a34a"
-            elif pe_forward > bench["pe_exp"]:
+            elif pe_for_valuation > bench["pe_exp"]:
                 valuation, color = "יקר", "#ef4444"
 
-        # נימוקים שמסבירים *ביחס למה* ולמה
-        if pe_forward:
-            if pe_forward < bench["pe_cheap"]:
-                reasons.append(f"מכפיל הרווח העתידי ({pe_forward:.1f}) נמוך מסף הזול של סקטור ה{sector_he} (~{bench['pe_cheap']}).")
-            elif pe_forward > bench["pe_exp"]:
-                reasons.append(f"מכפיל הרווח העתידי ({pe_forward:.1f}) גבוה מסף היוקר של סקטור ה{sector_he} (~{bench['pe_exp']}).")
+        reasons = []
+        if pe_for_valuation:
+            tag = "עתידי" if pe_forward else "נוכחי (מחושב)"
+            if pe_for_valuation < bench["pe_cheap"]:
+                reasons.append(f"מכפיל הרווח ה{tag} ({pe_for_valuation:.1f}) נמוך מסף הזול של סקטור ה{sector_he} (~{bench['pe_cheap']}).")
+            elif pe_for_valuation > bench["pe_exp"]:
+                reasons.append(f"מכפיל הרווח ה{tag} ({pe_for_valuation:.1f}) גבוה מסף היוקר של סקטור ה{sector_he} (~{bench['pe_exp']}).")
             else:
-                reasons.append(f"מכפיל הרווח העתידי ({pe_forward:.1f}) בתוך טווח ההוגן של סקטור ה{sector_he} ({bench['pe_cheap']}-{bench['pe_exp']}).")
+                reasons.append(f"מכפיל הרווח ה{tag} ({pe_for_valuation:.1f}) בטווח ההוגן של סקטור ה{sector_he} ({bench['pe_cheap']}-{bench['pe_exp']}).")
         if peg:
             if peg < 1.0:
-                reasons.append(f"יחס PEG ({peg:.2f}) מתחת ל-1 — המניה צומחת מהר יותר ממה שהמכפיל מתמחר (זול ביחס לצמיחה).")
+                reasons.append(f"PEG ({peg:.2f}) מתחת ל-1 - צומחת מהר יותר ממה שהמכפיל מתמחר (זולה ביחס לצמיחה).")
             elif peg > 2.0:
-                reasons.append(f"יחס PEG ({peg:.2f}) מעל 2 — משלמים פרמיה כבדה על כל יחידת צמיחה.")
-        if fcf_yield:
-            if fcf_yield >= 4.0:
-                reasons.append(f"תשואת תזרים חופשי בריאה ({fcf_yield:.1f}%) — העסק מייצר מזומן אמיתי ביחס לשוויו.")
-            elif fcf_yield < 2.0 and fcf_yield > 0:
-                reasons.append(f"תשואת תזרים חופשי דקה ({fcf_yield:.1f}%) — מעט מזומן חופשי ביחס לשווי השוק.")
-        if op_margin:
-            if op_margin > bench["om"]:
-                reasons.append(f"שולי תפעול ({op_margin:.1f}%) מעל ממוצע הסקטור ({bench['om']:.0f}%) — חפיר תחרותי וכוח תמחור.")
-            elif op_margin < bench["om"] * 0.7:
-                reasons.append(f"שולי תפעול ({op_margin:.1f}%) מתחת לסקטור ({bench['om']:.0f}%) — יעילות נמוכה מהמתחרים.")
+                reasons.append(f"PEG ({peg:.2f}) מעל 2 - פרמיה כבדה על כל יחידת צמיחה.")
+        if fcf_yield >= 4.0:
+            reasons.append(f"תשואת תזרים חופשי בריאה ({fcf_yield:.1f}%) - מייצרת מזומן אמיתי ביחס לשוויה.")
+        elif 0 < fcf_yield < 2.0:
+            reasons.append(f"תשואת תזרים דקה ({fcf_yield:.1f}%) - מעט מזומן חופשי ביחס לשווי השוק.")
+        if op_margin and op_margin > bench["om"]:
+            reasons.append(f"שולי תפעול ({op_margin:.1f}%) מעל הסקטור ({bench['om']:.0f}%) - חפיר תחרותי וכוח תמחור.")
+        elif op_margin and op_margin < bench["om"] * 0.7:
+            reasons.append(f"שולי תפעול ({op_margin:.1f}%) מתחת לסקטור ({bench['om']:.0f}%) - יעילות נמוכה מהמתחרים.")
         if net_debt_ebitda is not None and net_debt_ebitda > 3.0:
-            reasons.append(f"מינוף גבוה (חוב/EBITDA {net_debt_ebitda:.1f}x) — דגל אדום על המאזן.")
-
+            reasons.append(f"מינוף גבוה (חוב נטו/EBITDA {net_debt_ebitda:.1f}x) - דגל אדום מאזני.")
         valuation_reason = " ".join(reasons) if reasons else "אין מספיק נתונים פונדמנטליים מובהקים לנימוק מפורט."
 
         next_earnings = "לא ידוע"
@@ -242,89 +300,146 @@ def get_fundamental_data(ticker: str) -> dict:
         except Exception:
             pass
 
-        # ---------- הסבר ספציפי לכל מכפיל (פר-מטריקה, לא גנרי) ----------
+        def _f(v, suf="", dec=2):
+            return (f"{v:.{dec}f}{suf}") if isinstance(v, (int, float)) and v == v else "N/A"
+
+        roe_pct = (roe * 100) if isinstance(roe, (int, float)) else None
+
         explanations = {
             "pe_trailing": (
-                f"מכפיל הרווח ההיסטורי של {ticker} עומד על {round(pe_trailing,1) if pe_trailing else 'N/A'}. "
-                f"הוא מודד כמה משלמים על כל דולר רווח שכבר נוצר ב-12 החודשים האחרונים. "
-                f"בסקטור ה{sector_he}, מתחת ל-{bench['pe_cheap']} נחשב זול ומעל {bench['pe_exp']} יקר."
+                f"מכפיל רווח נוכחי (מחושב: מחיר x מניות / רווח נקי) = {_f(pe_trailing, dec=1)}. "
+                f"כמה משלמים על כל דולר רווח שכבר נוצר. בסקטור ה{sector_he}: זול<{bench['pe_cheap']}, יקר>{bench['pe_exp']}."
             ),
             "pe_forward": (
-                f"מכפיל הרווח העתידי ({round(pe_forward,1) if pe_forward else 'N/A'}) מבוסס על תחזיות רווח קדימה — "
-                f"המדד המרכזי לתמחור. ביחס לסקטור ה{sector_he} (זול<{bench['pe_cheap']}, יקר>{bench['pe_exp']}), "
-                f"{ticker} מתומחרת כעת כ'{valuation}'."
-            ),
-            "peg": (
-                f"יחס PEG ({round(peg,2) if peg else 'N/A'}) משקלל את המכפיל מול קצב צמיחת הרווח. "
-                f"מתחת ל-1 = הצמיחה 'משלמת' על המכפיל (הזדמנות); מעל 2 = פרמיה יקרה על הצמיחה."
-            ),
-            "ev_ebitda": (
-                f"EV/EBITDA ({round(ev_ebitda,1) if ev_ebitda else 'N/A'}) מנקה הבדלי מבנה-הון, מס ופחת, "
-                f"ולכן מאפשר השוואה הוגנת בין חברות בסקטור ה{sector_he} עם רמות חוב שונות."
-            ),
-            "ps": (
-                f"מכפיל מכירות P/S ({round(ps,2) if ps else 'N/A'}) — שווי שוק חלקי הכנסות. "
-                f"קריטי לחברות צמיחה שעדיין אינן רווחיות, שם מכפיל הרווח אינו רלוונטי."
-            ),
-            "pb": (
-                f"מכפיל הון P/B ({round(pb,2) if pb else 'N/A'}) — שווי שוק חלקי ההון העצמי המאזני. "
-                f"רלוונטי במיוחד לבנקים ולחברות עתירות נכסים מוחשיים{' (כמו בסקטור ה'+sector_he+')' if sector in ['Financial Services','Real Estate','Utilities'] else ''}."
-            ),
-            "roe": (
-                f"תשואה להון ROE ({f'{round(roe*100,1)}%' if roe else 'N/A'}) — כמה רווח מפיקה ההנהלה על כל דולר "
-                f"של בעלי המניות. מעל 15% נחשב לאיכות ניהולית גבוהה."
-            ),
-            "eps_growth": (
-                f"צמיחת הרווח למניה ({f'{round(eps_growth*100,1)}%' if eps_growth else 'N/A'}) מול התקופה המקבילה — "
-                f"מדד הצמיחה הבסיסי. בסקטור ה{sector_he} צמיחה אופיינית היא סביב {bench['rg']:.0f}%."
+                f"מכפיל רווח עתידי ({_f(pe_forward, dec=1)}) - לפי תחזיות אנליסטים, המדד המרכזי לתמחור קדימה. "
+                f"זה המכפיל הראשון שאקמן בוחן: כמה משלמים על הרווחיות העתידית."
             ),
             "fcf_yield": (
-                f"תשואת תזרים חופשי (FCF Yield) של {fcf_yield:.1f}% — המזומן האמיתי שהעסק מייצר ביחס לשווי השוק. "
-                f"מעל 3-4% מעיד על חוסן תזרימי; מתחת ל-2% מחייב הצדקה בצמיחה."
+                f"תשואת תזרים חופשי (מחושב: (תזרים תפעולי - השקעות הון) / שווי שוק) = {_f(fcf_yield, '%', 1)}. "
+                f"הכסף החופשי האמיתי שהעסק מייצר - ליבת תפיסת אקמן. מעל 4% = חוסן; מתחת ל-2% = מחייב צמיחה."
+            ),
+            "peg": (
+                f"PEG (מחושב: מכפיל רווח / קצב צמיחה) = {_f(peg, dec=2)}. משקלל תמחור מול צמיחה. "
+                f"מתחת ל-1 = הצמיחה מצדיקה את המכפיל; מעל 2 = פרמיה יקרה."
             ),
             "op_margin": (
-                f"שולי תפעול {op_margin:.1f}% מול ~{bench['om']:.0f}% בסקטור ה{sector_he}. "
-                + ("מצביע על חפיר תחרותי וכוח תמחור." if op_margin > bench['om'] else "מצביע על לחץ עלויות/יעילות נמוכה מהמתחרים.")
+                f"שולי תפעול (מחושב: רווח תפעולי / הכנסות) = {_f(op_margin, '%', 1)} מול ~{bench['om']:.0f}% בסקטור. "
+                + ("חפיר תחרותי וכוח תמחור." if (op_margin and op_margin > bench['om']) else "יעילות/כוח תמחור מתחת למתחרים.")
+            ),
+            "rev_growth": (
+                f"צמיחת הכנסות שנה-מול-שנה (מחושב) = {_f(rev_growth, '%', 1)}. קצב התרחבות העסק בפועל; "
+                f"בסקטור ה{sector_he} צמיחה אופיינית סביב {bench['rg']:.0f}%."
+            ),
+            "roe": (
+                f"תשואה להון ROE (מחושב: רווח נקי / הון עצמי) = {_f(roe_pct, '%', 1)}. "
+                f"כמה רווח מפיקה ההנהלה על הון בעלי המניות. מעל 15% = איכות ניהולית גבוהה."
+            ),
+            "ev_ebitda": (
+                f"EV/EBITDA (מחושב: (שווי שוק + חוב - מזומן) / EBITDA) = {_f(ev_ebitda, dec=1)}. "
+                f"מנקה מבנה-הון, מס ופחת - השוואה הוגנת בין חברות עם רמות חוב שונות."
+            ),
+            "ps": (
+                f"מכפיל מכירות P/S (מחושב: שווי שוק / הכנסות) = {_f(ps, dec=2)}. "
+                f"קריטי לחברות צמיחה שעדיין לא רווחיות, שם מכפיל רווח לא רלוונטי."
+            ),
+            "pb": (
+                f"מכפיל הון P/B (מחושב: שווי שוק / הון עצמי) = {_f(pb, dec=2)}. "
+                f"רלוונטי במיוחד לבנקים וחברות עתירות נכסים מוחשיים."
+            ),
+            "eps_growth": (
+                f"צמיחת רווח נקי שנה-מול-שנה (מחושב) = {_f(ni_growth, '%', 1) if ni_growth is not None else 'N/A'}. "
+                f"מדד הצמיחה הבסיסי של שורת הרווח."
             ),
             "net_debt_ebitda": (
-                (f"מינוף חוב נטו/EBITDA של {net_debt_ebitda:.2f}x. " if net_debt_ebitda is not None else "אין נתוני מינוף זמינים. ")
-                + ("מתחת ל-3x נחשב בטוח." if (net_debt_ebitda is not None and net_debt_ebitda < 3) else
-                   ("מעל 3x — דגל אדום על המאזן בעת משבר." if net_debt_ebitda is not None else ""))
+                f"מינוף חוב נטו/EBITDA (מחושב) = {_f(net_debt_ebitda, 'x', 2) if net_debt_ebitda is not None else 'N/A'}. "
+                + ("מתחת ל-3x = בטוח." if (net_debt_ebitda is not None and net_debt_ebitda < 3)
+                   else ("מעל 3x = דגל אדום מאזני בעת משבר." if net_debt_ebitda is not None else ""))
             ),
         }
 
         return {
-            # --- מפתחות מקוריים (תאימות לאחור) ---
-            "pe_trailing": round(pe_trailing, 2) if pe_trailing else "N/A",
-            "pe_forward": round(pe_forward, 2) if pe_forward else "N/A",
-            "peg": round(peg, 2) if peg else "N/A",
-            "ev_ebitda": round(ev_ebitda, 2) if ev_ebitda else "N/A",
-            "ps": round(ps, 2) if ps else "N/A",
-            "pb": round(pb, 2) if pb else "N/A",
-            "roe": f"{round(roe * 100, 1)}%" if roe else "N/A",
-            "eps_growth": f"{round(eps_growth * 100, 1)}%" if eps_growth else "N/A",
+            "pe_trailing": round(pe_trailing, 2) if isinstance(pe_trailing, (int, float)) else "N/A",
+            "pe_forward": round(pe_forward, 2) if isinstance(pe_forward, (int, float)) else "N/A",
+            "peg": round(peg, 2) if isinstance(peg, (int, float)) else "N/A",
+            "ev_ebitda": round(ev_ebitda, 2) if isinstance(ev_ebitda, (int, float)) else "N/A",
+            "ps": round(ps, 2) if isinstance(ps, (int, float)) else "N/A",
+            "pb": round(pb, 2) if isinstance(pb, (int, float)) else "N/A",
+            "roe": f"{round(roe_pct, 1)}%" if isinstance(roe_pct, (int, float)) else "N/A",
+            "eps_growth": f"{round(ni_growth, 1)}%" if ni_growth is not None else "N/A",
             "sector": sector,
             "valuation": valuation,
             "valuation_color": color,
             "next_earnings": next_earnings,
-            # --- שדות חדשים (עומק) ---
             "sector_he": sector_he,
+            "price": round(price, 2) if isinstance(price, (int, float)) else "N/A",
             "fcf_yield": f"{fcf_yield:.1f}%" if fcf_yield else "N/A",
             "op_margin": f"{op_margin:.1f}%" if op_margin else "N/A",
             "rev_growth": f"{rev_growth:.1f}%" if rev_growth else "N/A",
             "net_debt_ebitda": f"{net_debt_ebitda:.2f}x" if net_debt_ebitda is not None else "N/A",
             "valuation_reason": valuation_reason,
             "explanations": explanations,
-            # ערכים גולמיים לשימוש בסינתזה הקשיחה
+            "computed": True,
             "_raw": {
                 "fcf_yield": fcf_yield, "op_margin": op_margin, "rev_growth": rev_growth,
                 "net_debt_ebitda": net_debt_ebitda if net_debt_ebitda is not None else 0.0,
-                "pe_forward": pe_forward or 0.0, "bench_om": bench["om"], "peg": peg or 0.0,
+                "pe_forward": pe_for_valuation or 0.0, "bench_om": bench["om"], "peg": peg or 0.0,
+                "roe_pct": roe_pct or 0.0, "ni_growth": ni_growth if ni_growth is not None else 0.0,
             },
         }
     except Exception as e:
         logger.error(f"Error fetching fundamentals for {ticker}: {e}")
         return {}
+
+
+def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = None) -> str:
+    """נרטיב חופשי בעברית בסטייל אקמן על מצב המניה הספציפי."""
+    if not fund_data:
+        return "אין מספיק נתונים פונדמנטליים לבניית ניתוח עבור מניה זו."
+    raw = fund_data.get("_raw", {})
+    val = fund_data.get("valuation", "הוגן")
+    sector_he = fund_data.get("sector_he", "הסקטור")
+    pe = raw.get("pe_forward", 0)
+    fcf_y = raw.get("fcf_yield", 0)
+    om = raw.get("op_margin", 0)
+    bench_om = raw.get("bench_om", 12)
+    nde = raw.get("net_debt_ebitda", 0)
+    peg = raw.get("peg", 0)
+    roe = raw.get("roe_pct", 0)
+    rg = raw.get("rev_growth", 0)
+    parts = []
+    if val == "זול":
+        parts.append(f"מבט אקמני על {ticker}: השוק מתמחר אותה בזול ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + ". ")
+    elif val == "יקר":
+        parts.append(f"מבט אקמני על {ticker}: השוק דורש פרמיה גבוהה" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + f" ביחס לסקטור ה{sector_he}. ")
+    else:
+        parts.append(f"מבט אקמני על {ticker}: התמחור הוגן ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + ". ")
+    if fcf_y >= 4:
+        parts.append(f"הלב של התזה חזק: תשואת תזרים חופשי של {fcf_y:.1f}% מעידה על מכונת מזומנים אמיתית - בדיוק סוג העסק שאקמן אוהב להחזיק לטווח ארוך. ")
+    elif fcf_y >= 2:
+        parts.append(f"התזרים סביר ({fcf_y:.1f}% תשואת FCF) אך לא יוצא דופן - צריך שהצמיחה תצדיק את ההחזקה. ")
+    elif fcf_y > 0:
+        parts.append(f"התזרים החופשי דק ({fcf_y:.1f}%) - העסק לא מייצר הרבה מזומן פנוי כרגע, מה שמחייב זהירות. ")
+    else:
+        parts.append("לא זוהה תזרים חופשי חיובי מובהק - סימן שהעסק עדיין שורף מזומן או משקיע אגרסיבית. ")
+    if om and om > bench_om:
+        parts.append(f"מצד האיכות, שולי התפעול ({om:.0f}%) מעל ממוצע הסקטור ({bench_om:.0f}%) - סימן לחפיר תחרותי וכוח תמחור. ")
+    elif om:
+        parts.append(f"שולי התפעול ({om:.0f}%) מתחת לסקטור ({bench_om:.0f}%) - יעילות חלשה יחסית, נקודת תורפה. ")
+    if roe and roe >= 15:
+        parts.append(f"ה-ROE הגבוה ({roe:.0f}%) מאשר ניהול שמשיא ערך על הון בעלי המניות. ")
+    if rg and rg >= 15:
+        parts.append(f"הצמיחה מהירה ({rg:.0f}% הכנסות) ומצדיקה מכפיל גבוה יותר. ")
+    elif rg and 0 < rg < 3:
+        parts.append(f"הצמיחה איטית ({rg:.0f}% הכנסות) - קשה להצדיק מכפיל גבוה. ")
+    if peg and peg < 1:
+        parts.append(f"ה-PEG ({peg:.2f}) מתחת ל-1 - הצמיחה מתומחרת בחסר, נקודה אטרקטיבית. ")
+    if nde and nde > 3:
+        parts.append(f"אזהרה מאזנית: מינוף גבוה (חוב נטו/EBITDA {nde:.1f}x) מגדיל סיכון בעת משבר. ")
+    elif nde and 0 < nde < 1:
+        parts.append(f"המאזן איתן (מינוף נמוך {nde:.1f}x) - כרית ביטחון מצוינת. ")
+    if verdict and verdict.get("headline"):
+        parts.append(f"\n\n**שורה תחתונה:** {verdict['headline']} - {verdict.get('detail','')}")
+    return "".join(parts)
 
 
 def synthesize_verdict(fund_data: dict, cis_score: float, current_phase: str, ticker: str = "") -> dict:
@@ -1339,7 +1454,77 @@ def generate_replay_analogies(ticker: str, current_phase: str, accum_prob: float
             
     return replay
 
-# --- DEBUG: בדיקת אבחון בסוף המודול - מאתרת אם חסר שם כלשהו ש-app.py מצפה לו ---
+def scan_top_opportunities(tickers: list, top_n: int = 5, mode: str = "Balanced") -> list:
+    """
+    סורק יקום מניות ומחזיר רק את ההזדמנויות האיכותיות ביותר (High Conviction) -
+    שילוב של איסוף מוסדי (Wyckoff) + תמחור/איכות פונדמנטלית (אקמן).
+    מדרג לפי ציון משוקלל ומחזיר עד top_n. נקודת אמת אחת לסינתזה.
+    """
+    results = []
+    engine = FactorEngine(BacktestConfig())
+    bullish = ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "LPS", "SOS", "Re-accumulation"]
+
+    for tkr in tickers:
+        try:
+            df = get_data(tkr, period="1y")
+            if df is None or df.empty or len(df) < 60:
+                continue
+            factors = engine.compute(df)
+            cis = float(engine.composite_cis(factors, df).iloc[-1])
+            phase = str(engine.get_wyckoff_phase(df).iloc[-1])
+            is_bullish = any(p in phase for p in bullish)
+
+            # סינון מוקדם: חייב פאזה חיובית + ציון סביר כדי בכלל להיכנס למאגר
+            if not is_bullish or cis < 60:
+                continue
+
+            fdata = get_fundamental_data(tkr)
+            if not fdata:
+                continue
+            verdict = synthesize_verdict(fdata, cis, phase, tkr)
+
+            # רק שילובים איכותיים: High Conviction / Quality Premium / Buy
+            if verdict.get("tier") not in ("STRONG_BUY", "BUY"):
+                continue
+
+            raw = fdata.get("_raw", {})
+            # ציון משוקלל: חצי טכני (CIS) חצי פונדמנטלי (איכות תזרים+שוליים+תמחור)
+            fund_quality = 0.0
+            fund_quality += min(30, raw.get("fcf_yield", 0) * 5)          # תזרים
+            fund_quality += 20 if fdata.get("valuation") == "זול" else (10 if fdata.get("valuation") == "הוגן" else 0)
+            om = raw.get("op_margin", 0); bom = raw.get("bench_om", 12)
+            fund_quality += 15 if (om and om > bom) else 0
+            fund_quality += 10 if (raw.get("peg", 0) and 0 < raw.get("peg") < 1.5) else 0
+            fund_quality += 10 if (raw.get("net_debt_ebitda", 0) < 2) else 0
+            fund_quality = min(85, fund_quality) + 15  # נורמליזציה גסה ל~0-100
+
+            tier_bonus = {"STRONG_BUY": 12, "BUY": 6}.get(verdict.get("tier"), 0)
+            composite = round(cis * 0.5 + fund_quality * 0.5 + tier_bonus, 1)
+
+            results.append({
+                "ticker": tkr,
+                "cis": round(cis, 1),
+                "phase": phase,
+                "valuation": fdata.get("valuation", "-"),
+                "valuation_color": fdata.get("valuation_color", "#94a3b8"),
+                "fcf_yield": fdata.get("fcf_yield", "N/A"),
+                "pe": fdata.get("pe_forward") if fdata.get("pe_forward") != "N/A" else fdata.get("pe_trailing", "N/A"),
+                "sector_he": fdata.get("sector_he", ""),
+                "headline": verdict.get("headline", ""),
+                "detail": verdict.get("detail", ""),
+                "tier": verdict.get("tier", ""),
+                "color": verdict.get("color", "#16a34a"),
+                "composite": composite,
+            })
+        except Exception as exc:
+            logger.warning("scan_top_opportunities failed for %s: %s", tkr, exc)
+            continue
+
+    results.sort(key=lambda x: x["composite"], reverse=True)
+    return results[:top_n]
+
+
+
 # (חייבת להיות בסוף הקובץ, כי רק כאן כל הפונקציות כבר הוגדרו ב-globals())
 _REQUIRED_EXPORTS = [
     "clean_filename", "get_data", "calculate_optimal_threshold", "check_phase_entry_allowed",
@@ -1348,6 +1533,7 @@ _REQUIRED_EXPORTS = [
     "build_smart_money_dashboard", "generate_roadmap", "calculate_wyckoff_probability",
     "detect_failure_risks", "generate_replay_analogies", "get_fundamental_data", "_extract_last",
     "synthesize_verdict",
+    "build_fundamental_narrative", "scan_top_opportunities",
 ]
 _missing_exports = [name for name in _REQUIRED_EXPORTS if name not in globals()]
 if _missing_exports:
