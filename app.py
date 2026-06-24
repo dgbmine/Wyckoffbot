@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V17.5 (Trading Scout: Banner -> Why -> Drill-down Hierarchy)
+INSTITUTIONAL SCOUT PRO V17.6 (Critical Nav Crash Fix + Radio Width Selector + Technician Lock)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -547,6 +547,8 @@ def init_session_state() -> None:
         st.session_state.home_top_picks = None
     if "plan_detail_level" not in st.session_state:
         st.session_state.plan_detail_level = "מלא"
+    if "tech_unlocked" not in st.session_state:
+        st.session_state.tech_unlocked = False
 
 
 # יקום סריקה למסך הבית - 24 מניות מובילות (מהיר)
@@ -562,8 +564,37 @@ def go_to_screen(page: str, ticker: str = None) -> None:
     if ticker:
         st.session_state.handoff_ticker = ticker.strip().upper()
     st.session_state.current_page = page
-    st.session_state["nav_select"] = page  # סנכרון מצב התפריט עצמו, כדי שלא "יקפוץ" חזרה
+    # תיקון קריטי: אסור להקצות ל-st.session_state["nav_select"] אחרי שה-widget עם אותו
+    # key כבר אותחל באותה הרצה (render_top_nav רץ בתחילת main(), לפני קריאה זו) - זה גורם
+    # ל-StreamlitAPIException. הפתרון הנכון: למחוק את המפתח (מותר), כך שבהרצה הבאה ה-selectbox
+    # יאותחל מחדש לפי current_page/index, בלי "לקפוץ" חזרה לבחירה הקודמת.
+    if "nav_select" in st.session_state:
+        del st.session_state["nav_select"]
     st.rerun()
+
+
+_TECH_PASSWORD = "0549414442"
+
+
+def _require_technician_password(screen_label: str) -> bool:
+    """
+    שער סיסמת טכנאי למסכים מתקדמים (Monitor / Backtest / ML Trainer).
+    מחזיר True אם הגישה אושרה (כבר באותו session או הוקלדה כעת נכון), אחרת מציג
+    שדה סיסמה ומחזיר False (כדי שהמסך הקורא יפסיק לרנדר תוכן רגיש).
+    """
+    if st.session_state.get("tech_unlocked"):
+        return True
+
+    st.markdown(f"### 🔒 {screen_label} - מסך מוגן")
+    st.info("מסך זה מוגן בסיסמת טכנאי. הזן סיסמה כדי להמשיך.")
+    pwd = st.text_input("סיסמת טכנאי", type="password", key=f"tech_pwd_input_{screen_label}")
+    if st.button("🔓 אשר גישה", key=f"tech_pwd_btn_{screen_label}"):
+        if pwd == _TECH_PASSWORD:
+            st.session_state.tech_unlocked = True
+            st.rerun()
+        else:
+            st.error("סיסמה שגויה.")
+    return False
 
 
 @st.cache_data(ttl=900, max_entries=128, show_spinner=False)
@@ -673,10 +704,17 @@ def _render_top_picks() -> None:
 
     if "home_scan_width" not in st.session_state:
         st.session_state.home_scan_width = "24"
-    width_label = st.select_slider(
+    width_options = {
+        "24": "24 מניות (~10-15 שניות)",
+        "50": "50 מניות (~25-35 שניות)",
+        "100+": "100+ מניות (~45-70 שניות)",
+    }
+    width_label = st.radio(
         "🔧 רוחב חיפוש (כמה מניות לסרוק)",
-        options=["24", "50", "100+"],
+        options=list(width_options.keys()),
+        format_func=lambda k: width_options[k],
         key="home_scan_width",
+        horizontal=True,
         help="יקום גדול יותר = סיכוי גבוה יותר למצוא הזדמנות, אך הסריקה איטית יותר.",
     )
     pool = _get_home_scan_pool(width_label)
@@ -1468,6 +1506,8 @@ def screen_trading_scout() -> None:
                     go_to_screen("📊 ניתוח פונדמנטלי", tkr)
 
 def screen_backtest() -> None:
+    if not _require_technician_password("Backtest Engine"):
+        return
     st.markdown("### 📊 Backtest Engine")
     
     st.info("ℹ️ **מה זה בעצם Backtest (בדיקת עבר)?**\n\nמסך זה מאפשר לך 'לחזור בזמן' ולבדוק איך שיטת Wyckoff הייתה עובדת בפועל על המניה שבחרת. המערכת מריצה סימולציה ממוחשבת שבה היא קונה ומוכרת באופן אוטומטי את המניה בכל פעם שהתנאים של כניסת כסף מוסדי (ציון CIS ופאזות איסוף) מתקיימים.\n\n**התוצאות שתראה כאן יעזרו לך להבין:**\n- האם המניה הזו נוטה 'להקשיב' לכללי Wyckoff לאורך זמן?\n- מה ההסתברות שצבירה מוסדית תניב רווח בפועל בנכס הזה?")
@@ -1517,6 +1557,8 @@ def screen_backtest() -> None:
             st.dataframe(audit_df)
 
 def screen_monitor() -> None:
+    if not _require_technician_password("Institutional Performance Monitor"):
+        return
     st.markdown("### 👁️ Institutional Performance Monitor")
     
     st.markdown("#### ניתוח עומק לנכס (Performance Analytics)")
@@ -1581,6 +1623,8 @@ def screen_monitor() -> None:
         st.info("לא נמצאו מודלים בתיקייה. הרץ את הטריינר תחילה.")
 
 def screen_ml_trainer() -> None:
+    if not _require_technician_password("Wyckoff Pattern AI Trainer"):
+        return
     st.markdown("### 🧠 Wyckoff Pattern AI Trainer (Institutional Grade)")
     st.caption("אימון מודל AI מבוסס על איתור הסתברויות לצבירה מוסדית. מותאם ל-Cloud Run.")
 
