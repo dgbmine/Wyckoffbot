@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V16.8
+INSTITUTIONAL SCOUT PRO V16.9 (UI & Fundamental Update)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -53,28 +53,247 @@ AUTO_TRAINER_STATUS_FILE = os.path.join(MODEL_DIR, "auto_trainer_status.json")
 AUTO_TRAINER_DONE_FLAG = os.path.join(MODEL_DIR, "auto_trainer.done")
 AUTO_TRAINER_PID_FILE = os.path.join(MODEL_DIR, "auto_trainer.pid")
 AUTO_TRAINER_STOP_FILE = os.path.join(MODEL_DIR, "auto_trainer.stop")
-AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
-
 AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
 
-SCOUT_CORE_IMPORT_ERROR: Optional[str] = None
-
+# --- Import from scout_core ---
 try:
     from scout_core import (
         clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
         BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
         calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple,
         build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
-        detect_failure_risks, generate_replay_analogies, get_fundamental_data
+        detect_failure_risks, generate_replay_analogies
     )
     SCOUT_CORE_AVAILABLE = True
-except Exception as _imp_exc1:
-    _first_error = f"{type(_imp_exc1).__name__}: {_imp_exc1}"
+except ImportError as _imp_exc:
+    SCOUT_CORE_AVAILABLE = False
+    logger.warning("scout module not available: %s", _imp_exc)
+    def explain_score(df, phase, cis): return "מערכת ניתוח חסרה."
+    def explain_score_simple(df, phase, cis, allowed): return "חסר מודול."
+    def calculate_advanced_metrics(trades, initial_capital=100000.0): return {}
+    def calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04): return {}
+    def build_smart_money_dashboard(f): return {}
+    def generate_roadmap(p): return {"previous_phase":"-", "next_phase":"-", "action_plan":"", "what_if_success":"", "what_if_fail":""}
+    def calculate_wyckoff_probability(d, f, p, m, c): return {"accumulation_chance": c, "breakout_30d": 0, "distribution_risk": 0, "educational_note": ""}
+    def detect_failure_risks(d, f, p, a, al, t): return ["מערכת הגנה אינה זמינה במלואה."]
+    def generate_replay_analogies(t, p, a, f): return []
+
+st.set_page_config(
+    layout="wide",
+    page_title="Wyckoff Institutional Analyst",
+    page_icon="📈",
+    initial_sidebar_state="collapsed",
+)
+
+# Hide default sidebar globally to force custom Hamburger usage
+st.markdown("""
+    <style>
+        [data-testid="collapsedControl"] { display: none !important; }
+        section[data-testid="stSidebar"] { display: none !important; }
+    </style>
+""", unsafe_allow_html=True)
+
+GROWTH_TICKERS = [
+    "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","CRM","NFLX",
+    "AMD","ADBE","CSCO","TXN","QCOM","INTC","INTU","ADI",
+    "PANW","CRWD","FTNT","ZS","DDOG","SNOW","MDB","NET","PLTR",
+    "UBER","ABNB","COIN","SOFI","UPST","ONTO","KLAC","LRCX","AMAT",
+    "MRVL","SMCI","DELL","HPQ","RBLX","U","TTWO","EA"
+]
+
+VALUE_TICKERS = [
+    "BRK-B","JPM","JNJ","V","UNH","PG","MA","HD","MRK","ABBV","PEP","KO",
+    "COST","WMT","LLY","TMO","MCD","ACN","BAC","ABT","DHR",
+    "HON","NKE","AMGN","PM","IBM","SBUX","GS","CAT","BA"
+]
+
+COMMODITIES_TICKERS = [
+    "XOM","CVX","SLB","EOG","OXY","COP","PSX","VLO","FCX","NEM",
+    "GOLD","AEM","WPM","FNV","PAAS","AG","GLD","SLV",
+    "HAL","BKR","DVN","FANG","CTRA","MRO"
+]
+
+SECTOR_MAP: Dict[str, List[str]] = {
+    "הכול (כל השוק האמריקאי)": sorted(list(set(GROWTH_TICKERS + VALUE_TICKERS + COMMODITIES_TICKERS))),
+    "צמיחה וטכנולוגיה (Growth)": GROWTH_TICKERS,
+    "ערך ומדד (Value/Index)": VALUE_TICKERS,
+    "סחורות ואנרגיה (Commodities)": COMMODITIES_TICKERS,
+}
+
+# --- State Management & Routing ---
+if "current_page" not in st.session_state: st.session_state.current_page = "Home"
+if "menu_open" not in st.session_state: st.session_state.menu_open = False
+if "home_view" not in st.session_state: st.session_state.home_view = "quick"
+if "current_ticker" not in st.session_state: st.session_state.current_ticker = "NVDA"
+
+def toggle_menu():
+    st.session_state.menu_open = not st.session_state.get("menu_open", False)
+
+def set_page_from_menu(page_name: str):
+    st.session_state.current_page = page_name
+    st.session_state.menu_open = False
+
+def set_ticker_and_navigate(ticker: str, page: str):
+    st.session_state.current_ticker = ticker.strip().upper()
+    st.session_state.current_page = page
+
+# --- Utility Functions ---
+def get_cached_data_and_time(ticker: str, period: str = "1y") -> tuple:
+    if not SCOUT_CORE_AVAILABLE: return None, 0.0, "N/A"
+    df = get_data(ticker, period)
+    if df is not None and not df.empty:
+        curr_price = df['Close'].iloc[-1]
+        last_time = df.index[-1].strftime('%d.%m.%Y %H:%M')
+        return df, curr_price, last_time
+    return None, 0.0, "N/A"
+
+def render_price_header(ticker: str, align: str = "center"):
+    """Render a robust price and updated-time header for any ticker."""
+    df, price, time_str = get_cached_data_and_time(ticker)
+    if price > 0:
+        st.markdown(f"""
+        <div style='text-align:{align}; margin-bottom:15px; background: linear-gradient(145deg, rgba(30,41,59,0.7), rgba(15,23,42,0.9)); padding: 12px 25px; border-radius: 12px; display: inline-block; border: 1px solid rgba(56, 189, 248, 0.2); box-shadow: 0 4px 15px rgba(0,0,0,0.2);'>
+            <span style='font-size: 1.05rem; color: #94a3b8; font-weight:600; display:block; margin-bottom: 2px;'>{ticker} - מחיר נוכחי</span>
+            <span style='font-size: 2.2rem; font-weight:bold; color:#f8fafc; display:block; line-height: 1.1;'>${price:,.2f}</span>
+            <span style='font-size: 0.8rem; color:#64748b; display:block; margin-top: 4px;'>מעודכן ל: {time_str}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+def _compute_wyckoff(ticker: str):
+    df, _, _ = get_cached_data_and_time(ticker)
+    if df is None: return None
+    engine = FactorEngine(BacktestConfig())
+    factors = engine.compute(df)
+    phases = engine.get_wyckoff_phase(df)
+    cis = engine.composite_cis(factors, df)
+    return {
+        "df": df, "factors": factors, "cis": cis,
+        "current_phase": str(phases.iloc[-1]), "current_cis": float(cis.iloc[-1])
+    }
+
+def get_ackman_fundamental_data(ticker: str, cis_score: float = None, current_phase: str = "") -> dict:
+    """
+    מודול פונדמנטלי קשיח (Bill Ackman Style).
+    מבוסס על Cash Flow Yield, PEG Ratio, Margin ומינוף.
+    אוכף סנכרון הרמטי עם הפאזה הטכנית.
+    """
     try:
-        from scout import (
-            clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
-            BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
-            calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple
+        tkr = yf.Ticker(ticker)
+        info = tkr.info or {}
+        
+        try: cf = tkr.cashflow
+        except: cf = pd.DataFrame()
+        try: bs = tkr.balance_sheet
+        except: bs = pd.DataFrame()
+        try: fin = tkr.financials
+        except: fin = pd.DataFrame()
+
+        market_cap = info.get("marketCap", 0)
+        fwd_pe = info.get("forwardPE", 0)
+        sector = info.get("sector", "Unknown")
+        
+        # Cash flow Yield
+        ocf, fcf = 0, 0
+        if not cf.empty and "Operating Cash Flow" in cf.index:
+            ocf = cf.loc["Operating Cash Flow"].iloc[0]
+            if "Capital Expenditure" in cf.index:
+                fcf = ocf + cf.loc["Capital Expenditure"].iloc[0] # CapEx is typically negative
+        
+        fcf_yield = (fcf / market_cap * 100) if market_cap > 0 and fcf > 0 else 0
+        
+        # Margins & Growth
+        rev_growth, op_margin = 0, 0
+        if not fin.empty and "Total Revenue" in fin.index and len(fin.columns) > 1:
+            rev_curr = fin.loc["Total Revenue"].iloc[0]
+            rev_prev = fin.loc["Total Revenue"].iloc[1]
+            if rev_prev and rev_prev != 0:
+                rev_growth = ((rev_curr - rev_prev) / abs(rev_prev)) * 100
+            if "Operating Income" in fin.index and rev_curr:
+                op_margin = (fin.loc["Operating Income"].iloc[0] / rev_curr) * 100
+                
+        # Net Debt to EBITDA
+        net_debt_ebitda = 0
+        if not bs.empty and not fin.empty:
+            total_debt = bs.loc["Total Debt"].iloc[0] if "Total Debt" in bs.index else 0
+            cash = bs.loc["Cash And Cash Equivalents"].iloc[0] if "Cash And Cash Equivalents" in bs.index else 0
+            ebitda = fin.loc["EBITDA"].iloc[0] if "EBITDA" in fin.index else 0
+            if ebitda > 0:
+                net_debt_ebitda = (total_debt - cash) / ebitda
+                
+        peg_ratio = info.get("pegRatio", (fwd_pe / rev_growth) if rev_growth > 0 else 999)
+
+        # Benchmarks
+        benchmarks = {
+            "Technology": {"pe": 25, "om": 20.0, "rg": 15.0},
+            "Financial Services": {"pe": 14, "om": 25.0, "rg": 8.0},
+            "Healthcare": {"pe": 20, "om": 15.0, "rg": 10.0},
+            "Consumer Cyclical": {"pe": 18, "om": 10.0, "rg": 8.0},
+            "Energy": {"pe": 12, "om": 15.0, "rg": 5.0},
+        }
+        bench = benchmarks.get(sector, {"pe": 18, "om": 12.0, "rg": 8.0})
+
+        valuation, color = "הוגן", "#eab308"
+        if fwd_pe and fwd_pe < bench["pe"] * 0.8 and peg_ratio < 1.5:
+            valuation, color = "זול", "#16a34a"
+        elif fwd_pe and (fwd_pe > bench["pe"] * 1.25 or peg_ratio > 2.5):
+            valuation, color = "יקר", "#ef4444"
+
+        # Strict Synthesis Rule (Synchronization)
+        synthesis = "ממתין לנתונים..."
+        is_toxic = False
+        if cis_score is not None:
+            is_bearish_phase = any(p in current_phase for p in ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax", "UNCERTAIN"])
+            is_bullish_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "LPS", "Re-accumulation"])
+            
+            strong_cash = (fcf_yield > 3.0) and (op_margin > bench["om"] * 0.8)
+            high_debt = net_debt_ebitda > 3.0
+            
+            if is_bearish_phase or cis_score <= 40:
+                is_toxic = True
+                if high_debt or not strong_cash:
+                    synthesis = f"☠️ Toxic Value Trap (סכין נופלת): הפאזה הטכנית ב-{ticker} היא '{current_phase}' והכסף החכם נוטש. ישנה חולשה תזרימית בליבת העסקים מול סקטור ה-{sector}. התרחק מיד!"
+                else:
+                    synthesis = f"🚨 סכין נופלת: הנתונים היבשים של {ticker} אולי נראים סבירים, אך הפאזה היא '{current_phase}' והמוסדיים זורקים סחורה בפיזור אגרסיבי. מלכודת ערך קלאסית. אל תתפוס תחתיות."
+            elif is_bullish_phase and cis_score >= 65:
+                if strong_cash and valuation != "יקר" and not high_debt:
+                    synthesis = f"🔥 High Conviction: שילוב אידיאלי ב-{ticker}. תשואת תזרים בריאה ({fcf_yield:.1f}% Yield), יעילות גבוהה מהסקטור ואיסוף מוסדי מובהק. פוזיציית לונג איכותית."
+                elif valuation == "יקר" and strong_cash:
+                    synthesis = f"🚀 פרמיית איכות: המוסדיים מוכנים לשלם פרמיה יקרה על {ticker} בזכות הנהלה שמדפיסה מזומן ומכה את הסקטור. הטרנד נתמך בעוצמה."
+                elif high_debt or not strong_cash:
+                    synthesis = f"⚠️ ספקולציית מומנטום: יש איסוף מוסדי, אך החולשה במאזן או בתזרים מצביעה על מהלך טכני ספקולטיבי. סיכון גבוה להחזקה ארוכה."
+            else:
+                if cis_score >= 60 and strong_cash:
+                    synthesis = f"⚖️ איסוף שקט: {ticker} מדפיסה מזומן ונאספת בהדרגה מתחת לרדאר. המתנה לפריצת מחיר (Phase D)."
+                else:
+                    synthesis = f"💤 כסף מת: חוסר קצה פונדמנטלי וטכני ביחס למתחרות בסקטור ה-{sector}."
+
+        explanations = {
+            "fcf_yield": f"תשואת תזרים חופשי (FCF Yield) של {ticker} עומדת על {fcf_yield:.1f}%. במודל הערך של Ackman, זהו הכסף האמיתי שהעסק מייצר ביחס לשווי השוק. מעל 3-4% נחשב לחוסן בריא.",
+            "peg_ratio": f"יחס PEG של {peg_ratio:.2f}. מכפיל זה משקלל את תמחור המניה (PE) מול קצב צמיחת ההכנסות. יחס מתחת ל-1.5 מרמז על צמיחה שמתומחרת בחסר.",
+            "op_margin": f"שולי הרווח של {op_margin:.1f}%. בהשוואה לסקטור ה-{sector} שעומד על {bench['om']}%, זה מצביע על {'חפיר תחרותי ויכולת תמחור אגרסיבית (Pricing Power)' if op_margin > bench['om'] else 'חוסר יעילות ועלויות כבדות ביחס למתחרים הישירים'}.",
+            "net_debt": f"יחס חוב ל-EBITDA עומד על {net_debt_ebitda:.2f}x. מודל מוסדי שמרני דורש מינוף מתחת ל-3x. {'המינוף בטוח וסביר.' if net_debt_ebitda < 3 else 'רמת המינוף הזו מהווה דגל אדום בוהק המייצר סיכון להשמדת ערך בעת משבר!'}"
+        }
+
+        return {
+            "fcf_yield": f"{fcf_yield:.1f}%",
+            "peg_ratio": f"{peg_ratio:.2f}",
+            "op_margin": f"{op_margin:.1f}%",
+            "rev_growth": f"{rev_growth:.1f}%",
+            "net_debt_ebitda": f"{net_debt_ebitda:.2f}x",
+            "pe_forward": round(fwd_pe, 2) if fwd_pe else "N/A",
+            "sector": sector,
+            "valuation": valuation,
+            "valuation_color": color,
+            "synthesis": synthesis,
+            "explanations": explanations,
+            "is_toxic": is_toxic
+        }
+    except Exception as e:
+        logger.error(f"Error computing Ackman fundamentals for {ticker}: {e}")
+        return {}
+
+def ensure_dirs() -> None:
+    os.makedirs(MODEL_DIR, exist_ok=True)
         )
         def build_smart_money_dashboard(f): return {}
         def generate_roadmap(p): return {"previous_phase":"-", "next_phase":"-", "action_plan":"", "what_if_success":"", "what_if_fail":""}
