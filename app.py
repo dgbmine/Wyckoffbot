@@ -478,404 +478,6 @@ def inject_css() -> None:
     </style>""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
-def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = )
-logger = logging.getLogger("scout")
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.append(BASE_DIR)
-
-_CLOUD_RUN = (
-    os.environ.get("K_SERVICE") is not None
-    or os.environ.get("CLOUD_RUN", "").lower() == "true"
-)
-_TMP_ROOT = "/tmp/scout" if _CLOUD_RUN else BASE_DIR
-
-MODEL_DIR = os.path.join(_TMP_ROOT, "models")
-BATCH_CONFIG_FILE = os.path.join(MODEL_DIR, "batch_config.json")
-AUTO_TRAINER_STATUS_FILE = os.path.join(MODEL_DIR, "auto_trainer_status.json")
-AUTO_TRAINER_DONE_FLAG = os.path.join(MODEL_DIR, "auto_trainer.done")
-AUTO_TRAINER_PID_FILE = os.path.join(MODEL_DIR, "auto_trainer.pid")
-AUTO_TRAINER_STOP_FILE = os.path.join(MODEL_DIR, "auto_trainer.stop")
-AUTO_TRAINER_LOCK_FILE = os.path.join(MODEL_DIR, "auto_trainer.lock")
-
-AUTO_TRAINER_LOG_FILE = os.path.join(_TMP_ROOT, "auto_trainer_error.log")
-
-SCOUT_CORE_IMPORT_ERROR: Optional[str] = None
-
-try:
-    from scout_core import (
-        clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
-        BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
-        calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple,
-        build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
-        detect_failure_risks, generate_replay_analogies, get_fundamental_data
-    )
-    SCOUT_CORE_AVAILABLE = True
-except Exception as _imp_exc1:
-    _first_error = f"{type(_imp_exc1).__name__}: {_imp_exc1}"
-    try:
-        from scout import (
-            clean_filename, get_data, calculate_optimal_threshold, check_phase_entry_allowed,
-            BacktestConfig, FactorEngine, run_wyckoff_anchored_backtest, explain_score,
-            calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple
-        )
-        def build_smart_money_dashboard(f): return {}
-        def generate_roadmap(p): return {"previous_phase":"-", "next_phase":"-", "action_plan":"", "what_if_success":"", "what_if_fail":""}
-        def calculate_wyckoff_probability(d, f, p, m, c): return {"accumulation_chance": c, "breakout_30d": 0, "distribution_risk": 0, "educational_note": ""}
-        def detect_failure_risks(d, f, p, a, al, t): return ["מערכת הגנה אינה זמינה במלואה."]
-        def generate_replay_analogies(t, p, a, f): return []
-        def get_fundamental_data(t): return {}
-        
-        SCOUT_CORE_AVAILABLE = True
-    except Exception as _imp_exc2:
-        SCOUT_CORE_AVAILABLE = False
-        SCOUT_CORE_IMPORT_ERROR = f"scout_core: {_first_error} | scout (fallback): {type(_imp_exc2).__name__}: {_imp_exc2}"
-        logger.warning("scout module not available: %s", SCOUT_CORE_IMPORT_ERROR)
-
-        def explain_score(df: pd.DataFrame, phase: str, cis: float) -> str:
-            return "מערכת ניתוח חסרה. טען את הקובץ המתאים."
-            
-        def explain_score_simple(df: pd.DataFrame, phase: str, cis: float, allowed: bool) -> str:
-            return "חסר מודול."
-            
-        def calculate_advanced_metrics(trades, initial_capital=100000.0):
-            return {}
-        
-        def calculate_phase_followthrough(df, horizon=20, threshold_pct=0.04):
-            return {}
-
-
-st.set_page_config(
-    layout="wide",
-    page_title="Wyckoff Institutional Analyst",
-    page_icon="📈",
-    initial_sidebar_state="expanded",
-)
-
-GROWTH_TICKERS = [
-    "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AVGO","CRM","NFLX",
-    "AMD","ADBE","CSCO","TXN","QCOM","INTC","INTU","ADI",
-    "PANW","CRWD","FTNT","ZS","DDOG","SNOW","MDB","NET","PLTR",
-    "UBER","ABNB","COIN","SOFI","UPST","ONTO","KLAC","LRCX","AMAT",
-    "MRVL","SMCI","DELL","HPQ","RBLX","U","TTWO","EA"
-]
-
-VALUE_TICKERS = [
-    "BRK-B","JPM","JNJ","V","UNH","PG","MA","HD","MRK","ABBV","PEP","KO",
-    "COST","WMT","LLY","TMO","MCD","ACN","BAC","ABT","DHR",
-    "HON","NKE","AMGN","PM","IBM","SBUX","GS","CAT","BA"
-]
-
-COMMODITIES_TICKERS = [
-    "XOM","CVX","SLB","EOG","OXY","COP","PSX","VLO","FCX","NEM",
-    "GOLD","AEM","WPM","FNV","PAAS","AG","GLD","SLV",
-    "HAL","BKR","DVN","FANG","CTRA","MRO"
-]
-
-SECTOR_MAP: Dict[str, List[str]] = {
-    "הכול (כל השוק האמריקאי)": sorted(list(set(GROWTH_TICKERS + VALUE_TICKERS + COMMODITIES_TICKERS))),
-    "צמיחה וטכנולוגיה (Growth)": GROWTH_TICKERS,
-    "ערך ומדד (Value/Index)": VALUE_TICKERS,
-    "סחורות ואנרגיה (Commodities)": COMMODITIES_TICKERS,
-}
-
-MIN_TRADES_FOR_VALID_MODEL = 10
-TRADES_FALLBACK_THRESHOLD = 35
-
-def ensure_dirs() -> None:
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
-def load_all_models_from_disk() -> Dict[str, Dict[str, Any]]:
-    ensure_dirs()
-    loaded: Dict[str, Dict[str, Any]] = {}
-    try:
-        for filename in os.listdir(MODEL_DIR):
-            if not (filename.startswith("model_") and filename.endswith(".pkl")):
-                continue
-            filepath = os.path.join(MODEL_DIR, filename)
-            try:
-                with open(filepath, "rb") as f:
-                    data = pickle.load(f)
-                slot = data.get("metadata", {}).get("slot") or filename.replace("model_", "").replace(".pkl", "")
-                loaded[str(slot)] = data
-            except Exception as exc:
-                logger.warning("Could not load model %s: %s", filename, exc)
-    except Exception:
-        pass
-    return loaded
-
-def render_explain_score(df: pd.DataFrame, phase: str, cis: float, expanded: bool = False) -> None:
-    expander_label = f"🔬 מידע למקצוענים - Evidence Ledger ונתונים גולמיים (CIS: {cis:.1f})"
-    with st.expander(expander_label, expanded=expanded):
-        try:
-            explanation_md = explain_score(df, phase, cis)
-            st.markdown(explanation_md)
-        except Exception as exc:
-            st.warning(f"לא ניתן לחשב הסבר: {exc}")
-
-def render_monitor_metrics(metrics: dict):
-    st.markdown("### 📊 ביצועי מסחר (מערכת Backtest כספית)")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("רווח נקי (Total Profit)", f"${metrics['total_profit']:,.2f}")
-    with col2:
-        st.metric("דרואו דאון מקסימלי (Max DD)", f"{metrics['max_drawdown']:.2f}%")
-    with col3:
-        st.metric("סה\"כ עסקאות (Total Trades)", metrics['total_trades'])
-        st.caption(f"✅ {metrics['winning_trades']} מרוויחות | ❌ {metrics['losing_trades']} מפסידות")
-    with col4:
-        st.metric("אישורי וואיקוף - אחוזי הצלחה", f"{metrics['wyckoff_success_rate']:.1f}%")
-    
-    if metrics.get('annual_pnl'):
-        st.markdown("#### 📅 דוח רווח/הפסד שנתי")
-        annual_df = pd.DataFrame([
-            {"שנה": str(year), "רווח/הפסד ($)": pnl}
-            for year, pnl in metrics['annual_pnl'].items()
-        ]).sort_values("שנה")
-        
-        def color_pnl(val):
-            color = '#16a34a' if val > 0 else '#dc2626'
-            return f'color: {color}'
-            
-        st.dataframe(annual_df.style.map(color_pnl, subset=['רווח/הפסד ($)']), use_container_width=True, hide_index=True)
-    else:
-        st.info("אין נתוני מסחר שנתיים להצגה.")
-
-def inject_css() -> None:
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Hebrew:wght@300;400;500;600;700&display=swap');
-    html, body, [class*="css"] {
-        font-family: 'IBM Plex Sans Hebrew', sans-serif;
-        direction: rtl; text-align: right; background: #0b1220; color: #d9e6f2;
-    }
-    .main-header {
-        padding: 1.2rem 1.6rem; border-radius: 22px;
-        background: linear-gradient(135deg, rgba(7,14,25,0.88), rgba(13,25,43,0.92));
-        box-shadow: 0 18px 44px rgba(0,0,0,.28); margin-bottom: 1.5rem;
-        border: 1px solid rgba(125,155,190,0.18);
-    }
-    .main-header h1 { margin: 0; font-size: 2.2rem; color: #eaf4ff; font-weight: 700; }
-    .main-header p { color: #9db0c9; font-size: 1.1rem; margin-top: 5px; }
-    
-    [data-testid="stMetric"] {
-        background: rgba(15, 23, 42, 0.95) !important;
-        border: 1px solid rgba(56, 189, 248, 0.3) !important;
-        border-radius: 12px;
-        padding: 1.2rem;
-    }
-    [data-testid="stMetricValue"] { color: #38bdf8 !important; font-weight: 700 !important; }
-    [data-testid="stMetricLabel"] { color: #f1f5f9 !important; font-weight: 500 !important; }
-    [data-testid="stMetricDelta"] { color: #34d399 !important; }
-    
-    /* ======== Trading Scout Premium Cards ======== */
-    .scout-wrapper {
-        width: 100%;
-        margin-bottom: 40px; 
-    }
-    .scout-card {
-        background: linear-gradient(145deg, rgba(16, 24, 48, 0.95), rgba(28, 40, 68, 0.98));
-        border: 1px solid rgba(56, 189, 248, 0.28);
-        border-radius: 22px;
-        padding: 32px 28px;
-        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
-        transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    .scout-card::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; height: 5px;
-        background: linear-gradient(90deg, transparent, #38bdf8, transparent);
-        opacity: 0.85;
-    }
-    .scout-card:hover {
-        transform: translateY(-4px);
-        border-color: rgba(56, 189, 248, 0.7);
-        box-shadow: 0 20px 55px rgba(0, 0, 0, 0.45);
-    }
-    .scout-header {
-        display: flex; justify-content: space-between; align-items: center; 
-        margin-bottom: 24px;
-    }
-    .scout-title { 
-        color: #f8fafc; font-size: 2rem; font-weight: 800; 
-        margin: 0; letter-spacing: 0.5px; display: flex; align-items: center;
-    }
-    .scout-title-sub { font-size: 1.1rem; color: #94a3b8; font-weight: 400; padding-right: 12px; }
-    .scout-badge {
-        padding: 8px 20px; border-radius: 30px; 
-        font-size: 1rem; font-weight: 700; letter-spacing: 0.5px;
-        background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.15);
-    }
-    .scout-prob-container { text-align: center; margin-bottom: 20px; }
-    .scout-prob-label { margin:0; color:#cbd5e1; font-weight: 600; letter-spacing: 1.5px; font-size: 1rem; text-transform: uppercase; }
-    .scout-prob { 
-        font-size: 4.8rem; font-weight: 800; color: #38bdf8; 
-        margin: 10px 0 16px 0; line-height: 1;
-        text-shadow: 0 0 35px rgba(56,189,248,0.45); 
-    }
-    .scout-phase-pill {
-        display: inline-block; background: rgba(0,0,0,0.35); padding: 10px 20px; 
-        border-radius: 25px; border: 1px solid rgba(255,255,255,0.08);
-    }
-    
-    /* ======== Roadmap In-Card ======== */
-    .roadmap-box {
-        background: rgba(255, 255, 255, 0.03);
-        border-radius: 14px;
-        padding: 22px 28px;
-        margin-top: 24px;
-        margin-bottom: 14px;
-        border-right: 3px solid #38bdf8;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        gap: 28px;
-        font-size: 1rem;
-        color: #94a3b8;
-        flex-wrap: wrap;
-    }
-    .roadmap-step {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 4px;
-    }
-    .roadmap-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; color: #64748b; }
-    .roadmap-value { font-weight: 600; color: #f8fafc; font-size: 1.02rem; }
-    .roadmap-arrow { color: #475569; font-size: 1.3rem; font-weight: bold; }
-    
-    .scout-divider {
-        border-top: 1px solid rgba(255,255,255,0.08); margin: 28px 0;
-    }
-    
-    /* ======== Stacked Vertical Layout for Sections ======== */
-    .scout-stats-grid { 
-        display: flex; 
-        flex-direction: column; /* CHANGED FROM ROW TO COLUMN */
-        gap: 24px; 
-        margin-bottom: 24px; 
-    }
-    .scout-stat-box {
-        flex: 1; background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 16px; padding: 22px; display: flex; flex-direction: column;
-    }
-    .scout-section-title {
-        color: #e0f2fe; font-size: 1.15rem; font-weight: 700; 
-        margin-bottom: 16px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
-    }
-    .scout-list-item {
-        font-size: 1.05rem; color: #cbd5e1; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;
-    }
-    .scout-alert-box {
-        padding: 20px 24px; border-radius: 14px; margin-top: 24px;
-        border-right: 5px solid #dc2626; background: rgba(220, 38, 38, 0.08);
-    }
-    .scout-alert-title { font-size: 1.1rem; color:#f8fafc; font-weight:bold; margin-bottom:12px; display:block; }
-    .scout-alert-text { font-size: 0.95rem; display:block; color:#cbd5e1; line-height: 1.6; margin-bottom: 6px; }
-    .trap-section-label {
-        font-size: 0.85rem; color: #94a3b8; font-weight: 700; text-transform: uppercase;
-        letter-spacing: 0.5px; margin: 14px 0 8px 0; display: block;
-    }
-    .trap-fund-highlight {
-        background: rgba(239, 68, 68, 0.12);
-        border-right: 3px solid #ef4444;
-        padding: 10px 14px;
-        border-radius: 8px;
-        font-weight: 600;
-        color: #fecaca !important;
-    }
-    
-    .edu-box {
-        background: rgba(56, 189, 248, 0.05);
-        border-right: 4px solid #38bdf8;
-        padding: 16px;
-        margin-top: 20px;
-        border-radius: 8px;
-        font-size: 0.95rem;
-        color: #e2e8f0;
-        line-height: 1.7;
-        flex-grow: 1; 
-    }
-    .edu-box-title {
-        color:#38bdf8; 
-        font-weight: 700;
-        display:block; 
-        margin-bottom:10px;
-        font-size: 1.05rem;
-    }
-
-    /* ======== Fundamental Analysis Screen ======== */
-    .fund-card {
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 18px;
-        padding: 28px 30px;
-        margin-bottom: 22px;
-    }
-    .fund-verdict-box {
-        text-align: center;
-        border-radius: 18px;
-        padding: 26px;
-        margin-bottom: 22px;
-        border: 1px solid rgba(255,255,255,0.08);
-    }
-    .fund-verdict-label { font-size: 1rem; color: #94a3b8; margin-bottom: 6px; }
-    .fund-verdict-value { font-size: 2.4rem; font-weight: 800; letter-spacing: 0.5px; }
-    .fund-verdict-sub { font-size: 0.95rem; color: #cbd5e1; margin-top: 8px; }
-    .fund-synth-box {
-        background: rgba(56, 189, 248, 0.06);
-        border-right: 4px solid #38bdf8;
-        border-radius: 12px;
-        padding: 18px 22px;
-        margin-bottom: 22px;
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #f8fafc;
-    }
-    .fund-meta-row {
-        display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 22px;
-    }
-    .fund-meta-box {
-        flex: 1; min-width: 220px;
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 14px; padding: 18px 20px;
-    }
-    .fund-meta-label { font-size: 0.85rem; color: #94a3b8; margin-bottom: 6px; }
-    .fund-meta-value { font-size: 1.2rem; font-weight: 700; color: #f8fafc; }
-    .fund-table-title {
-        color: #e0f2fe; font-size: 1.15rem; font-weight: 700;
-        margin-bottom: 14px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 10px;
-    }
-
-    /* ======== Institutional Map Visual Layout ======== */
-    .map-card {
-        background: linear-gradient(180deg, rgba(16, 24, 45, 0.95) 0%, rgba(12, 18, 36, 0.6) 100%);
-        padding: 32px 26px; border-radius: 20px; text-align: center;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.3); margin-bottom: 30px;
-        border: 1px solid rgba(255,255,255,0.08);
-        transition: transform 0.25s ease, background 0.25s ease, border-color 0.25s ease;
-    }
-    .map-card:hover {
-        transform: translateY(-5px); border-color: rgba(56, 189, 248, 0.5);
-        background: linear-gradient(180deg, rgba(22, 36, 62, 0.98) 0%, rgba(12, 18, 36, 0.7) 100%);
-    }
-    .map-card h4 { margin:0; font-size:1.4rem; color:#f8fafc; font-weight:700; letter-spacing: 0.5px; }
-    .map-card-label { font-size:1rem; color:#94a3b8; margin: 12px 0 6px 0; font-weight:600; text-transform: uppercase; letter-spacing: 1px; }
-    .map-card-score { margin:0; font-size: 3.4rem; font-weight:800; line-height: 1.1; }
-    .map-desc {
-        font-size: 0.95rem; color: #cbd5e1; margin-top: 20px; line-height: 1.6; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,0.15);
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
 def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = None, end: Optional[str] = None):
     return get_data(ticker, period, start, end) if SCOUT_CORE_AVAILABLE else None
 
@@ -909,6 +511,47 @@ def init_session_state() -> None:
         st.session_state.ml_model = None
     if "selected_tickers" not in st.session_state:
         st.session_state.selected_tickers = ["BN", "DELL", "PANW", "GLD", "SLV", "NVDA", "BTC-USD"]
+    if "current_page" not in st.session_state:
+        st.session_state.current_page = "🏠 בית"
+
+
+@st.cache_data(ttl=900, max_entries=128, show_spinner=False)
+def get_price_and_time(ticker: str) -> tuple:
+    """מחזיר (מחיר נוכחי, שינוי %, מחרוזת תאריך/שעה אחרונה). מקור: get_data דרך הקאש."""
+    try:
+        df = get_cached_data(ticker, period="6mo")
+        if df is None or df.empty:
+            return 0.0, 0.0, "N/A"
+        price = float(df["Close"].iloc[-1])
+        prev = float(df["Close"].iloc[-2]) if len(df) > 1 else price
+        chg_pct = ((price - prev) / prev * 100) if prev else 0.0
+        try:
+            last_time = df.index[-1].strftime("%d.%m.%Y %H:%M")
+        except Exception:
+            last_time = str(df.index[-1])
+        return price, chg_pct, last_time
+    except Exception:
+        return 0.0, 0.0, "N/A"
+
+
+def render_price_header(ticker: str) -> None:
+    """כותרת מחיר אחידה: מופיעה ליד כל טיקר בכל מסך, עם 'מעודכן לשעה ותאריך'."""
+    if not ticker or not SCOUT_CORE_AVAILABLE:
+        return
+    price, chg, tstr = get_price_and_time(ticker)
+    if price <= 0:
+        return
+    chg_cls = "ph-chg-pos" if chg >= 0 else "ph-chg-neg"
+    chg_sign = "▲" if chg >= 0 else "▼"
+    st.markdown(
+        f"""<div class='price-header'>
+            <span class='ph-ticker'>{ticker} — מחיר נוכחי</span>
+            <span class='ph-price'>${price:,.2f} <span class='{chg_cls}'>{chg_sign} {abs(chg):.2f}%</span></span>
+            <span class='ph-time'>🕒 מעודכן ל: {tstr}</span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
 
 # ============================================================
 # Screens
@@ -939,6 +582,8 @@ def screen_home() -> None:
             else:
                 st.error("אין נתונים זמינים או נדרש לפחות 60 ימי מסחר.")
             return
+
+        render_price_header(ticker)
             
         if result["allowed"] and result["current_cis"] >= 65:
             st.success("🟢 **סיכום כניסה:** השלב הנוכחי חיובי מאוד ותומך בכניסה לעסקה. ההסתברות לצבירה מוסדית אמיתית גבוהה.")
@@ -1139,127 +784,6 @@ def screen_institutional_map() -> None:
             else:
                 st.error("לא ניתן היה לטעון נתונים מספיקים עבור המפה.")
 
-def get_ackman_fundamental_data(ticker: str, cis_score: float = None, current_phase: str = "") -> dict:
-    """
-    מודול פונדמנטלי קשיח (Bill Ackman Style) - תוסף נוסף ל-get_fundamental_data.
-    מבוסס על Cash Flow Yield, PEG Ratio, Margin ומינוף.
-    אוכף סנכרון הרמטי עם הפאזה הטכנית. עצמאי - שואב נתונים ישירות מ-yfinance.
-    """
-    try:
-        tkr_obj = yf.Ticker(ticker)
-        info = tkr_obj.info or {}
-
-        try: cf = tkr_obj.cashflow
-        except Exception: cf = pd.DataFrame()
-        try: bs = tkr_obj.balance_sheet
-        except Exception: bs = pd.DataFrame()
-        try: fin = tkr_obj.financials
-        except Exception: fin = pd.DataFrame()
-
-        market_cap = info.get("marketCap", 0)
-        fwd_pe = info.get("forwardPE", 0)
-        sector = info.get("sector", "Unknown")
-
-        # Cash flow Yield
-        ocf, fcf = 0, 0
-        if not cf.empty and "Operating Cash Flow" in cf.index:
-            ocf = cf.loc["Operating Cash Flow"].iloc[0]
-            if "Capital Expenditure" in cf.index:
-                fcf = ocf + cf.loc["Capital Expenditure"].iloc[0]  # CapEx typically negative
-
-        fcf_yield = (fcf / market_cap * 100) if market_cap > 0 and fcf > 0 else 0
-
-        # Margins & Growth
-        rev_growth, op_margin = 0, 0
-        if not fin.empty and "Total Revenue" in fin.index and len(fin.columns) > 1:
-            rev_curr = fin.loc["Total Revenue"].iloc[0]
-            rev_prev = fin.loc["Total Revenue"].iloc[1]
-            if rev_prev and rev_prev != 0:
-                rev_growth = ((rev_curr - rev_prev) / abs(rev_prev)) * 100
-            if "Operating Income" in fin.index and rev_curr:
-                op_margin = (fin.loc["Operating Income"].iloc[0] / rev_curr) * 100
-
-        # Net Debt to EBITDA
-        net_debt_ebitda = 0
-        if not bs.empty and not fin.empty:
-            total_debt = bs.loc["Total Debt"].iloc[0] if "Total Debt" in bs.index else 0
-            cash = bs.loc["Cash And Cash Equivalents"].iloc[0] if "Cash And Cash Equivalents" in bs.index else 0
-            ebitda = fin.loc["EBITDA"].iloc[0] if "EBITDA" in fin.index else 0
-            if ebitda > 0:
-                net_debt_ebitda = (total_debt - cash) / ebitda
-
-        peg_ratio = info.get("pegRatio", (fwd_pe / rev_growth) if rev_growth > 0 else 999)
-
-        # Benchmarks
-        benchmarks = {
-            "Technology": {"pe": 25, "om": 20.0, "rg": 15.0},
-            "Financial Services": {"pe": 14, "om": 25.0, "rg": 8.0},
-            "Healthcare": {"pe": 20, "om": 15.0, "rg": 10.0},
-            "Consumer Cyclical": {"pe": 18, "om": 10.0, "rg": 8.0},
-            "Energy": {"pe": 12, "om": 15.0, "rg": 5.0},
-        }
-        bench = benchmarks.get(sector, {"pe": 18, "om": 12.0, "rg": 8.0})
-
-        valuation, color = "הוגן", "#eab308"
-        if fwd_pe and fwd_pe < bench["pe"] * 0.8 and peg_ratio < 1.5:
-            valuation, color = "זול", "#16a34a"
-        elif fwd_pe and (fwd_pe > bench["pe"] * 1.25 or peg_ratio > 2.5):
-            valuation, color = "יקר", "#ef4444"
-
-        # Strict Synthesis Rule (Synchronization)
-        synthesis = "ממתין לנתונים..."
-        is_toxic = False
-        if cis_score is not None:
-            is_bearish_phase = any(p in current_phase for p in ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax", "UNCERTAIN"])
-            is_bullish_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "LPS", "Re-accumulation"])
-
-            strong_cash = (fcf_yield > 3.0) and (op_margin > bench["om"] * 0.8)
-            high_debt = net_debt_ebitda > 3.0
-
-            if is_bearish_phase or cis_score <= 40:
-                is_toxic = True
-                if high_debt or not strong_cash:
-                    synthesis = f"☠️ Toxic Value Trap (סכין נופלת): הפאזה הטכנית ב-{ticker} היא '{current_phase}' והכסף החכם נוטש. ישנה חולשה תזרימית בליבת העסקים מול סקטור ה-{sector}. התרחק מיד!"
-                else:
-                    synthesis = f"🚨 סכין נופלת: הנתונים היבשים של {ticker} אולי נראים סבירים, אך הפאזה היא '{current_phase}' והמוסדיים זורקים סחורה בפיזור אגרסיבי. מלכודת ערך קלאסית. אל תתפוס תחתיות."
-            elif is_bullish_phase and cis_score >= 65:
-                if strong_cash and valuation != "יקר" and not high_debt:
-                    synthesis = f"🔥 High Conviction: שילוב אידיאלי ב-{ticker}. תשואת תזרים בריאה ({fcf_yield:.1f}% Yield), יעילות גבוהה מהסקטור ואיסוף מוסדי מובהק. פוזיציית לונג איכותית."
-                elif valuation == "יקר" and strong_cash:
-                    synthesis = f"🚀 פרמיית איכות: המוסדיים מוכנים לשלם פרמיה יקרה על {ticker} בזכות הנהלה שמדפיסה מזומן ומכה את הסקטור. הטרנד נתמך בעוצמה."
-                elif high_debt or not strong_cash:
-                    synthesis = f"⚠️ ספקולציית מומנטום: יש איסוף מוסדי, אך החולשה במאזן או בתזרים מצביעה על מהלך טכני ספקולטיבי. סיכון גבוה להחזקה ארוכה."
-            else:
-                if cis_score >= 60 and strong_cash:
-                    synthesis = f"⚖️ איסוף שקט: {ticker} מדפיסה מזומן ונאספת בהדרגה מתחת לרדאר. המתנה לפריצת מחיר (Phase D)."
-                else:
-                    synthesis = f"💤 כסף מת: חוסר קצה פונדמנטלי וטכני ביחס למתחרות בסקטור ה-{sector}."
-
-        explanations = {
-            "fcf_yield": f"תשואת תזרים חופשי (FCF Yield) של {ticker} עומדת על {fcf_yield:.1f}%. במודל הערך של Ackman, זהו הכסף האמיתי שהעסק מייצר ביחס לשווי השוק. מעל 3-4% נחשב לחוסן בריא.",
-            "peg_ratio": f"יחס PEG של {peg_ratio:.2f}. מכפיל זה משקלל את תמחור המניה (PE) מול קצב צמיחת ההכנסות. יחס מתחת ל-1.5 מרמז על צמיחה שמתומחרת בחסר.",
-            "op_margin": f"שולי הרווח של {op_margin:.1f}%. בהשוואה לסקטור ה-{sector} שעומד על {bench['om']}%, זה מצביע על {'חפיר תחרותי ויכולת תמחור אגרסיבית (Pricing Power)' if op_margin > bench['om'] else 'חוסר יעילות ועלויות כבדות ביחס למתחרים הישירים'}.",
-            "net_debt": f"יחס חוב ל-EBITDA עומד על {net_debt_ebitda:.2f}x. מודל מוסדי שמרני דורש מינוף מתחת ל-3x. {'המינוף בטוח וסביר.' if net_debt_ebitda < 3 else 'רמת המינוף הזו מהווה דגל אדום בוהק המייצר סיכון להשמדת ערך בעת משבר!'}"
-        }
-
-        return {
-            "fcf_yield": f"{fcf_yield:.1f}%",
-            "peg_ratio": f"{peg_ratio:.2f}",
-            "op_margin": f"{op_margin:.1f}%",
-            "rev_growth": f"{rev_growth:.1f}%",
-            "net_debt_ebitda": f"{net_debt_ebitda:.2f}x",
-            "pe_forward": round(fwd_pe, 2) if fwd_pe else "N/A",
-            "sector": sector,
-            "valuation": valuation,
-            "valuation_color": color,
-            "synthesis": synthesis,
-            "explanations": explanations,
-            "is_toxic": is_toxic
-        }
-    except Exception as e:
-        logger.error(f"Error computing Ackman fundamentals for {ticker}: {e}")
-        return {}
-
 def screen_fundamental() -> None:
     st.markdown("### 📊 Fundamental Analysis - ניתוח ערך וחברה")
     st.markdown("מסך זה מנתח את הבריאות הפיננסית של החברה והתמחור שלה ביחס לסקטור, ומשלב זאת עם נתוני הכסף החכם.")
@@ -1279,152 +803,111 @@ def screen_fundamental() -> None:
             if not fdata:
                 st.error(f"שגיאה בשאיבת נתונים מ-Yahoo Finance עבור הסימול {tkr}.")
                 return
-            
+
             df = get_cached_data(tkr)
-            cis_score = 0
+            cis_score = 0.0
             current_phase = ""
             if df is not None and not df.empty:
                 engine = FactorEngine(BacktestConfig())
                 factors = engine.compute(df)
                 cis_score = float(engine.composite_cis(factors, df).iloc[-1])
                 current_phase = str(engine.get_wyckoff_phase(df).iloc[-1])
-            
-            if cis_score >= 65 and fdata["valuation"] == "זול":
-                synth = "🔥 High Conviction - כסף חכם אוסף מניה זולה."
-            elif cis_score >= 65 and fdata["valuation"] == "יקר":
-                synth = "🚀 Growth Momentum - מוסדיים קונים למרות תמחור יקר."
-            elif cis_score < 50 and fdata["valuation"] == "זול":
-                synth = "⚠️ Value Trap - זולה, אבל ללא כניסת כסף חכם."
-            elif cis_score < 50 and fdata["valuation"] == "יקר":
-                synth = "🚫 Avoid - יקרה וללא עניין מוסדי."
-            else:
-                synth = "⚖️ Neutral - המתנה או תמחור הוגן."
 
-            verdict = fdata.get("valuation", "-")
-            v_color = fdata.get("valuation_color", "#94a3b8")
+        # --- כותרת מחיר אחידה ליד הטיקר ---
+        render_price_header(tkr)
 
-            # === שורת המחץ - זול/הוגן/יקר במשקל ויזואלי גבוה ===
-            st.markdown(
-                "".join([
-                    f"<div class='fund-verdict-box' style='border-color:{v_color}50; background:{v_color}12;'>",
-                    f"<div class='fund-verdict-label'>{tkr} ביחס לסקטור ({fdata.get('sector', '-')})</div>",
-                    f"<div class='fund-verdict-value' style='color:{v_color};'>{verdict}</div>",
-                    f"<div class='fund-verdict-sub'>מבוסס על Forward P/E: {fdata.get('pe_forward', 'N/A')}</div>",
-                    "</div>",
-                ]),
-                unsafe_allow_html=True
+        # --- סינתזה קשיחה אחת (נקודת אמת יחידה, ללא סתירות) ---
+        verdict_obj = synthesize_verdict(fdata, cis_score, current_phase, tkr)
+        v_color_val = fdata.get("valuation_color", "#94a3b8")
+        valuation = fdata.get("valuation", "-")
+
+        # === באנר הכרעה מאוחד: Wyckoff + פונדמנטלי במשפט אחד ===
+        st.markdown(
+            f"""<div class='verdict-banner' style='border-color:{verdict_obj['color']}55; background:{verdict_obj['color']}12;'>
+                <div class='verdict-headline' style='color:{verdict_obj['color']};'>{verdict_obj['headline']}</div>
+                <div class='verdict-detail'>{verdict_obj['detail']}</div>
+                <div class='verdict-chips'>
+                    <span class='verdict-chip'>תמחור: <b style='color:{v_color_val}'>{valuation}</b></span>
+                    <span class='verdict-chip'>Wyckoff: <b>{current_phase or '—'}</b></span>
+                    <span class='verdict-chip'>ציון מוסדי (CIS): <b>{cis_score:.0f}</b></span>
+                </div>
+            </div>""",
+            unsafe_allow_html=True
+        )
+
+        # === למה היא זולה/יקרה, וביחס למה (נימוק מפורש) ===
+        st.markdown(
+            f"<div class='reason-box'>💡 <b>למה {tkr} מתומחרת כ'{valuation}'?</b> {fdata.get('valuation_reason', '-')}</div>",
+            unsafe_allow_html=True
+        )
+        with st.popover("ℹ️ ביחס למה משווים תמחור?"):
+            st.write(
+                f"התמחור נמדד תמיד ביחס לסקטור הספציפי ({fdata.get('sector_he', fdata.get('sector','-'))}), "
+                "ולא ביחס לשוק הכללי. לכל סקטור 'נורמות' מכפיל שונות — חברת טכנולוגיה צומחת תיסחר "
+                "במכפילים גבוהים יותר מבנק או חברת אנרגיה, ולכן ההשוואה תמיד יחסית-ענפית ולא מוחלטת."
             )
-            with st.popover("ℹ️ ביחס למה משווים?"):
-                st.write(
-                    "התמחור נמדד ביחס לסקטור הספציפי של החברה, ולא ביחס לשוק הכללי (S&P 500). "
-                    "לכל סקטור יש 'נורמות' מכפיל שונות - חברת טכנולוגיה צומחת תיסחר באופן טבעי "
-                    "במכפילים גבוהים יותר מבנק או חברת אנרגיה, ולכן ההשוואה תמיד יחסית-ענפית ולא מוחלטת."
-                )
-                st.caption("לדוגמה: סקטור טכנולוגיה/תקשורת - 'זול' מתחת ל-22, 'יקר' מעל 35. פיננסים/אנרגיה - 'זול' מתחת ל-12, 'יקר' מעל 18.")
+            st.caption("דוגמה: טכנולוגיה — 'זול' מתחת ל-22, 'יקר' מעל 35. פיננסים/אנרגיה — 'זול' מתחת ל-12, 'יקר' מעל 18.")
 
-            # === סינתזה וואיקוף + פונדמנטלי - משקל ויזואלי גבוה ===
-            st.markdown(
-                f"<div class='fund-synth-box'>🧭 סינתזת וואיקוף + פונדמנטלי: {synth} &nbsp; (Wyckoff Score: {cis_score:.1f})</div>",
-                unsafe_allow_html=True
-            )
+        # === שורת מטא: סקטור ודוח רווחים קרוב ===
+        st.markdown(
+            "".join([
+                "<div class='fund-meta-row'>",
+                "<div class='fund-meta-box'>",
+                "<div class='fund-meta-label'>🏢 סקטור</div>",
+                f"<div class='fund-meta-value'>{fdata.get('sector', '-')}</div>",
+                "</div>",
+                "<div class='fund-meta-box'>",
+                "<div class='fund-meta-label'>📅 דוח רווחים קרוב (הבא)</div>",
+                f"<div class='fund-meta-value'>{fdata.get('next_earnings', 'לא ידוע')}</div>",
+                "</div>",
+                "<div class='fund-meta-box'>",
+                "<div class='fund-meta-label'>💵 תשואת תזרים (FCF Yield)</div>",
+                f"<div class='fund-meta-value'>{fdata.get('fcf_yield', 'N/A')}</div>",
+                "</div>",
+                "</div>",
+            ]),
+            unsafe_allow_html=True
+        )
 
-            # === שורת מטא: סקטור ודוח רווחים קרוב ===
-            st.markdown(
-                "".join([
-                    "<div class='fund-meta-row'>",
-                    "<div class='fund-meta-box'>",
-                    "<div class='fund-meta-label'>🏢 סקטור</div>",
-                    f"<div class='fund-meta-value'>{fdata.get('sector', '-')}</div>",
-                    "</div>",
-                    "<div class='fund-meta-box'>",
-                    "<div class='fund-meta-label'>📅 דוח רווחים קרוב (הבא)</div>",
-                    f"<div class='fund-meta-value'>{fdata.get('next_earnings', 'לא ידוע')}</div>",
-                    "</div>",
-                    "</div>",
-                ]),
-                unsafe_allow_html=True
-            )
+        # === טבלת מכפילים מסודרת עם הסבר ספציפי לכל שורה ===
+        ex = fdata.get("explanations", {})
+        st.markdown("<div class='fund-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='fund-table-title'>📐 טבלת מכפילים, תזרים ומינוף</div>", unsafe_allow_html=True)
 
-            # === טבלת מכפילים מסודרת עם הסבר לכל שורה ===
-            st.markdown("<div class='fund-card'>", unsafe_allow_html=True)
-            st.markdown("<div class='fund-table-title'>📐 טבלת מכפילים ויחסי תמחור</div>", unsafe_allow_html=True)
+        metrics = [
+            ("Trailing P/E", fdata.get("pe_trailing", "-"), ex.get("pe_trailing", "")),
+            ("Forward P/E", fdata.get("pe_forward", "-"), ex.get("pe_forward", "")),
+            ("PEG Ratio", fdata.get("peg", "-"), ex.get("peg", "")),
+            ("EV/EBITDA", fdata.get("ev_ebitda", "-"), ex.get("ev_ebitda", "")),
+            ("P/S (מכירות)", fdata.get("ps", "-"), ex.get("ps", "")),
+            ("P/B (הון)", fdata.get("pb", "-"), ex.get("pb", "")),
+            ("ROE", fdata.get("roe", "-"), ex.get("roe", "")),
+            ("EPS Growth", fdata.get("eps_growth", "-"), ex.get("eps_growth", "")),
+            ("FCF Yield (תזרים חופשי)", fdata.get("fcf_yield", "-"), ex.get("fcf_yield", "")),
+            ("שולי תפעול (Op. Margin)", fdata.get("op_margin", "-"), ex.get("op_margin", "")),
+            ("צמיחת הכנסות (YoY)", fdata.get("rev_growth", "-"), "קצב צמיחת ההכנסות שנה מול שנה — מבטא את קצב התרחבות העסק בפועל."),
+            ("חוב נטו / EBITDA", fdata.get("net_debt_ebitda", "-"), ex.get("net_debt_ebitda", "")),
+        ]
 
-            metrics = [
-                ("Trailing P/E", fdata.get("pe_trailing", "-"), "מכפיל רווח היסטורי - כמה משלמים על כל דולר שהחברה הרוויחה ב-12 החודשים האחרונים."),
-                ("Forward P/E", fdata.get("pe_forward", "-"), "מכפיל רווח עתידי - מתבסס על תחזיות רווח קדימה. זהו המכפיל החשוב ביותר להערכת תמחור עתידי."),
-                ("PEG Ratio", fdata.get("peg", "-"), "מכפיל רווח משוקלל בקצב הצמיחה. ערך מתחת ל-1 נחשב לרוב כהזדמנות (המניה 'צומחת מהר יותר ממה שהמכפיל מרמז')."),
-                ("EV/EBITDA", fdata.get("ev_ebitda", "-"), "שווי פעילות (חוב+הון) חלקי רווח תפעולי תזרימי. מנקה עיוותי מבנה הון, מס ופחת - שימושי להשוואה בין חברות עם רמות חוב שונות."),
-                ("P/S (מכירות)", fdata.get("ps", "-"), "שווי שוק חלקי הכנסות שנתיות. קריטי לחברות טכנולוגיה צומחות שעדיין לא רווחיות, שם P/E לא רלוונטי."),
-                ("P/B (הון)", fdata.get("pb", "-"), "שווי שוק חלקי ההון העצמי המאזני של החברה. שימושי בעיקר לבנקים וחברות עם נכסים מוחשיים רבים."),
-                ("ROE", fdata.get("roe", "-"), "תשואה להון - כמה רווח מייצרת החברה על כל דולר של בעלי המניות. מדד מרכזי לאיכות ויעילות ההנהלה."),
-                ("EPS Growth", fdata.get("eps_growth", "-"), "קצב צמיחת הרווח למניה ביחס לתקופה המקבילה - מדד הצמיחה הבסיסי ביותר של החברה."),
-            ]
+        header_l, header_r1, header_r2 = st.columns([2.2, 1.6, 1])
+        with header_l:
+            st.markdown("**מדד**")
+        with header_r1:
+            st.markdown("**ערך**")
+        with header_r2:
+            st.markdown("**הסבר**")
 
-            header_l, header_r1, header_r2 = st.columns([2.2, 1.6, 1])
-            with header_l:
-                st.markdown("**מכפיל**")
-            with header_r1:
-                st.markdown("**ערך**")
-            with header_r2:
-                st.markdown("**הסבר**")
+        for name, val, desc in metrics:
+            row_l, row_r1, row_r2 = st.columns([2.2, 1.6, 1])
+            with row_l:
+                st.markdown(name)
+            with row_r1:
+                st.markdown(f"**{val}**")
+            with row_r2:
+                with st.popover("מה זה?"):
+                    st.write(desc if desc else "אין הסבר זמין למדד זה.")
 
-            for name, val, desc in metrics:
-                row_l, row_r1, row_r2 = st.columns([2.2, 1.6, 1])
-                with row_l:
-                    st.markdown(name)
-                with row_r1:
-                    st.markdown(f"**{val}**")
-                with row_r2:
-                    with st.popover("מה זה?"):
-                        st.write(desc)
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # === מודול נוסף: Ackman Style Hard Fundamentals (תוסף עצמאי, לא דורס את הטבלה למעלה) ===
-            with st.spinner("מריץ מודול Ackman - תזרים מזומנים, מינוף וסנכרון הרמטי..."):
-                adata = get_ackman_fundamental_data(tkr, cis_score=cis_score, current_phase=current_phase)
-
-            if adata:
-                a_color = adata.get("valuation_color", "#94a3b8")
-                st.markdown("<div class='fund-card'>", unsafe_allow_html=True)
-                st.markdown("<div class='fund-table-title'>🦅 ניתוח קשיח בסטייל Ackman (FCF, מינוף וסנכרון וואיקוף)</div>", unsafe_allow_html=True)
-
-                st.markdown(
-                    f"<div class='fund-synth-box' style='border-color:{a_color}; background:{a_color}10;'>{adata.get('synthesis', '-')}</div>",
-                    unsafe_allow_html=True
-                )
-                if adata.get("is_toxic"):
-                    st.warning("☠️ דגל אדום: המודל מזהה חוסר סנכרון בין הפאזה הטכנית לבריאות הפיננסית. זהירות מוגברת.")
-
-                ackman_metrics = [
-                    ("FCF Yield", adata.get("fcf_yield", "-"), adata["explanations"]["fcf_yield"]),
-                    ("PEG Ratio", adata.get("peg_ratio", "-"), adata["explanations"]["peg_ratio"]),
-                    ("שולי תפעול (Op. Margin)", adata.get("op_margin", "-"), adata["explanations"]["op_margin"]),
-                    ("צמיחת הכנסות", adata.get("rev_growth", "-"), "קצב צמיחת ההכנסות שנה מול שנה - מבטא את קצב התרחבות העסק בפועל."),
-                    ("חוב נטו / EBITDA", adata.get("net_debt_ebitda", "-"), adata["explanations"]["net_debt"]),
-                ]
-
-                a_header_l, a_header_r1, a_header_r2 = st.columns([2.2, 1.6, 1])
-                with a_header_l:
-                    st.markdown("**מדד**")
-                with a_header_r1:
-                    st.markdown("**ערך**")
-                with a_header_r2:
-                    st.markdown("**הסבר**")
-
-                for name, val, desc in ackman_metrics:
-                    a_row_l, a_row_r1, a_row_r2 = st.columns([2.2, 1.6, 1])
-                    with a_row_l:
-                        st.markdown(name)
-                    with a_row_r1:
-                        st.markdown(f"**{val}**")
-                    with a_row_r2:
-                        with st.popover("מה זה?"):
-                            st.write(desc)
-
-                st.markdown("</div>", unsafe_allow_html=True)
-            else:
-                st.info("לא ניתן היה לחלץ נתוני Ackman עומק (FCF/מינוף) עבור סימול זה כרגע.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("#### 🔎 סורק פונדמנטלי-מוסדי (Market Scanner)")
@@ -1490,6 +973,8 @@ def screen_trading_scout() -> None:
                 if rec_data.get("recommendation") == "ERROR":
                     st.warning(f"**{tkr}:** {rec_data.get('reason')}")
                     continue
+
+                render_price_header(tkr)
 
                 rec = rec_data["recommendation"]
                 color_map = {
@@ -1655,6 +1140,8 @@ def screen_backtest() -> None:
         if df is None or df.empty:
             st.error("אין נתונים.")
             return
+
+        render_price_header(ticker)
             
         t_count = len(audit_df)
         if t_count > 0:
@@ -1697,6 +1184,7 @@ def screen_monitor() -> None:
         with st.spinner(f"מחשב מדדים היסטוריים ל-{test_ticker}..."):
             from scout_core import run_wyckoff_anchored_backtest, calculate_advanced_metrics, calculate_phase_followthrough
             df, audit_df = run_wyckoff_anchored_backtest(test_ticker, use_ai=st.session_state.use_ml, threshold=65, period=monitor_period)
+            render_price_header(test_ticker)
             if audit_df is not None and not audit_df.empty:
                 trades = audit_df.to_dict('records')
                 metrics = calculate_advanced_metrics(trades)
@@ -1855,23 +1343,56 @@ def screen_ml_trainer() -> None:
             pass
     st.text_area("Log", value=log_content, height=300, disabled=True, label_visibility="collapsed")
 
+def render_top_nav() -> None:
+    """סרגל ניווט עליון קבוע עם המבורגר בפינה הימנית — מלווה בכל מסך."""
+    PAGES = [
+        "🏠 בית", "🗺️ מפה מוסדית", "📊 ניתוח פונדמנטלי",
+        "📈 Trading Scout", "📊 Backtest", "👁️ Monitor", "🧠 ML Trainer",
+    ]
+    # שורה עליונה: כותרת בצד אחד, המבורגר (selectbox) בפינה הימנית
+    title_col, menu_col = st.columns([4, 1.4])
+    with title_col:
+        st.markdown(
+            '<div class="main-header" style="margin-bottom:0;"><h1>📈 Wyckoff Institutional Analyst</h1>'
+            '<p>זיהוי איסוף, הפצה וכניסת כסף חכם | Cloud Run Edition</p></div>',
+            unsafe_allow_html=True
+        )
+    with menu_col:
+        st.markdown("<div class='topnav-spacer'></div>", unsafe_allow_html=True)
+        current = st.session_state.get("current_page", PAGES[0])
+        idx = PAGES.index(current) if current in PAGES else 0
+        chosen = st.selectbox(
+            "☰ תפריט",
+            PAGES,
+            index=idx,
+            key="nav_select",
+            help="מעבר מהיר בין מסכי המערכת",
+        )
+        if chosen != st.session_state.get("current_page"):
+            st.session_state.current_page = chosen
+            st.rerun()
+    st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:14px 0 18px 0;'>", unsafe_allow_html=True)
+
+
 def main() -> None:
     init_session_state()
     inject_css()
 
-    st.markdown(
-        '<div class="main-header"><h1>📈 Wyckoff Institutional Analyst</h1>'
-        '<p>מערכת זיהוי דפוסי איסוף, הפצה וכניסת כסף חכם | Cloud Run Edition</p></div>',
-        unsafe_allow_html=True
-    )
+    render_top_nav()
 
-    # Added Fundamental Analysis to Tabs
-    tabs = st.tabs(["🏠 Home (Wyckoff Analyst)", "🗺️ Institutional Map", "📊 Fundamental Analysis", "📈 Trading Scout", "📊 Backtest", "👁️ Monitor", "🧠 ML Trainer"])
-    screen_fns = [screen_home, screen_institutional_map, screen_fundamental, screen_trading_scout, screen_backtest, screen_monitor, screen_ml_trainer]
-    
-    for tab, fn in zip(tabs, screen_fns):
-        with tab:
-            fn()
+    page = st.session_state.get("current_page", "🏠 בית")
+    router = {
+        "🏠 בית": screen_home,
+        "🗺️ מפה מוסדית": screen_institutional_map,
+        "📊 ניתוח פונדמנטלי": screen_fundamental,
+        "📈 Trading Scout": screen_trading_scout,
+        "📊 Backtest": screen_backtest,
+        "👁️ Monitor": screen_monitor,
+        "🧠 ML Trainer": screen_ml_trainer,
+    }
+    screen_fn = router.get(page, screen_home)
+    screen_fn()
+
 
 if __name__ == "__main__":
     main()
