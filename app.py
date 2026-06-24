@@ -66,7 +66,7 @@ try:
         calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple,
         build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
         detect_failure_risks, generate_replay_analogies, get_fundamental_data,
-        synthesize_verdict
+        synthesize_verdict, build_fundamental_narrative, scan_top_opportunities
     )
     SCOUT_CORE_AVAILABLE = True
 except Exception as _imp_exc1:
@@ -84,6 +84,8 @@ except Exception as _imp_exc1:
         def generate_replay_analogies(t, p, a, f): return []
         def get_fundamental_data(t): return {}
         def synthesize_verdict(fd, c, p, t=""): return {"headline":"-","detail":"-","color":"#94a3b8","tier":"NEUTRAL"}
+        def build_fundamental_narrative(fd, t, v=None): return "מודול ניתוח חסר."
+        def scan_top_opportunities(tickers, top_n=5, mode="Balanced"): return []
         
         SCOUT_CORE_AVAILABLE = True
     except Exception as _imp_exc2:
@@ -105,6 +107,12 @@ except Exception as _imp_exc1:
 
         def synthesize_verdict(fd, c, p, t=""):
             return {"headline": "מערכת סינתזה חסרה.", "detail": "-", "color": "#94a3b8", "tier": "NEUTRAL"}
+
+        def build_fundamental_narrative(fd, t, v=None):
+            return "מודול ניתוח חסר."
+
+        def scan_top_opportunities(tickers, top_n=5, mode="Balanced"):
+            return []
 
 
 st.set_page_config(
@@ -475,6 +483,42 @@ def inject_css() -> None:
         border-radius: 10px; padding: 14px 18px; margin: 6px 0 18px 0;
         font-size: 0.98rem; color: #e2e8f0; line-height: 1.7;
     }
+
+    /* ======== Home: Top Opportunity Picks ======== */
+    .pick-card {
+        background: linear-gradient(145deg, rgba(16,24,48,0.92), rgba(22,34,58,0.96));
+        border: 1px solid rgba(56,189,248,0.25); border-radius: 16px;
+        padding: 18px 20px; margin-bottom: 14px; height: 100%;
+        transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+    .pick-card:hover { transform: translateY(-3px); border-color: rgba(56,189,248,0.6); }
+    .pick-rank { font-size: 0.8rem; color: #64748b; font-weight: 700; letter-spacing: 1px; }
+    .pick-ticker { font-size: 1.6rem; font-weight: 800; color: #f8fafc; line-height: 1.1; }
+    .pick-headline { font-size: 0.95rem; font-weight: 700; margin: 8px 0 6px 0; }
+    .pick-meta { font-size: 0.82rem; color: #94a3b8; line-height: 1.5; }
+    .pick-score-pill {
+        display:inline-block; background: rgba(56,189,248,0.12); color:#38bdf8;
+        border-radius: 14px; padding: 3px 12px; font-size: 0.8rem; font-weight: 700; margin-top: 8px;
+    }
+
+    /* ======== Narrative free-text box (Ackman analysis) ======== */
+    .narrative-box {
+        background: linear-gradient(145deg, rgba(20,30,52,0.6), rgba(14,22,40,0.85));
+        border: 1px solid rgba(56,189,248,0.18); border-right: 4px solid #38bdf8;
+        border-radius: 14px; padding: 20px 24px; margin: 10px 0 20px 0;
+        font-size: 1.02rem; color: #e2e8f0; line-height: 1.85;
+    }
+    .narrative-title { color:#38bdf8; font-weight:800; font-size:1.1rem; display:block; margin-bottom:10px; }
+
+    /* ======== Staged Trade Plan ======== */
+    .plan-stage {
+        background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07);
+        border-radius: 12px; padding: 14px 18px; margin-bottom: 10px;
+        display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;
+    }
+    .plan-stage-label { font-weight:700; color:#f8fafc; font-size:1rem; }
+    .plan-stage-val { font-weight:800; font-size:1.15rem; }
+    .plan-stage-note { font-size:0.85rem; color:#94a3b8; width:100%; margin-top:4px; }
     </style>""", unsafe_allow_html=True)
 
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
@@ -513,6 +557,28 @@ def init_session_state() -> None:
         st.session_state.selected_tickers = ["BN", "DELL", "PANW", "GLD", "SLV", "NVDA", "BTC-USD"]
     if "current_page" not in st.session_state:
         st.session_state.current_page = "🏠 בית"
+    if "handoff_ticker" not in st.session_state:
+        st.session_state.handoff_ticker = None
+    if "home_top_picks" not in st.session_state:
+        st.session_state.home_top_picks = None
+    if "plan_detail_level" not in st.session_state:
+        st.session_state.plan_detail_level = "מלא"
+
+
+# יקום סריקה למסך הבית - 24 מניות מובילות (מהיר)
+HOME_SCAN_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "CRM",
+    "JPM", "V", "MA", "UNH", "LLY", "COST", "HD", "PG",
+    "XOM", "CVX", "AMD", "PANW", "NFLX", "ABBV", "WMT", "KO",
+]
+
+
+def go_to_screen(page: str, ticker: str = None) -> None:
+    """ניווט בין מסכים עם העברת טיקר (Cross-Screen Handoff)."""
+    if ticker:
+        st.session_state.handoff_ticker = ticker.strip().upper()
+    st.session_state.current_page = page
+    st.rerun()
 
 
 @st.cache_data(ttl=900, max_entries=128, show_spinner=False)
@@ -557,45 +623,140 @@ def render_price_header(ticker: str) -> None:
 # Screens
 # ============================================================
 
+def _render_top_picks() -> None:
+    """מציג עד 5 מניות בהזדמנות מצוינת (Wyckoff + פונדמנטלי איכותי). לחיצה -> ניתוח מלא."""
+    st.markdown("#### 🌟 ההזדמנויות הבולטות בשוק כרגע (Wyckoff + פונדמנטלי)")
+    st.caption("המערכת סורקת 24 מניות מובילות ומציגה רק שילובים איכותיים: איסוף מוסדי מובהק יחד עם תמחור/איכות פונדמנטלית. לחיצה על מניה פותחת ניתוח מלא.")
+
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        if st.button("🔍 סרוק הזדמנויות", use_container_width=True, type="primary", key="scan_picks_btn"):
+            if not SCOUT_CORE_AVAILABLE:
+                st.error("מודול הליבה חסר.")
+            else:
+                with st.spinner("סורק 24 מניות מובילות לאיתור שילובי איכות (10-15 שניות)..."):
+                    st.session_state.home_top_picks = scan_top_opportunities(HOME_SCAN_UNIVERSE, top_n=5, mode="Balanced")
+    with c2:
+        st.caption("")
+
+    picks = st.session_state.get("home_top_picks")
+    if picks is None:
+        st.info("לחץ על 'סרוק הזדמנויות' כדי לקבל את 5 המניות הבולטות ביותר כרגע לפי שכלול וואיקוף + פונדמנטלי.")
+        return
+    if not picks:
+        st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק) ביקום הסריקה. השוק עשוי להיות במצב המתנה.")
+        return
+
+    cols = st.columns(len(picks))
+    for i, (col, p) in enumerate(zip(cols, picks)):
+        with col:
+            st.markdown(
+                f"""<div class='pick-card' style='border-top:4px solid {p['color']};'>
+                    <div class='pick-rank'>#{i+1}</div>
+                    <div class='pick-ticker'>{p['ticker']}</div>
+                    <div class='pick-headline' style='color:{p['color']};'>{p['headline']}</div>
+                    <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}<br>
+                    FCF: {p['fcf_yield']} · P/E: {p['pe']}<br>{p['sector_he']}</div>
+                    <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            if st.button(f"📊 נתח את {p['ticker']}", key=f"pick_{p['ticker']}_{i}", use_container_width=True):
+                go_to_screen("📊 ניתוח פונדמנטלי", p["ticker"])
+
+    st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
+
+
+def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phase: str) -> None:
+    """סיכום פונדמנטלי קצר בסטייל אקמן במסך הבית + כפתור מעבר לאסטרטגיית מסחר."""
+    fdata = get_fundamental_data(ticker)
+    if not fdata:
+        st.info("לא ניתן היה לשאוב נתונים פונדמנטליים עבור מניה זו כרגע.")
+        return
+
+    verdict = synthesize_verdict(fdata, cis_score, current_phase, ticker)
+    v_color_val = fdata.get("valuation_color", "#94a3b8")
+    valuation = fdata.get("valuation", "-")
+
+    st.markdown("#### 🏢 סיכום פונדמנטלי (בסטייל Ackman)")
+    st.markdown(
+        f"""<div class='verdict-banner' style='border-color:{verdict['color']}55; background:{verdict['color']}12;'>
+            <div class='verdict-headline' style='color:{verdict['color']};'>{verdict['headline']}</div>
+            <div class='verdict-detail'>{verdict['detail']}</div>
+            <div class='verdict-chips'>
+                <span class='verdict-chip'>תמחור: <b style='color:{v_color_val}'>{valuation}</b></span>
+                <span class='verdict-chip'>מכפיל רווח: <b>{fdata.get('pe_forward') if fdata.get('pe_forward')!='N/A' else fdata.get('pe_trailing','N/A')}</b></span>
+                <span class='verdict-chip'>FCF Yield: <b>{fdata.get('fcf_yield','N/A')}</b></span>
+                <span class='verdict-chip'>צמיחה: <b>{fdata.get('rev_growth','N/A')}</b></span>
+            </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+    narrative = build_fundamental_narrative(fdata, ticker, verdict)
+    st.markdown(
+        f"<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח חופשי - מצב המניה הספציפי</span>{narrative}</div>",
+        unsafe_allow_html=True,
+    )
+
+    cta1, cta2 = st.columns([1, 2])
+    with cta1:
+        if st.button("🎯 קבל אסטרטגיית מסחר", type="primary", use_container_width=True, key="home_to_strategy"):
+            go_to_screen("📈 Trading Scout", ticker)
+    with cta2:
+        st.caption("מעבר למסך המסחר עם ניתוח מוכן: מחיר כניסה, סטופ מדורג, יעדי שחרור חלקי וגודל פוזיציה - הכל לפי סיכום וואיקוף + פונדמנטלי.")
+
+
 def screen_home() -> None:
     st.markdown("### 🏠 Wyckoff Analyst - רדאר הכסף החכם")
-    
+
     st.markdown("""
-    **ברוכים הבאים למערכת המוסדית!** המטרה העיקרית של המערכת היא לענות על שאלה אחת פשוטה: **"מה ההסתברות שגוף מוסדי אוסף כעת את המניה?"** (Institutional Accumulation Probability).
-    
-    על פי שיטת ריצ'רד וואיקוף (Wyckoff), כסף חכם (בנקים, קרנות גידור) אינו קונה בבת אחת, אלא "אוסף" סחורה בתהליך מתמשך מתחת לרדאר. המערכת מנתחת מחזורי מסחר, שינויי מבנה, ומדדי זרימת הון כדי לזהות את עקבות הכסף החכם ולהתריע מתי כדאי להצטרף אליהם (שלבי Spring ו-Markup), ומתי לברוח (Distribution).
+    **ברוכים הבאים למערכת המוסדית!** המטרה: לענות על שאלה אחת - **"מה ההסתברות שגוף מוסדי אוסף כעת את המניה?"** - ולשלב זאת עם תמחור פונדמנטלי בסטייל Bill Ackman.
     """)
     st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
-    
-    ticker = st.text_input("Ticker לניתוח (לדוגמה NVDA, TSLA, SPY)", value="NVDA").strip().upper()
 
-    if st.button("▶ הרץ ניתוח מוסדי", use_container_width=True, type="primary"):
+    # --- 5 ההזדמנויות הבולטות בשוק ---
+    _render_top_picks()
+
+    # --- חיפוש מניה ספציפית ---
+    st.markdown("#### 🔎 ניתוח מניה ספציפית")
+    default_tkr = st.session_state.get("handoff_ticker") or "NVDA"
+    ticker = st.text_input("Ticker לניתוח (לדוגמה NVDA, TSLA, SPY)", value=default_tkr, key="home_ticker_input").strip().upper()
+
+    run_clicked = st.button("▶ הרץ ניתוח מוסדי + פונדמנטלי", use_container_width=True, type="primary")
+    # תמיכה ב-handoff: אם הגענו ממסך אחר עם טיקר, הרץ אוטומטית פעם אחת
+    auto_run = False
+    if st.session_state.get("handoff_ticker") and st.session_state.get("_home_consumed_handoff") != st.session_state.handoff_ticker:
+        auto_run = True
+        st.session_state._home_consumed_handoff = st.session_state.handoff_ticker
+
+    if run_clicked or auto_run:
         with st.spinner("מחשב מנוע Wyckoff מתקדם..."):
             result = _compute_wyckoff(ticker)
-            
+
         if result is None:
             if not SCOUT_CORE_AVAILABLE:
                 st.error("מודול הליבה (scout_core) לא נטען בהצלחה - לכן לא ניתן לשאוב נתונים.")
                 if SCOUT_CORE_IMPORT_ERROR:
                     st.code(SCOUT_CORE_IMPORT_ERROR)
-                st.caption("בדוק ב-requirements.txt שכל הספריות (yfinance, pandas, numpy וכו') מותקנות, ושאין שגיאת ייבוא בקובץ scout_core.py.")
+                st.caption("בדוק ב-requirements.txt שכל הספריות מותקנות, ושאין שגיאת ייבוא בקובץ scout_core.py.")
             else:
                 st.error("אין נתונים זמינים או נדרש לפחות 60 ימי מסחר.")
             return
 
         render_price_header(ticker)
-            
+
         if result["allowed"] and result["current_cis"] >= 65:
-            st.success("🟢 **סיכום כניסה:** השלב הנוכחי חיובי מאוד ותומך בכניסה לעסקה. ההסתברות לצבירה מוסדית אמיתית גבוהה.")
+            st.success("🟢 **סיכום כניסה (Wyckoff):** השלב הנוכחי חיובי מאוד ותומך בכניסה. ההסתברות לצבירה מוסדית גבוהה.")
         elif result["allowed"]:
-            st.warning("🟡 **סיכום כניסה:** השלב הטכני מתאים, אך המומנטום עדיין חלש (ציון נמוך מ-65). המתן לאישור.")
+            st.warning("🟡 **סיכום כניסה (Wyckoff):** השלב הטכני מתאים, אך המומנטום עדיין חלש (ציון נמוך מ-65). המתן לאישור.")
         else:
-            st.error("🔴 **סיכום כניסה:** לא מומלץ. הנכס אינו נמצא כעת בשלב שמתאים לכניסה. סיכוי נמוך לצבירה מוסדית.")
+            st.error("🔴 **סיכום כניסה (Wyckoff):** לא מומלץ. הנכס אינו בשלב שמתאים לכניסה.")
 
         st.markdown("<hr style='border-color: rgba(255,255,255,0.1); margin:10px 0;'>", unsafe_allow_html=True)
-            
+
         left, right = st.columns([1, 1.3])
-        
+
         with left:
             fig_gauge = go.Figure(go.Indicator(
                 mode="gauge+number",
@@ -614,28 +775,23 @@ def screen_home() -> None:
             ))
             fig_gauge.update_layout(height=230, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_gauge, use_container_width=True)
-            st.caption("ציון מ-0 עד 100 המודד את עוצמת כניסת הכספים המוסדיים (Institutional Accumulation Probability).")
+            st.caption("ציון 0-100 המודד את עוצמת כניסת הכספים המוסדיים.")
 
         with right:
             st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
             cp = result["current_phase"]
-            
             is_transition = any(x in cp for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"])
-            
             if is_transition:
-                st.info("ℹ️ לא נמצא שלב Wyckoff מובהק רלוונטי לתהליך כרגע (הנכס בשלב מעבר או חוסר ודאות).")
+                st.info("ℹ️ לא נמצא שלב Wyckoff מובהק כרגע (מעבר/חוסר ודאות).")
                 st.caption(f"**זיהוי מלא:** `{cp}`")
             else:
                 is_bearish = any(x in cp for x in ["Distribution", "Markdown", "Supply"])
-                
                 def get_bg(phase_markers):
                     if isinstance(phase_markers, str):
                         phase_markers = [phase_markers]
                     if any(m in cp for m in phase_markers):
                         return "background:#38bdf8; color:#0f172a; font-weight:bold; border:2px solid #fff; transform:scale(1.05);"
                     return "background:rgba(255,255,255,0.05); color:#64748b;"
-                    
-                # תוקנו החצים לזרימה תקינה מימין לשמאל בעברית (←)
                 if is_bearish:
                     html = f"""
                     <div style="display:flex; justify-content:space-around; align-items:center; background:#1e293b; padding:20px; border-radius:12px; margin-top:10px;">
@@ -660,62 +816,50 @@ def screen_home() -> None:
                     """
                 st.markdown(html, unsafe_allow_html=True)
                 st.caption(f"**זיהוי מלא:** `{cp}`")
-            
+
         st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
-        
+
         st.markdown("#### 📉 ניתוח ויזואלי של המחיר והנפח (Price & Volume Action)")
-        chart_df = result["df"].iloc[-150:] 
+        chart_df = result["df"].iloc[-150:]
         fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-        
         fig_chart.add_trace(go.Candlestick(
-            x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], 
-            low=chart_df['Low'], close=chart_df['Close'], name="Price"), 
+            x=chart_df.index, open=chart_df['Open'], high=chart_df['High'],
+            low=chart_df['Low'], close=chart_df['Close'], name="Price"),
             row=1, col=1)
-            
         colors = ['#16a34a' if c >= o else '#dc2626' for c, o in zip(chart_df['Close'], chart_df['Open'])]
         fig_chart.add_trace(go.Bar(
-            x=chart_df.index, y=chart_df['Volume'], marker_color=colors, name="Volume"), 
+            x=chart_df.index, y=chart_df['Volume'], marker_color=colors, name="Volume"),
             row=2, col=1)
-            
         last_date = chart_df.index[-1]
         last_low = chart_df['Low'].iloc[-1]
-        
         cp_marker = result['current_phase']
         if any(x in cp_marker for x in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "Accumulation", "Re-accumulation"]):
-            marker_color = "#16a34a" 
+            marker_color = "#16a34a"
         elif any(x in cp_marker for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"]):
             marker_color = "#eab308"
         else:
             marker_color = "#dc2626"
-
         fig_chart.add_annotation(
-            x=last_date, y=last_low,
-            text=f"📌 {cp_marker}",
-            showarrow=True,
-            arrowhead=2,
-            arrowsize=1.2,
-            arrowwidth=2,
-            arrowcolor=marker_color,
-            ax=0,
-            ay=45,
-            font=dict(color="white", size=11, weight="bold"),
-            bgcolor=marker_color,
-            bordercolor="rgba(255,255,255,0.7)",
-            borderwidth=1,
-            borderpad=3,
-            opacity=0.95
+            x=last_date, y=last_low, text=f"📌 {cp_marker}", showarrow=True, arrowhead=2,
+            arrowsize=1.2, arrowwidth=2, arrowcolor=marker_color, ax=0, ay=45,
+            font=dict(color="white", size=11, weight="bold"), bgcolor=marker_color,
+            bordercolor="rgba(255,255,255,0.7)", borderwidth=1, borderpad=3, opacity=0.95
         )
-            
         fig_chart.update_layout(
-            height=450, margin=dict(l=20, r=20, t=20, b=20), 
+            height=450, margin=dict(l=20, r=20, t=20, b=20),
             xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
         )
         st.plotly_chart(fig_chart, use_container_width=True)
-            
+
         with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=True):
             st.markdown(explain_score_simple(result["df"], result["current_phase"], result["current_cis"], result["allowed"]))
-            
+
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
+
+        # --- סיכום פונדמנטלי בסטייל אקמן + מעבר לאסטרטגיה ---
+        st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
+        _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"])
+
 
 def screen_institutional_map() -> None:
     st.markdown("### 🗺️ Institutional Map - מפת כסף חכם סקטוריאלית")
@@ -788,9 +932,16 @@ def screen_fundamental() -> None:
     st.markdown("### 📊 Fundamental Analysis - ניתוח ערך וחברה")
     st.markdown("מסך זה מנתח את הבריאות הפיננסית של החברה והתמחור שלה ביחס לסקטור, ומשלב זאת עם נתוני הכסף החכם.")
     
-    tkr = st.text_input("הזן סימול לניתוח פונדמנטלי מקיף:", value="MSFT", key="fund_tkr").strip().upper()
-    
-    if st.button("📈 נתח פונדמנטלית", type="primary", use_container_width=True):
+    default_fund = st.session_state.get("handoff_ticker") or "MSFT"
+    tkr = st.text_input("הזן סימול לניתוח פונדמנטלי מקיף:", value=default_fund, key="fund_tkr").strip().upper()
+
+    run_fund = st.button("📈 נתח פונדמנטלית", type="primary", use_container_width=True)
+    auto_fund = False
+    if st.session_state.get("handoff_ticker") and st.session_state.get("_fund_consumed_handoff") != st.session_state.handoff_ticker:
+        auto_fund = True
+        st.session_state._fund_consumed_handoff = st.session_state.handoff_ticker
+
+    if run_fund or auto_fund:
         if not SCOUT_CORE_AVAILABLE:
             st.error("מודול הליבה (scout_core) לא נטען בהצלחה - לכן הניתוח הפונדמנטלי אינו זמין.")
             if SCOUT_CORE_IMPORT_ERROR:
@@ -869,24 +1020,37 @@ def screen_fundamental() -> None:
             unsafe_allow_html=True
         )
 
-        # === טבלת מכפילים מסודרת עם הסבר ספציפי לכל שורה ===
+        # === נרטיב חופשי בסטייל אקמן על מצב המניה הספציפי ===
+        narrative = build_fundamental_narrative(fdata, tkr, verdict_obj)
+        st.markdown(
+            f"<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח חופשי - מצב המניה הספציפי (Ackman View)</span>{narrative}</div>",
+            unsafe_allow_html=True,
+        )
+
+        # === טבלת מכפילים - מסודרת לפי סדר חשיבות אקמני ===
         ex = fdata.get("explanations", {})
         st.markdown("<div class='fund-card'>", unsafe_allow_html=True)
-        st.markdown("<div class='fund-table-title'>📐 טבלת מכפילים, תזרים ומינוף</div>", unsafe_allow_html=True)
+        st.markdown("<div class='fund-table-title'>📐 מכפילים ויחסים (מחושבים עצמית - בסדר חשיבות אקמני)</div>", unsafe_allow_html=True)
 
         metrics = [
-            ("Trailing P/E", fdata.get("pe_trailing", "-"), ex.get("pe_trailing", "")),
-            ("Forward P/E", fdata.get("pe_forward", "-"), ex.get("pe_forward", "")),
+            # (1) מכפיל רווח - הראשון שאקמן בוחן
+            ("Forward P/E (מכפיל רווח עתידי)", fdata.get("pe_forward", "-"), ex.get("pe_forward", "")),
+            ("Trailing P/E (מכפיל רווח נוכחי)", fdata.get("pe_trailing", "-"), ex.get("pe_trailing", "")),
+            # (2) תזרים מזומנים
+            ("FCF Yield (תשואת תזרים חופשי)", fdata.get("fcf_yield", "-"), ex.get("fcf_yield", "")),
+            # (3) צמיחה
+            ("צמיחת הכנסות (YoY)", fdata.get("rev_growth", "-"), ex.get("rev_growth", "")),
+            ("EPS Growth (צמיחת רווח)", fdata.get("eps_growth", "-"), ex.get("eps_growth", "")),
             ("PEG Ratio", fdata.get("peg", "-"), ex.get("peg", "")),
+            # (4) איכות
+            ("שולי תפעול (Op. Margin)", fdata.get("op_margin", "-"), ex.get("op_margin", "")),
+            ("ROE (תשואה להון)", fdata.get("roe", "-"), ex.get("roe", "")),
+            # (5) תמחור משלים
             ("EV/EBITDA", fdata.get("ev_ebitda", "-"), ex.get("ev_ebitda", "")),
             ("P/S (מכירות)", fdata.get("ps", "-"), ex.get("ps", "")),
             ("P/B (הון)", fdata.get("pb", "-"), ex.get("pb", "")),
-            ("ROE", fdata.get("roe", "-"), ex.get("roe", "")),
-            ("EPS Growth", fdata.get("eps_growth", "-"), ex.get("eps_growth", "")),
-            ("FCF Yield (תזרים חופשי)", fdata.get("fcf_yield", "-"), ex.get("fcf_yield", "")),
-            ("שולי תפעול (Op. Margin)", fdata.get("op_margin", "-"), ex.get("op_margin", "")),
-            ("צמיחת הכנסות (YoY)", fdata.get("rev_growth", "-"), "קצב צמיחת ההכנסות שנה מול שנה — מבטא את קצב התרחבות העסק בפועל."),
-            ("חוב נטו / EBITDA", fdata.get("net_debt_ebitda", "-"), ex.get("net_debt_ebitda", "")),
+            # (6) מינוף/בטחון
+            ("חוב נטו / EBITDA (מינוף)", fdata.get("net_debt_ebitda", "-"), ex.get("net_debt_ebitda", "")),
         ]
 
         header_l, header_r1, header_r2 = st.columns([2.2, 1.6, 1])
@@ -908,6 +1072,14 @@ def screen_fundamental() -> None:
                     st.write(desc if desc else "אין הסבר זמין למדד זה.")
 
         st.markdown("</div>", unsafe_allow_html=True)
+
+        # === מעבר לאסטרטגיית מסחר עם הטיקר הנוכחי ===
+        cta1, cta2 = st.columns([1, 2])
+        with cta1:
+            if st.button("🎯 קבל אסטרטגיית מסחר", type="primary", use_container_width=True, key="fund_to_strategy"):
+                go_to_screen("📈 Trading Scout", tkr)
+        with cta2:
+            st.caption("מעבר למסך המסחר עם תוכנית מוכנה: כניסה מדורגת, סטופ מדורג, יעדי שחרור חלקי וגודל פוזיציה - לפי סיכום וואיקוף + פונדמנטלי.")
 
     st.markdown("---")
     st.markdown("#### 🔎 סורק פונדמנטלי-מוסדי (Market Scanner)")
@@ -946,20 +1118,41 @@ def screen_trading_scout() -> None:
     mode_map = {"Conservative (שמרני)": "Conservative", "Balanced (מאוזן)": "Balanced", "Optimistic (אופטימי)": "Optimistic"}
     selected_mode = mode_map[mode]
 
+    # בחירת רמת פירוט לתוכנית המסחר
+    plan_level = st.radio(
+        "רמת פירוט בתוכנית המסחר:",
+        ["בסיסי (כניסה + סטופ + 2 יעדים)", "מלא (כניסה מדורגת + יעדי שחרור חלקי + גידור)", "מלא + גודל פוזיציה מומלץ"],
+        index=1, horizontal=True, key="plan_level_radio"
+    )
+    plan_level_key = {"בסיסי (כניסה + סטופ + 2 יעדים)": "basic",
+                      "מלא (כניסה מדורגת + יעדי שחרור חלקי + גידור)": "full",
+                      "מלא + גודל פוזיציה מומלץ": "sizing"}[plan_level]
+
+    # אם הגענו ממסך אחר עם טיקר - נמלא אותו בטיקר הראשון
+    handoff = st.session_state.get("handoff_ticker")
+    default_tickers = ["NVDA", "AAPL", "META", "TSLA"]
+    if handoff:
+        default_tickers = [handoff, "", "", ""]
+
     cols_input = st.columns(4)
     tickers_input = []
-    default_tickers = ["NVDA", "AAPL", "META", "TSLA"]
     for i in range(4):
         val = cols_input[i].text_input(f"טיקר {i+1}", value=default_tickers[i], key=f"ts_ticker_{i}").strip().upper()
         tickers_input.append(val)
-        
-    if st.button("💡 הפעל רדאר חכם - קבל הסתברויות ותוכניות", type="primary", use_container_width=True):
+
+    run_scout = st.button("💡 הפעל רדאר חכם - קבל הסתברויות ותוכניות", type="primary", use_container_width=True)
+    auto_scout = False
+    if handoff and st.session_state.get("_scout_consumed_handoff") != handoff:
+        auto_scout = True
+        st.session_state._scout_consumed_handoff = handoff
+
+    if run_scout or auto_scout:
         if not SCOUT_CORE_AVAILABLE:
             st.error("מודול הליבה חסר, לא ניתן לייצר המלצה.")
             return
-            
+
         from trading_scout import get_trading_recommendation
-        
+
         # UI rendering in sequential order (Stacked Vertically to avoid cutoffs)
         for tkr in tickers_input:
             if tkr:
@@ -969,7 +1162,7 @@ def screen_trading_scout() -> None:
                     except Exception as e:
                         st.error(f"שגיאה ב-{tkr}: {e}")
                         continue
-                        
+
                 if rec_data.get("recommendation") == "ERROR":
                     st.warning(f"**{tkr}:** {rec_data.get('reason')}")
                     continue
@@ -1094,31 +1287,62 @@ def screen_trading_scout() -> None:
                 ]
                 st.markdown("".join(card_parts), unsafe_allow_html=True)
                 
-                with st.expander(f"📝 Trading Plan & Replay Engine ל-{tkr}", expanded=False):
+                with st.expander(f"📝 אסטרטגיית מסחר מלאה ל-{tkr}", expanded=True):
                     st.markdown("#### 🗺️ תרחישי מפת הדרכים (What-if Analysis)")
-                    st.markdown(f"**✅ תרחיש חיובי במידה והתבנית מצליחה:** {roadmap_success}")
-                    st.markdown(f"**❌ תרחיש שלילי במידה והתבנית נכשלת:** {roadmap_fail}")
+                    st.markdown(f"**✅ אם התבנית מצליחה:** {roadmap_success}")
+                    st.markdown(f"**❌ אם התבנית נכשלת:** {roadmap_fail}")
 
                     st.markdown("---")
                     st.markdown("#### 🎯 תוכנית מסחר (Trading Plan)")
                     st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
-                    st.markdown(f"**מחיר סגירה (Close):** ${rec_data['entry_price']:.2f}")
 
+                    tp = rec_data.get("trade_plan", {})
                     if rec in ("SELL", "STRONG SELL"):
-                        st.warning("🚫 לא קיימת תוכנית מסחר ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה מדי / הנכס בפאזת הפצה.")
+                        st.warning("🚫 לא קיימת תוכנית כניסה ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה / הנכס בפאזת הפצה.")
+                    elif not tp:
+                        st.info("אין תוכנית מסחר זמינה.")
+                    elif plan_level_key == "basic":
+                        b = tp.get("basic", {})
+                        st.markdown(
+                            f"""<div class='plan-stage'><span class='plan-stage-label'>📍 כניסה</span><span class='plan-stage-val' style='color:#38bdf8'>${b.get('entry','-')}</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>🛑 סטופ הגנה</span><span class='plan-stage-val' style='color:#f87171'>${b.get('stop','-')} ({b.get('stop_pct','-')}%)</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 1</span><span class='plan-stage-val' style='color:#34d399'>${b.get('tp1','-')} (+{b.get('tp1_pct','-')}%)</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 2</span><span class='plan-stage-val' style='color:#34d399'>${b.get('tp2','-')} (+{b.get('tp2_pct','-')}%)</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>⚖️ יחס סיכוי/סיכון</span><span class='plan-stage-val'>{b.get('rr','-')}</span></div>""",
+                            unsafe_allow_html=True
+                        )
                     else:
-                        st.markdown(f"**הגנת הפסד דינמית (Stop Loss):** ${rec_data['stop_loss_price']:.2f} ({rec_data['stop_loss_pct']:.1f}%)")
-                        if rec in ("BUY", "STRONG BUY"):
-                            st.markdown(f"**יעד ראשון (TP1 - שחרור חצי):** ${rec_data['tp1_price']:.2f} (+{rec_data['tp1_pct']:.1f}%)")
-                            st.markdown(f"**יעד שני (TP2 - שחרור מלא):** ${rec_data['tp2_price']:.2f} (+{rec_data['tp2_pct']:.1f}%)")
-                            st.markdown(f"**יחס סיכוי/סיכון משוער (R/R):** {rec_data['rr_ratio']}")
-                            st.markdown(f"**טווח זמן אופטימלי (Timeframe):** {rec_data['timeframe']}")
-                        else:
-                            st.info("ℹ️ ההמלצה היא HOLD - מומלץ להמתין לאישור טרנד לפני קביעת יעדים אגרסיביים.")
+                        f = tp.get("full", {})
+                        st.markdown(
+                            f"""<div class='plan-stage'><span class='plan-stage-label'>📍 כניסה (חצי עכשיו)</span><span class='plan-stage-val' style='color:#38bdf8'>${f.get('entry_now','-')}</span>
+                            <span class='plan-stage-note'>חצי שני בפולבק קל לאזור ${f.get('entry_pullback','-')} - כניסה מדורגת מקטינה סיכון תזמון.</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>🛑 סטופ ראשוני</span><span class='plan-stage-val' style='color:#f87171'>${f.get('stop_initial','-')}</span>
+                            <span class='plan-stage-note'>אחרי יעד 1 - העלה את הסטופ לנקודת הכניסה (${f.get('stop_after_tp1','-')}) = עסקה ללא סיכון.</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 1 (+{f.get('tp1_pct','-')}%)</span><span class='plan-stage-val' style='color:#34d399'>${f.get('tp1','-')}</span>
+                            <span class='plan-stage-note'>{f.get('tp1_action','')}</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 2 (+{f.get('tp2_pct','-')}%)</span><span class='plan-stage-val' style='color:#34d399'>${f.get('tp2','-')}</span>
+                            <span class='plan-stage-note'>{f.get('tp2_action','')}</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 3 (+{f.get('tp3_pct','-')}%)</span><span class='plan-stage-val' style='color:#34d399'>${f.get('tp3','-')}</span>
+                            <span class='plan-stage-note'>{f.get('tp3_action','')}</span></div>
+                            <div class='plan-stage' style='border-color:rgba(239,68,68,0.3);'><span class='plan-stage-label'>⛔ נקודת הפרת תזה</span><span class='plan-stage-val' style='color:#f87171'>${f.get('invalidation','-')}</span>
+                            <span class='plan-stage-note'>{f.get('invalidation_note','')}</span></div>
+                            <div class='plan-stage'><span class='plan-stage-label'>⚖️ יחס סיכוי/סיכון</span><span class='plan-stage-val'>{f.get('rr','-')}</span>
+                            <span class='plan-stage-note'>טווח זמן אופטימלי: {f.get('timeframe','-')}</span></div>""",
+                            unsafe_allow_html=True
+                        )
+                        if plan_level_key == "sizing":
+                            s = tp.get("sizing", {})
+                            st.markdown(
+                                f"""<div class='plan-stage' style='border-color:rgba(56,189,248,0.35);'>
+                                <span class='plan-stage-label'>💼 גודל פוזיציה מומלץ</span>
+                                <span class='plan-stage-val' style='color:#38bdf8'>{s.get('position_pct','-')}% מהתיק</span>
+                                <span class='plan-stage-note'>{s.get('risk_note','')} (הפסד מקסימלי בסטופ: ~{s.get('max_loss_at_stop_pct','-')}% על הפוזיציה)</span></div>""",
+                                unsafe_allow_html=True
+                            )
 
                     st.markdown("---")
                     st.markdown("#### ⏮️ היסטוריית תבניות (Replay Engine)")
-                    st.markdown(f"חיפוש תרחישים מוסדיים אנלוגיים מן העבר המצליבים את נתוני הכסף החכם הנוכחיים של **{tkr}**:")
+                    st.markdown(f"תרחישים מוסדיים אנלוגיים מהעבר המצליבים את נתוני הכסף החכם הנוכחיים של **{tkr}**:")
                     for rep in rec_data['replay']:
                         st.markdown(f"- {rep}")
 
@@ -1370,6 +1594,7 @@ def render_top_nav() -> None:
         )
         if chosen != st.session_state.get("current_page"):
             st.session_state.current_page = chosen
+            st.session_state.handoff_ticker = None  # ניווט ידני - בלי טיקר תקוע
             st.rerun()
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:14px 0 18px 0;'>", unsafe_allow_html=True)
 
