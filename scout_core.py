@@ -1,6 +1,6 @@
 """
 ============================================================
-SCOUT CORE V16.9 — WYCKOFF INSTITUTIONAL ENGINE
+SCOUT CORE V16.10 — WYCKOFF INSTITUTIONAL ENGINE
 ============================================================
 """
 
@@ -20,6 +20,7 @@ def clean_filename(name: str) -> str:
 def get_data(ticker, period="2y", start=None, end=None):
     try:
         tkr = yf.Ticker(ticker)
+        
         if start is not None and end is not None:
             df = tkr.history(start=start, end=end, auto_adjust=False)
             if df is None or df.empty or len(df) < 40:
@@ -65,9 +66,9 @@ def get_data(ticker, period="2y", start=None, end=None):
 
 def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: str = "") -> dict:
     """
-    מודול עומק פונדמנטלי - Bill Ackman Style.
-    מתמקד בתזרים מזומנים (FCF/OCF), יעילות (Margins), ויחס חוב (Net Debt/EBITDA).
-    הסינתזה קשיחה לחלוטין ולעולם לא תאשר "High Conviction" בפאזה שלילית.
+    מודול עומק פונדמנטלי מלא בסגנון Bill Ackman.
+    כולל הסברים ספציפיים ופופאוברים מותאמים לטיקר תוך השוואה לסקטור.
+    אוכף סינתזה קשיחה לחלוטין וללא אופטימיות בפאזות דוביות.
     """
     try:
         tkr = yf.Ticker(ticker)
@@ -80,10 +81,10 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
         except:
             cf, bs, fin = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-        # תזרים מזומנים
+        # תזרים מזומנים (Cash Flow is Reality)
         ocf, ocf_yoy, fcf = "N/A", "N/A", "N/A"
         fcf_val = 0
-        ocf_yoy_val = None
+        ocf_yoy_val = 0
         if not cf.empty and "Operating Cash Flow" in cf.index and len(cf.columns) >= 2:
             ocf_val = cf.loc["Operating Cash Flow"].iloc[0]
             ocf_prev = cf.loc["Operating Cash Flow"].iloc[1]
@@ -98,9 +99,9 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
                     fcf_val = ocf_val + capex 
                     fcf = f"${fcf_val / 1e9:.2f}B"
 
-        # הכנסות ויעילות
+        # צמיחת הכנסות ושולי רווח
         rev_growth, op_margin = "N/A", "N/A"
-        rev_growth_val, op_margin_val = None, None
+        rev_growth_val, op_margin_val = 0, 0
         if not fin.empty and "Total Revenue" in fin.index and len(fin.columns) >= 2:
             rev = fin.loc["Total Revenue"].iloc[0]
             rev_prev = fin.loc["Total Revenue"].iloc[1]
@@ -114,9 +115,9 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
                     op_margin_val = (op_inc / rev) * 100
                     op_margin = f"{op_margin_val:.1f}%"
 
-        # יחס חוב נטו
+        # חוב ומאזן
         net_debt_ebitda = "N/A"
-        net_debt_val = None
+        net_debt_val = 0
         if not bs.empty and not fin.empty:
             try:
                 total_debt = bs.loc["Total Debt"].iloc[0] if "Total Debt" in bs.index else 0
@@ -135,29 +136,34 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
             "Financial Services": {"pe": 14, "op_margin": 25.0, "rev_growth": 8.0},
             "Healthcare": {"pe": 20, "op_margin": 15.0, "rev_growth": 10.0},
             "Consumer Cyclical": {"pe": 18, "op_margin": 10.0, "rev_growth": 8.0},
-            "Energy": {"pe": 12, "op_margin": 15.0, "rev_growth": 5.0}
+            "Energy": {"pe": 12, "op_margin": 15.0, "rev_growth": 5.0},
+            "Basic Materials": {"pe": 15, "op_margin": 12.0, "rev_growth": 5.0}
         }
         bench = sector_benchmarks.get(sector, {"pe": 18, "op_margin": 12.0, "rev_growth": 8.0})
 
         valuation, color = "הוגן", "#eab308"
-        pe_diff = 0
         if pe_forward:
-            pe_diff = pe_forward - bench["pe"]
             if pe_forward < bench["pe"] * 0.8: valuation, color = "זול", "#16a34a"
             elif pe_forward > bench["pe"] * 1.25: valuation, color = "יקר", "#ef4444"
 
-        # בניית הסברים ספציפיים למניה (Popovers)
-        ocf_txt = f"עבור {ticker}, נרשמה {'צמיחה חיובית' if ocf_yoy_val and ocf_yoy_val > 0 else 'ירידה/חולשה'} של {ocf_yoy} בתזרים התפעולי מול השנה שעברה. זהו הכסף האמיתי שנכנס לעסק."
-        fcf_txt = f"התזרים החופשי של {ticker} עומד על {fcf}. {'החברה מייצרת מזומן פנוי בריא לדיבידנדים או קניות חוזרות.' if fcf_val > 0 else 'נורת אזהרה: החברה שורפת מזומנים לאחר השקעות הון, מה שמחליש את המאזן.'}"
+        # -------------------------------------------------------------
+        # יצירת הסברים ספציפיים למניה (Popovers Personalization)
+        # -------------------------------------------------------------
+        rg_diff = rev_growth_val - bench['rev_growth']
+        om_diff = op_margin_val - bench['op_margin']
+        pe_diff = (pe_forward - bench['pe']) if pe_forward else 0
         
-        rg_diff = (rev_growth_val - bench['rev_growth']) if rev_growth_val is not None else 0
-        rg_txt = f"עבור {ticker}, צמיחת ההכנסות ({rev_growth}) היא {'גבוהה' if rg_diff > 0 else 'נמוכה'} מהממוצע בסקטור ה-{sector} ({bench['rev_growth']}%). זה מצביע על {'התרחבות אגרסיבית' if rg_diff > 0 else 'אובדן נתח שוק או סטגנציה'} ביחס למתחרים."
+        ocf_txt = f"עבור {ticker}, נרשמה {'צמיחה חיובית' if ocf_yoy_val > 0 else 'ירידה והתכווצות'} של {ocf_yoy} בתזרים המזומנים התפעולי מול השנה שעברה. בהשוואה למתחרים בסקטור {sector}, זה מצביע על {'שיפור ביכולת הליבה לייצר מזומן' if ocf_yoy_val > 0 else 'חולשה בליבת העסקים שיכולה להעיב על המאזן'}."
         
-        om_diff = (op_margin_val - bench['op_margin']) if op_margin_val is not None else 0
-        om_txt = f"עבור {ticker}, שולי הרווח התפעולי של {op_margin} {'גבוהים ומרשימים' if om_diff > 0 else 'נמוכים משמעותית'} ביחס לממוצע בסקטור ה-{sector} ({bench['op_margin']}%) — מה שמעיד על יעילות תפעולית {'טובה וחפיר תחרותי' if om_diff > 0 else 'נמוכה יחסית למתחרים'}."
+        fcf_txt = f"התזרים החופשי של {ticker} עומד על {fcf}. מאחר והערך {'חיובי וגדול' if fcf_val > 0 else 'שלילי/נמוך'}, החברה {'מסוגלת לממן את עצמה, לחלק דיבידנד או לקנות מניות חזרה מבלי להזדקק לחוב נוסף' if fcf_val > 0 else 'שורפת מזומנים לאחר השקעות (Capex), עובדה שמייצרת תלות במימון חיצוני בסביבת הריבית הנוכחית'}."
         
-        nd_txt = f"יחס חוב נטו ל-EBITDA עומד על {net_debt_ebitda}. {'המצב תקין ורמת המינוף שמרנית.' if net_debt_val and net_debt_val < 3 else 'באנליזת Ackman, יחס מעל 3x מהווה דגל אדום המייצר סיכון לפשיטת רגל והשמדת ערך.'}"
-        pe_txt = f"המכפיל העתידי הוא {round(pe_forward,1) if pe_forward else 'N/A'}. ממוצע סקטור ה-{sector} הוא {bench['pe']}, ולכן {ticker} נסחרת ב{'פרמיה על צמיחה ואיכות' if pe_diff > 0 else 'דיסקאונט שמהווה הזדמנות ערך או לחלופין Value Trap'}."
+        rg_txt = f"עבור {ticker}, צמיחת ההכנסות של {rev_growth} {'עוקפת' if rg_diff > 0 else 'מפגרת אחרי'} הממוצע בסקטור ה-{sector} שעומד על {bench['rev_growth']}%. הדבר מעיד על {'התרחבות נתח שוק ולקיחת לקוחות ממתחרים' if rg_diff > 0 else 'קיפאון או איבוד רלוונטיות מסחרית ביחס למתחרות הישירות שלה'}."
+        
+        om_txt = f"עבור {ticker}, שולי הרווח התפעולי של {op_margin} {'גבוהים ב-' if om_diff > 0 else 'נמוכים ב-'}{abs(om_diff):.1f}% מהממוצע בסקטור ה-{sector} ({bench['op_margin']}%). הדבר מעיד על יעילות תפעולית {'עודפת ויתרון תחרותי חזק בתמחור (Pricing Power)' if om_diff > 0 else 'ירודה יחסית למתחרים באותו התחום, עם הוצאות כבדות'}."
+        
+        nd_txt = f"יחס חוב נטו ל-EBITDA של {ticker} עומד כעת על {net_debt_ebitda}. {'רמת המינוף שמרנית ותקינה לחלוטין.' if net_debt_val < 3 else 'רמה זו (מעל 3x) מהווה דגל אדום חמור באנליזת ערך. החברה ממונפת מדי ועלולה להשמיד ערך למשקיעים בעת האטה הכלכלית.'}"
+        
+        pe_txt = f"{ticker} נסחרת במכפיל רווח עתידי של {round(pe_forward,1) if pe_forward else 'N/A'}. ממוצע סקטור ה-{sector} הוא {bench['pe']}. החברה נסחרת ב{'פרמיה המשקפת ציפיות צמיחה יוצאות דופן' if pe_diff > 0 else 'דיסקאונט שעשוי להיות הזדמנות, או לחלופין לשקף עסק גווע (Value Trap)'}."
 
         explanations = {"ocf": ocf_txt, "fcf": fcf_txt, "rev_growth": rg_txt, "op_margin": om_txt, "net_debt": nd_txt, "pe": pe_txt}
                 
@@ -169,39 +175,41 @@ def get_fundamental_data(ticker: str, cis_score: float = None, current_phase: st
                 next_earnings = dates[0].strftime("%Y-%m-%d") if isinstance(dates, list) and len(dates)>0 else (dates.strftime("%Y-%m-%d") if hasattr(dates, "strftime") else "לא ידוע")
         except: pass
 
-        # === סינתזה אגרסיבית מונעת מלכודות ===
+        # -------------------------------------------------------------
+        # סינתזה קשיחה - חוק ברזל: אפס אופטימיות בפאזות דוביות
+        # -------------------------------------------------------------
         synthesis = "חסרים נתונים פיננסיים לאנליזה."
         if cis_score is not None:
             is_collecting = cis_score >= 65
             is_distributing = cis_score <= 40
-            is_bearish_phase = any(p in current_phase for p in ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax"])
+            is_bearish_phase = any(p in current_phase for p in ["Distribution", "Markdown", "Heavy Supply", "Failed", "Selling Climax", "UNCERTAIN"])
             is_bullish_phase = any(p in current_phase for p in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "LPS", "Re-accumulation"])
             
-            strong_cash = op_margin_val and (op_margin_val > bench["op_margin"] * 0.8) and (fcf_val > 0)
+            strong_cash = (op_margin_val > bench["op_margin"] * 0.8) and (fcf_val > 0)
             high_debt = net_debt_val > 3.0 if net_debt_val else False
 
-            # חוק ברזל: ללא אופטימיות בפאזה דובית.
-            if is_bearish_phase:
+            # חוק ברזל מוחלט למצבים דוביים
+            if is_bearish_phase or is_distributing:
                 if high_debt or not strong_cash:
-                    synthesis = "☠️ סכין נופלת (Toxic Value Trap): חברה ששורפת מזומנים, חלשה מול הסקטור והמוסדיים זורקים סחורה בפאזה שלילית. להתרחק מיד."
+                    synthesis = f"☠️ Toxic Value Trap (סכין נופלת): ל-{ticker} יש בעיות בליבת התזרים/המאזן, והפאזה היא {current_phase}. המוסדיים בורחים. להתרחק מיד!"
                 else:
-                    synthesis = "🚨 מלכודת ערך (Value Trap): למרות תמחור נוח לכאורה, הפאזה היא Markdown (ירידות). המוסדיים בורחים. אל תתפוס סכין נופלת."
+                    synthesis = f"🚨 סכין נופלת: למרות שהמספרים נראים סבירים על הנייר, הפאזה הטכנית היא {current_phase} והמוסדיים משחררים סחורה. אל תתפוס תחתיות."
             
             elif is_bullish_phase and is_collecting:
                 if strong_cash and valuation != "יקר" and not high_debt:
-                    synthesis = "🔥 High Conviction: שילוב עוצמתי - תזרים חזק ביחס לסקטור, מאזן נקי ואיסוף מוסדי אגרסיבי. פוזיציית לונג אידיאלית."
+                    synthesis = f"🔥 High Conviction: שילוב אידיאלי ב-{ticker}. תזרים חזק ביחס לסקטור {sector}, מאזן נקי ואיסוף מוסדי מובהק. פוזיציית לונג איכותית."
                 elif valuation == "יקר" and strong_cash:
-                    synthesis = "🚀 פרמיית איכות (Quality Premium): המוסדיים משלמים ביוקר על הנהלה שמדפיסה מזומן ומכה את הסקטור. מגמה עוצמתית."
+                    synthesis = f"🚀 פרמיית איכות: המוסדיים משלמים ביוקר על {ticker} בזכות הנהלה שמדפיסה מזומן ומכה את הסקטור. טרנד עוצמתי."
                 elif high_debt or not strong_cash:
-                    synthesis = "⚠️ ספקולציית מומנטום: יש איסוף טכני חיובי, אבל החברה שורפת מזומן או ממונפת מדי. כניסה מסוכנת המבוססת על טכני בלבד."
+                    synthesis = f"⚠️ ספקולציית מומנטום: יש איסוף טכני חיובי, אבל ל-{ticker} יש חולשה בתזרים. כניסה מסוכנת המבוססת על מומנטום קצר בלבד."
             
             else: # דשדוש / ניטרלי
                 if is_collecting and strong_cash:
-                    synthesis = "⚖️ איסוף שקט באיכות גבוהה: כסף חכם בונה פוזיציה בנכס עם תזרים עדיף על הסקטור. המתן לפריצה טכנית."
+                    synthesis = f"⚖️ איסוף שקט באיכות גבוהה: כסף חכם אוסף את {ticker} שמייצרת תזרים עדיף על הסקטור. המתן לפריצת מחיר (Phase D)."
                 elif is_distributing:
-                    synthesis = "📉 מומנטום שלילי: הון זורם החוצה מחברה שמתקשה לייצר ערך. אין שום סיבה פונדמנטלית או טכנית להיות כאן."
+                    synthesis = f"📉 מומנטום שלילי: הון זורם החוצה מ-{ticker}. אין שום סיבה טכנית או פונדמנטלית להחזיק במניה זו כרגע."
                 else:
-                    synthesis = "💤 כסף מת: העסק בינוני והכסף החכם לא מתערב כרגע. עדיף לשמור הון להזדמנויות ברורות."
+                    synthesis = f"💤 כסף מת: העסק בינוני ביחס לסקטור ה-{sector} והכסף החכם לא מתערב כרגע. עדיף לשמור הון."
 
         return {
             "ocf": ocf, "ocf_yoy": ocf_yoy, "fcf": fcf, "rev_growth": rev_growth,
@@ -223,10 +231,12 @@ def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) 
     wyckoff_trades = [t for t in trades if t.get('wyckoff_confirmed', False)]
     wyckoff_wins = sum(1 for t in wyckoff_trades if t.get('is_win', t.get('profit', 0) > 0))
     wyckoff_success_rate = (wyckoff_wins / len(wyckoff_trades) * 100) if wyckoff_trades else 0.0
+    
     equity = initial_capital
     peak = equity
     max_drawdown = 0.0
     annual_profit = {}
+    
     for t in sorted(trades, key=lambda x: pd.to_datetime(x.get('exit_date', x.get('entry_date')))):
         profit = t.get('profit', 0)
         equity += profit
@@ -235,6 +245,7 @@ def calculate_advanced_metrics(trades: list, initial_capital: float = 100000.0) 
         if drawdown > max_drawdown: max_drawdown = drawdown
         year = pd.to_datetime(t.get('exit_date')).year
         annual_profit[year] = annual_profit.get(year, 0.0) + profit
+        
     return {"max_drawdown": max_drawdown, "total_profit": total_profit, "total_trades": total_trades, "winning_trades": winning_trades, "losing_trades": losing_trades, "annual_pnl": annual_profit, "wyckoff_success_rate": wyckoff_success_rate}
 
 def calculate_optimal_threshold(model, X, y):
@@ -282,7 +293,8 @@ class BacktestConfig:
     atr_multiplier: float = 2.0
 
 class FactorEngine:
-    def __init__(self, cfg: BacktestConfig): self.cfg = cfg
+    def __init__(self, cfg: BacktestConfig): 
+        self.cfg = cfg
 
     def _compute_quick_wyckoff(self, df: pd.DataFrame) -> pd.Series:
         score = pd.Series(0.0, index=df.index)
@@ -294,12 +306,16 @@ class FactorEngine:
             idx, vol, close, low, high, open_px, prev_close = search_df.index[i], search_df["Volume"].iloc[i], search_df["Close"].iloc[i], search_df["Low"].iloc[i], search_df["High"].iloc[i], search_df["Open"].iloc[i], search_df["Close"].iloc[i-1]
             vol_ma_i = vol_ma.loc[idx] if pd.notna(vol_ma.loc[idx]) else 1.0
             local_min = search_df["Close"].iloc[max(0, i - 20):i].min()
+            
             if not has_sc:
-                if close < prev_close and vol > vol_ma_i * 2.5 and low <= local_min and close > low + (high - low) * 0.4: has_sc, sc_idx, sc_low, score.loc[idx] = True, i, low, 0.3
+                if close < prev_close and vol > vol_ma_i * 2.5 and low <= local_min and close > low + (high - low) * 0.4:
+                    has_sc, sc_idx, sc_low, score.loc[idx] = True, i, low, 0.3
             elif has_sc and not has_ar and (i - sc_idx <= 25):
-                if close > open_px and close > prev_close and vol > vol_ma_i: has_ar, ar_high, score.loc[idx] = True, high, 0.4
+                if close > open_px and close > prev_close and vol > vol_ma_i:
+                    has_ar, ar_high, score.loc[idx] = True, high, 0.4
             elif has_ar and not has_st:
-                if vol < search_df["Volume"].iloc[sc_idx] * 0.75 and low <= sc_low * 1.05 and close >= sc_low * 0.98: has_st, score.loc[idx] = True, 0.6
+                if vol < search_df["Volume"].iloc[sc_idx] * 0.75 and low <= sc_low * 1.05 and close >= sc_low * 0.98:
+                    has_st, score.loc[idx] = True, 0.6
             elif has_st:
                 if low < sc_low and close > sc_low and vol > vol_ma_i * 1.2: score.loc[idx], sc_low = 0.9, low 
                 elif low > sc_low and low < search_df["Low"].iloc[i - 1] and vol < vol_ma_i * 0.8 and close > open_px: score.loc[idx] = 0.85
