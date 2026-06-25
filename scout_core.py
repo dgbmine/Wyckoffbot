@@ -1,7 +1,7 @@
 """
 ============================================================
-SCOUT CORE V17.6 — WYCKOFF INSTITUTIONAL ENGINE
-(Value-Analysis Framing Throughout - No Logic Changes)
+SCOUT CORE V17.7 — WYCKOFF INSTITUTIONAL ENGINE
+(Added build_fundamental_bullets - No Logic Changes)
 ============================================================
 """
 
@@ -477,6 +477,67 @@ def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = No
     if verdict and verdict.get("headline"):
         parts.append(f"\n\n**שורה תחתונה ל-{ticker}:** {verdict['headline']} - {verdict.get('detail','')}")
     return "".join(parts)
+
+
+def build_fundamental_bullets(fund_data: dict, ticker: str, current_phase: str = "") -> list:
+    """
+    גרסת Bullet Points תמציתית של הנרטיב (Q16=D) - כל נקודה קצרה וספציפית למניה.
+    מוחזרת כרשימת מחרוזות. ה'הסבר נוסף' (מלל חופשי) נשאר ב-build_fundamental_narrative.
+    """
+    if not fund_data:
+        return ["אין מספיק נתונים פונדמנטליים לבניית ניתוח עבור מניה זו."]
+    raw = fund_data.get("_raw", {})
+    val = fund_data.get("valuation", "הוגן")
+    sector_he = fund_data.get("sector_he", "הסקטור")
+    pe = raw.get("pe_forward", 0)
+    fcf_y = raw.get("fcf_yield", 0)
+    om = raw.get("op_margin", 0)
+    bench_om = raw.get("bench_om", 12)
+    nde = raw.get("net_debt_ebitda", 0)
+    peg = raw.get("peg", 0)
+    roe = raw.get("roe_pct", 0)
+    rg = raw.get("rev_growth", 0)
+    bullets = []
+
+    if current_phase:
+        bullets.append(f"📍 פאזה נוכחית: {current_phase}")
+    # תמחור
+    if val == "זול":
+        bullets.append(f"💰 תמחור: זול ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else ""))
+    elif val == "יקר":
+        bullets.append(f"💰 תמחור: פרמיה גבוהה" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + f" מול ה{sector_he}")
+    else:
+        bullets.append(f"💰 תמחור: הוגן מול ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else ""))
+    # תזרים
+    if fcf_y >= 4:
+        bullets.append(f"💵 תזרים חופשי חזק ({fcf_y:.1f}%) - מכונת מזומנים אמיתית")
+    elif fcf_y >= 2:
+        bullets.append(f"💵 תזרים סביר ({fcf_y:.1f}%) - דורש צמיחה שתצדיק אותו")
+    elif fcf_y > 0:
+        bullets.append(f"💵 תזרים דק ({fcf_y:.1f}%) - מעט מזומן פנוי, זהירות")
+    else:
+        bullets.append("💵 ללא תזרים חופשי חיובי מובהק - שריפת מזומן/השקעה אגרסיבית")
+    # איכות
+    if om and om > bench_om:
+        bullets.append(f"🏰 שולי תפעול ({om:.0f}%) מעל הסקטור ({bench_om:.0f}%) - חפיר תחרותי")
+    elif om:
+        bullets.append(f"⚠️ שולי תפעול ({om:.0f}%) מתחת לסקטור ({bench_om:.0f}%) - נקודת תורפה")
+    if roe and roe >= 15:
+        bullets.append(f"📈 ROE גבוה ({roe:.0f}%) - ניהול שמשיא ערך")
+    # צמיחה
+    if rg and rg >= 15:
+        bullets.append(f"🚀 צמיחה מהירה ({rg:.0f}% הכנסות) - מצדיקה מכפיל גבוה")
+    elif rg and 0 < rg < 3:
+        bullets.append(f"🐌 צמיחה איטית ({rg:.0f}% הכנסות) - קשה להצדיק מכפיל גבוה")
+    if peg and peg < 1:
+        bullets.append(f"✨ PEG ({peg:.2f}) מתחת ל-1 - צמיחה מתומחרת בחסר")
+    # מאזן
+    if nde and nde > 3:
+        bullets.append(f"🚨 מינוף גבוה (חוב נטו/EBITDA {nde:.1f}x) - סיכון בעת משבר")
+    elif nde and 0 < nde < 1:
+        bullets.append(f"🛡️ מאזן איתן (מינוף נמוך {nde:.1f}x) - כרית ביטחון")
+
+    return bullets
 
 
 def _synthesize_verdict_core(fund_data: dict, cis_score: float, current_phase: str, ticker: str = "") -> dict:
@@ -1696,7 +1757,7 @@ _REQUIRED_EXPORTS = [
     "build_smart_money_dashboard", "generate_roadmap", "calculate_wyckoff_probability",
     "detect_failure_risks", "generate_replay_analogies", "get_fundamental_data", "_extract_last",
     "synthesize_verdict",
-    "build_fundamental_narrative", "scan_top_opportunities", "render_verdict_banner_html",
+    "build_fundamental_narrative", "build_fundamental_bullets", "scan_top_opportunities", "render_verdict_banner_html",
 ]
 _missing_exports = [name for name in _REQUIRED_EXPORTS if name not in globals()]
 if _missing_exports:

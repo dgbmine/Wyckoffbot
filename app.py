@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V17.7 (Stale-Widget Handoff Fix + Back/Top Nav + No Charts + Value-Analysis Naming)
+INSTITUTIONAL SCOUT PRO V17.8 (Collapsing Sticky Nav + Floating Back + Bullet Narratives + Vertical Picks)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -64,7 +64,7 @@ try:
         calculate_advanced_metrics, calculate_phase_followthrough, explain_score_simple,
         build_smart_money_dashboard, generate_roadmap, calculate_wyckoff_probability,
         detect_failure_risks, generate_replay_analogies, get_fundamental_data,
-        synthesize_verdict, build_fundamental_narrative, scan_top_opportunities, render_verdict_banner_html
+        synthesize_verdict, build_fundamental_narrative, build_fundamental_bullets, scan_top_opportunities, render_verdict_banner_html
     )
     SCOUT_CORE_AVAILABLE = True
 except Exception as _imp_exc1:
@@ -82,7 +82,8 @@ except Exception as _imp_exc1:
         def generate_replay_analogies(t, p, a, f): return []
         def get_fundamental_data(t): return {}
         def synthesize_verdict(fd, c, p, t=""): return {"headline":"-","detail":"-","color":"#94a3b8","tier":"NEUTRAL"}
-        def build_fundamental_narrative(fd, t, v=None): return "מודול ניתוח חסר."
+        def build_fundamental_narrative(fd, t, v=None, current_phase=""): return "מודול ניתוח חסר."
+        def build_fundamental_bullets(fd, t, current_phase=""): return ["מודול ניתוח חסר."]
         def scan_top_opportunities(tickers, top_n=5, mode="Balanced"): return []
         def render_verdict_banner_html(v, ticker="", cis_score=None, current_phase="", valuation=None, valuation_color="#94a3b8", extra_chips=None): return ""
         
@@ -107,8 +108,11 @@ except Exception as _imp_exc1:
         def synthesize_verdict(fd, c, p, t=""):
             return {"headline": "מערכת סינתזה חסרה.", "detail": "-", "color": "#94a3b8", "tier": "NEUTRAL"}
 
-        def build_fundamental_narrative(fd, t, v=None):
+        def build_fundamental_narrative(fd, t, v=None, current_phase=""):
             return "מודול ניתוח חסר."
+
+        def build_fundamental_bullets(fd, t, current_phase=""):
+            return ["מודול ניתוח חסר."]
 
         def scan_top_opportunities(tickers, top_n=5, mode="Balanced"):
             return []
@@ -257,6 +261,41 @@ def inject_css() -> None:
 
     h1,h2,h3,h4 { letter-spacing: -0.2px; }
     hr { border-color: var(--line) !important; }
+
+    /* ============================================================
+       STICKY COLLAPSING NAV (Q1) - מלווה בגלילה, מתכווץ לפס דק
+       בגלילה למטה ונפתח שוב בתנועה קלה למעלה
+       ============================================================ */
+    #sticky-nav-anchor {
+        position: sticky; top: 0; z-index: 999;
+        background: var(--bg-0);
+        transition: all 0.28s ease;
+    }
+    /* כשמסומן collapsed (גלילה למטה) - הכותרת מתכווצת לפס דק */
+    body.nav-collapsed .main-header {
+        padding: 0.35rem 1.2rem !important;
+        transition: all 0.28s ease;
+    }
+    body.nav-collapsed .main-header h1 { font-size: 1.0rem !important; transition: all 0.28s ease; }
+    body.nav-collapsed .main-header p { display: none !important; }
+    .main-header { transition: all 0.28s ease; }
+    .main-header h1 { transition: all 0.28s ease; }
+
+    /* ============================================================
+       FLOATING BACK BUTTON (Q3) - כפתור חזור צף בפינה התחתונה
+       ============================================================ */
+    .float-back-wrap {
+        position: fixed; bottom: 22px; left: 22px; z-index: 1000;
+    }
+    .float-back-wrap a {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: linear-gradient(135deg, #0ea5e9, #38bdf8);
+        color: #04121f; font-weight: 700; font-size: 0.9rem;
+        padding: 11px 18px; border-radius: 30px; text-decoration: none;
+        box-shadow: 0 6px 22px rgba(56,189,248,0.4);
+        transition: transform 0.18s ease, filter 0.18s ease;
+    }
+    .float-back-wrap a:hover { transform: translateY(-2px); filter: brightness(1.08); }
 
     /* ---------- Header ---------- */
     .main-header {
@@ -501,6 +540,32 @@ def inject_css() -> None:
     /* nav */
     .topnav-spacer { height: 8px; }
     </style>
+
+    <script>
+    (function() {
+        // מאזין גלילה: מתכווץ בגלילה למטה, נפתח בתנועה קלה למעלה (Q1)
+        if (window._navScrollBound) return;
+        window._navScrollBound = true;
+        var lastY = 0;
+        var doc = window.parent.document;
+        function onScroll() {
+            try {
+                var y = window.parent.scrollY || doc.documentElement.scrollTop || 0;
+                var body = doc.body;
+                if (y > lastY && y > 80) {
+                    body.classList.add('nav-collapsed');      // גלילה למטה -> כיווץ
+                } else if (y < lastY - 4) {
+                    body.classList.remove('nav-collapsed');    // תנועה קלה למעלה -> פתיחה
+                }
+                if (y <= 5) body.classList.remove('nav-collapsed'); // בראש העמוד -> תמיד פתוח
+                lastY = y;
+            } catch (e) {}
+        }
+        try {
+            (window.parent || window).addEventListener('scroll', onScroll, {passive: true});
+        } catch (e) {}
+    })();
+    </script>
     """, unsafe_allow_html=True)
 
 @st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
@@ -759,35 +824,26 @@ def _render_top_picks() -> None:
     elif not picks:
         st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק) ביקום הסריקה. נסה רוחב חיפוש גדול יותר, או שהשוק במצב המתנה.")
     else:
-        cols = st.columns(len(picks))
-        for i, (col, p) in enumerate(zip(cols, picks)):
-            with col:
-                price_html = render_price_inline(p['ticker'])
-                st.markdown(
-                    f"""<div class='pick-card' style='border-top:4px solid {p['color']}; padding-bottom:10px;'>
-                        <div class='pick-rank'>#{i+1}</div>
-                        <div class='pick-ticker'>{p['ticker']}</div>
-                        <div style='margin:4px 0 10px 0;'>{price_html}</div>
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-                # --- אותו רכיב Verdict Banner בדיוק כמו בכל מסך אחר (עקביות) ---
-                verdict_like = {
-                    "headline": p["headline"], "detail": p["detail"], "color": p["color"],
-                    "tier": p["tier"], "action_line": p.get("action_line", ""),
-                    "confidence": p.get("confidence", ""),
-                }
-                render_verdict_banner(
-                    verdict_like, cis_score=p["cis"], current_phase=p.get("phase", ""),
-                    valuation=p["valuation"], valuation_color=p["valuation_color"],
-                    extra_chips=[f"FCF <b>{p['fcf_yield']}</b>", f"P/E <b>{p['pe']}</b>"],
-                )
-                st.markdown(
-                    f"<div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f} · {p['sector_he']}</div>",
-                    unsafe_allow_html=True,
-                )
-                if st.button(f"📊 נתח את {p['ticker']}", key=f"pick_{p['ticker']}_{i}", use_container_width=True):
-                    go_to_screen("📊 ניתוח פונדמנטלי", p["ticker"])
+        # Q23=D: רשימה אנכית (לא רשת) עם יותר פירוט בכל שורה
+        for i, p in enumerate(picks):
+            price_html = render_price_inline(p['ticker'])
+            st.markdown(
+                f"""<div class='pick-card' style='border-right:5px solid {p['color']}; border-top:none; margin-bottom:8px;'>
+                    <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
+                        <span class='pick-rank'>#{i+1}</span>
+                        <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
+                        <span>{price_html}</span>
+                    </div>
+                    <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
+                    <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
+                        · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
+                    <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            # Q5: לחיצה -> מסך הבית עם ניתוח Wyckoff מלא + פונדמנטלי בשורה אחת (והרצה אוטומטית)
+            if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"pick_{p['ticker']}_{i}", use_container_width=True):
+                go_to_screen("🏠 בית", p["ticker"])
 
     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
     if st.button("🗺️ אפשרות לסריקות נוספות (לפי סקטור)", use_container_width=True, key="more_scans_btn"):
@@ -819,20 +875,25 @@ def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phas
     )
 
     if fdata:
-        narrative = build_fundamental_narrative(fdata, ticker, verdict)
-        st.markdown(
-            f"<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח חופשי - מצב המניה הספציפי</span>{narrative}</div>",
-            unsafe_allow_html=True,
-        )
+        bullets = build_fundamental_bullets(fdata, ticker, current_phase=current_phase)
+        st.markdown("<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח ערך - הנקודות המרכזיות</span>"
+                    + "".join(f"<div style='margin:6px 0; line-height:1.6;'>• {b}</div>" for b in bullets)
+                    + "</div>", unsafe_allow_html=True)
+        with st.expander("📖 הסבר נוסף (ניתוח מלא ומלל חופשי)", expanded=False):
+            narrative = build_fundamental_narrative(fdata, ticker, verdict, current_phase=current_phase)
+            st.markdown(narrative)
     else:
         st.caption("⚠️ לא ניתן היה לשאוב נתונים פונדמנטליים עבור מניה זו כרגע - ההכרעה לעיל מבוססת על Wyckoff בלבד.")
 
-    cta1, cta2 = st.columns([1, 2])
+    cta1, cta2, cta3 = st.columns([1, 1, 1.4])
     with cta1:
         if st.button("🎯 קבל אסטרטגיית מסחר", type="primary", use_container_width=True, key="home_to_strategy"):
             go_to_screen("📈 Trading Scout", ticker)
     with cta2:
-        st.caption("מעבר למסך המסחר עם ניתוח מוכן: מחיר כניסה, סטופ מדורג, יעדי שחרור חלקי וגודל פוזיציה - הכל לפי סיכום וואיקוף + פונדמנטלי.")
+        if st.button("📊 ניתוח פונדמנטלי מלא", use_container_width=True, key="home_to_fundamental"):
+            go_to_screen("📊 ניתוח פונדמנטלי", ticker)
+    with cta3:
+        st.caption("אסטרטגיית מסחר = תוכנית כניסה/סטופ/יעדים. ניתוח פונדמנטלי מלא = טבלת מכפילים מפורטת והסברים.")
 
 
 def screen_home() -> None:
@@ -1308,7 +1369,7 @@ def screen_trading_scout() -> None:
         from trading_scout import get_trading_recommendation
 
         # UI rendering in sequential order (Stacked Vertically to avoid cutoffs)
-        for tkr in show_scout_tickers:
+        for _scout_idx, tkr in enumerate(show_scout_tickers):
             if tkr:
                 with st.spinner(f"מנתח טביעות אצבע מוסדיות ופונדמנטליות עבור {tkr}..."):
                     try:
@@ -1336,13 +1397,18 @@ def screen_trading_scout() -> None:
                         extra_chips=[f"המלצה <b>{rec_data.get('recommendation','-')}</b>"],
                     )
 
-                # === שלב 2: הסבר קצר ואנושי - למה דווקא המניה הזו, עכשיו ===
+                # === שלב 2: הסבר קצר ואנושי - למה דווקא המניה הזו, עכשיו (Q16: bullets + הסבר נוסף) ===
                 if _fund:
-                    why_narrative = build_fundamental_narrative(_fund, tkr, _verdict, current_phase=rec_data.get('current_phase', ''))
+                    _why_phase = rec_data.get('current_phase', '')
+                    why_bullets = build_fundamental_bullets(_fund, tkr, current_phase=_why_phase)
                     st.markdown(
-                        f"<div class='narrative-box'><span class='narrative-title'>🦅 למה דווקא {tkr}, עכשיו?</span>{why_narrative}</div>",
+                        f"<div class='narrative-box'><span class='narrative-title'>🦅 למה דווקא {tkr}, עכשיו?</span>"
+                        + "".join(f"<div style='margin:6px 0; line-height:1.6;'>• {b}</div>" for b in why_bullets)
+                        + "</div>",
                         unsafe_allow_html=True,
                     )
+                    with st.expander(f"📖 הסבר נוסף ל-{tkr} (ניתוח מלא ומלל חופשי)", expanded=False):
+                        st.markdown(build_fundamental_narrative(_fund, tkr, _verdict, current_phase=_why_phase))
 
                 rec = rec_data["recommendation"]
                 color_map = {
@@ -1461,7 +1527,7 @@ def screen_trading_scout() -> None:
                 ]
 
                 # === שלב 3: Drill-down אחד מאוחד - ניתוח טכני + אסטרטגיית מסחר, עם whitespace ברור בין החלקים ===
-                with st.expander(f"🔍 Drill-down מלא ל-{tkr}: Wyckoff, Smart Money ואסטרטגיית מסחר", expanded=True):
+                with st.expander(f"🔍 Drill-down מלא ל-{tkr}: Wyckoff, Smart Money ואסטרטגיית מסחר", expanded=(_scout_idx == 0)):
                     st.markdown("".join(card_parts), unsafe_allow_html=True)
 
                     st.markdown("<div style='height:34px;'></div>", unsafe_allow_html=True)
@@ -1757,8 +1823,9 @@ def screen_ml_trainer() -> None:
     st.text_area("Log", value=log_content, height=300, disabled=True, label_visibility="collapsed")
 
 def render_top_nav() -> None:
-    """סרגל ניווט עליון קבוע עם המבורגר בפינה הימנית — מלווה בכל מסך, כולל כפתורי חזור/למעלה."""
+    """סרגל ניווט עליון מלווה בגלילה (sticky, מתכווץ) עם המבורגר — כולל כפתורי חזור/למעלה וכפתור חזור צף."""
     st.markdown("<div id='page-top'></div>", unsafe_allow_html=True)
+    st.markdown("<div id='sticky-nav-anchor'>", unsafe_allow_html=True)
 
     PAGES = [
         "🏠 בית", "🗺️ מפה מוסדית", "📊 ניתוח פונדמנטלי",
@@ -1792,7 +1859,7 @@ def render_top_nav() -> None:
             st.session_state.handoff_ticker = None  # ניווט ידני - בלי טיקר תקוע
             st.rerun()
 
-    # --- כפתורים מלווים: חזור למסך הקודם + חזרה לראש העמוד ---
+    # --- כפתורים מלווים: חזור למסך הקודם + חזרה לראש העמוד (Q4: a+c) ---
     has_history = bool(st.session_state.get("nav_history"))
     back_col, top_col, _spacer = st.columns([1.3, 1.3, 3.4])
     with back_col:
@@ -1807,6 +1874,17 @@ def render_top_nav() -> None:
         )
 
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:14px 0 18px 0;'>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)  # /sticky-nav-anchor
+
+    # --- כפתור חזור צף בפינה התחתונה (Q3) - נגיש מכל גלילה ---
+    if has_history:
+        st.markdown(
+            "<div class='float-back-wrap'><a href='#page-top' "
+            "onclick=\"try{var h=window.parent.document.querySelectorAll('button'); "
+            "for(var i=0;i<h.length;i++){if(h[i].innerText.indexOf('חזור למסך הקודם')>-1){h[i].click();break;}}}catch(e){} return false;\">"
+            "⬅️ חזור</a></div>",
+            unsafe_allow_html=True,
+        )
 
 
 def main() -> None:
