@@ -1,7 +1,7 @@
 """
 ============================================================
-SCOUT CORE V17.5 — WYCKOFF INSTITUTIONAL ENGINE
-(Shouting Risk Language + Phase-Aware Personalized Narrative)
+SCOUT CORE V17.6 — WYCKOFF INSTITUTIONAL ENGINE
+(Value-Analysis Framing Throughout - No Logic Changes)
 ============================================================
 """
 
@@ -153,10 +153,10 @@ def _safe_row_prev(frame, *names):
 
 def get_fundamental_data(ticker: str) -> dict:
     """
-    מנוע פונדמנטלי בסטייל Bill Ackman - *מחשב בעצמו* את כל המכפילים מנתוני הליבה
+    מנוע פונדמנטלי (ניתוח ערך) - *מחשב בעצמו* את כל המכפילים מנתוני הליבה
     (מחיר נוכחי x מניות / רווח/הכנסות/תזרים), במקום לשאוב מכפילים מוכנים מ-Yahoo.
     כך נמנעים מ-N/A: לכל מכפיל מקור ראשי (חישוב עצמי) ונפילה למקור משני (info).
-    סדר אקמני: (1) מכפיל רווח, (2) FCF Yield, (3) צמיחה/איכות, (4) מינוף.
+    סדר עדיפות ניתוח ערך: (1) מכפיל רווח, (2) FCF Yield, (3) צמיחה/איכות, (4) מינוף.
     מחזיר גם נרטיב חופשי. כל המפתחות הישנים נשמרים.
     """
     try:
@@ -262,7 +262,7 @@ def get_fundamental_data(ticker: str) -> dict:
             elif pe_for_valuation > bench["pe_exp"]:
                 valuation, color = "יקר", "#ef4444"
 
-        # ---------- תיקון קיצון (Ackman priority): מכפיל הרווח קובע ראשית, ----------
+        # ---------- תיקון קיצון (סדר עדיפות ניתוח ערך): מכפיל הרווח קובע ראשית, ----------
         # ---------- שאר המרכיבים מתקנים *רק* במקרי קיצון בולטים. ----------
         valuation_override_note = None
         if valuation == "זול":
@@ -342,11 +342,11 @@ def get_fundamental_data(ticker: str) -> dict:
             ),
             "pe_forward": (
                 f"מכפיל רווח עתידי ({_f(pe_forward, dec=1)}) - לפי תחזיות אנליסטים, המדד המרכזי לתמחור קדימה. "
-                f"זה המכפיל הראשון שאקמן בוחן: כמה משלמים על הרווחיות העתידית."
+                f"זה המכפיל הראשון שבודקים בניתוח ערך: כמה משלמים על הרווחיות העתידית."
             ),
             "fcf_yield": (
                 f"תשואת תזרים חופשי (מחושב: (תזרים תפעולי - השקעות הון) / שווי שוק) = {_f(fcf_yield, '%', 1)}. "
-                f"הכסף החופשי האמיתי שהעסק מייצר - ליבת תפיסת אקמן. מעל 4% = חוסן; מתחת ל-2% = מחייב צמיחה."
+                f"הכסף החופשי האמיתי שהעסק מייצר - ליבת ניתוח הערך. מעל 4% = חוסן; מתחת ל-2% = מחייב צמיחה."
             ),
             "peg": (
                 f"PEG (מחושב: מכפיל רווח / קצב צמיחה) = {_f(peg, dec=2)}. משקלל תמחור מול צמיחה. "
@@ -424,7 +424,7 @@ def get_fundamental_data(ticker: str) -> dict:
 
 def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = None, current_phase: str = "") -> str:
     """
-    נרטיב חופשי בעברית בסטייל אקמן על מצב המניה הספציפי.
+    נרטיב חופשי בעברית (ניתוח ערך) על מצב המניה הספציפי.
     אם current_phase מועבר - הנרטיב נפתח בהקשר הטכני המדויק (איזו פאזה, עכשיו, למה זה חשוב
     בדיוק למניה הזו) ולא רק בניתוח פונדמנטלי כללי - כך שההסבר מרגיש אישי לרגע הנוכחי.
     """
@@ -445,13 +445,13 @@ def build_fundamental_narrative(fund_data: dict, ticker: str, verdict: dict = No
     if current_phase:
         parts.append(f"בדיוק עכשיו, {ticker} נמצאת בפאזת '{current_phase}' - וזה הרגע הנכון לשאול אם התמונה הפונדמנטלית מצדיקה פעולה. ")
     if val == "זול":
-        parts.append(f"מבט אקמני על {ticker}: השוק מתמחר אותה בזול ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + ". ")
+        parts.append(f"ניתוח ערך על {ticker}: השוק מתמחר אותה בזול ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + ". ")
     elif val == "יקר":
-        parts.append(f"מבט אקמני על {ticker}: השוק דורש פרמיה גבוהה" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + f" ביחס לסקטור ה{sector_he}. ")
+        parts.append(f"ניתוח ערך על {ticker}: השוק דורש פרמיה גבוהה" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + f" ביחס לסקטור ה{sector_he}. ")
     else:
-        parts.append(f"מבט אקמני על {ticker}: התמחור הוגן ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + ". ")
+        parts.append(f"ניתוח ערך על {ticker}: התמחור הוגן ביחס לסקטור ה{sector_he}" + (f" (מכפיל רווח ~{pe:.0f})" if pe else "") + ". ")
     if fcf_y >= 4:
-        parts.append(f"הלב של התזה חזק: תשואת תזרים חופשי של {fcf_y:.1f}% מעידה על מכונת מזומנים אמיתית - בדיוק סוג העסק שאקמן אוהב להחזיק לטווח ארוך. ")
+        parts.append(f"הלב של התזה חזק: תשואת תזרים חופשי של {fcf_y:.1f}% מעידה על מכונת מזומנים אמיתית - בדיוק סוג העסק שמחזיקים בו לטווח ארוך בניתוח ערך. ")
     elif fcf_y >= 2:
         parts.append(f"התזרים סביר ({fcf_y:.1f}% תשואת FCF) אך לא יוצא דופן - צריך שהצמיחה תצדיק את ההחזקה. ")
     elif fcf_y > 0:
@@ -1618,7 +1618,7 @@ def generate_replay_analogies(ticker: str, current_phase: str, accum_prob: float
 def scan_top_opportunities(tickers: list, top_n: int = 5, mode: str = "Balanced") -> list:
     """
     סורק יקום מניות ומחזיר רק את ההזדמנויות האיכותיות ביותר (High Conviction) -
-    שילוב של איסוף מוסדי (Wyckoff) + תמחור/איכות פונדמנטלית (אקמן).
+    שילוב של איסוף מוסדי (Wyckoff) + תמחור/איכות פונדמנטלית (ניתוח ערך).
     מדרג לפי ציון משוקלל ומחזיר עד top_n. נקודת אמת אחת לסינתזה.
     """
     results = []
