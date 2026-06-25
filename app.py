@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V17.6 (Critical Nav Crash Fix + Radio Width Selector + Technician Lock)
+INSTITUTIONAL SCOUT PRO V17.7 (Stale-Widget Handoff Fix + Back/Top Nav + No Charts + Value-Analysis Naming)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -24,8 +24,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
 import yfinance as yf
 from sklearn.ensemble import RandomForestClassifier
@@ -549,6 +547,14 @@ def init_session_state() -> None:
         st.session_state.plan_detail_level = "מלא"
     if "tech_unlocked" not in st.session_state:
         st.session_state.tech_unlocked = False
+    if "home_result_ticker" not in st.session_state:
+        st.session_state.home_result_ticker = None
+    if "fund_result_ticker" not in st.session_state:
+        st.session_state.fund_result_ticker = None
+    if "scout_result_tickers" not in st.session_state:
+        st.session_state.scout_result_tickers = None
+    if "nav_history" not in st.session_state:
+        st.session_state.nav_history = []
 
 
 # יקום סריקה למסך הבית - 24 מניות מובילות (מהיר)
@@ -560,7 +566,11 @@ HOME_SCAN_UNIVERSE = [
 
 
 def go_to_screen(page: str, ticker: str = None) -> None:
-    """ניווט בין מסכים עם העברת טיקר (Cross-Screen Handoff)."""
+    """ניווט בין מסכים עם העברת טיקר (Cross-Screen Handoff). שומר היסטוריה לכפתור 'חזור'."""
+    prev_page = st.session_state.get("current_page")
+    if prev_page and prev_page != page:
+        st.session_state.setdefault("nav_history", [])
+        st.session_state.nav_history.append(prev_page)
     if ticker:
         st.session_state.handoff_ticker = ticker.strip().upper()
     st.session_state.current_page = page
@@ -568,6 +578,18 @@ def go_to_screen(page: str, ticker: str = None) -> None:
     # key כבר אותחל באותה הרצה (render_top_nav רץ בתחילת main(), לפני קריאה זו) - זה גורם
     # ל-StreamlitAPIException. הפתרון הנכון: למחוק את המפתח (מותר), כך שבהרצה הבאה ה-selectbox
     # יאותחל מחדש לפי current_page/index, בלי "לקפוץ" חזרה לבחירה הקודמת.
+    if "nav_select" in st.session_state:
+        del st.session_state["nav_select"]
+    st.rerun()
+
+
+def go_back() -> None:
+    """חזרה למסך הקודם לפי היסטוריית הניווט (לא מוסיף רישום חדש להיסטוריה - זו צריכת היסטוריה)."""
+    history = st.session_state.get("nav_history", [])
+    if not history:
+        return
+    prev_page = history.pop()
+    st.session_state.current_page = prev_page
     if "nav_select" in st.session_state:
         del st.session_state["nav_select"]
     st.rerun()
@@ -700,7 +722,7 @@ def _get_home_scan_pool(width_label: str) -> list:
 def _render_top_picks() -> None:
     """מציג עד 5 מניות בהזדמנות מצוינת (Wyckoff + פונדמנטלי איכותי). לחיצה -> ניתוח מלא."""
     st.markdown("#### 🌟 ההזדמנויות הבולטות בשוק כרגע (Wyckoff + פונדמנטלי)")
-    st.caption("המערכת סורקת מניות מובילות ומציגה רק שילובים איכותיים: איסוף מוסדי מובהק יחד עם תמחור/איכות פונדמנטלית (סדר עדיפות אקמני). לחיצה על מניה פותחת ניתוח מלא.")
+    st.caption("המערכת סורקת מניות מובילות ומציגה רק שילובים איכותיים: איסוף מוסדי מובהק יחד עם תמחור/איכות פונדמנטלית (סדר עדיפות ניתוח ערך). לחיצה על מניה פותחת ניתוח מלא.")
 
     if "home_scan_width" not in st.session_state:
         st.session_state.home_scan_width = "24"
@@ -776,7 +798,7 @@ def _render_top_picks() -> None:
 
 def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phase: str) -> None:
     """
-    השורה התחתונה האחידה במסך הבית: סינתזת Wyckoff + פונדמנטלי בסטייל אקמן.
+    השורה התחתונה האחידה במסך הבית: סינתזת Wyckoff + פונדמנטלי (ניתוח ערך).
     הבאנר חייב להופיע *תמיד* - גם אם שאיבת הנתונים הפונדמנטליים נכשלה (synthesize_verdict
     יודע להתמודד עם fund_data חסר ולהציג הודעה ניטרלית ברורה, ולא לדלג על הרכיב כליל).
     """
@@ -817,7 +839,7 @@ def screen_home() -> None:
     st.markdown("### 🏠 Wyckoff Analyst - רדאר הכסף החכם")
 
     st.markdown("""
-    **ברוכים הבאים למערכת המוסדית!** המטרה: לענות על שאלה אחת - **"מה ההסתברות שגוף מוסדי אוסף כעת את המניה?"** - ולשלב זאת עם תמחור פונדמנטלי בסטייל Bill Ackman.
+    **ברוכים הבאים למערכת המוסדית!** המטרה: לענות על שאלה אחת - **"מה ההסתברות שגוף מוסדי אוסף כעת את המניה?"** - ולשלב זאת עם תמחור פונדמנטלי - ניתוח ערך.
     """)
     st.info("⚠️ **הבהרה:** המערכת היא כלי עזר אנליטי בלבד ואינה מהווה ייעוץ השקעות.")
 
@@ -826,17 +848,33 @@ def screen_home() -> None:
 
     # --- חיפוש מניה ספציפית ---
     st.markdown("#### 🔎 ניתוח מניה ספציפית")
-    default_tkr = st.session_state.get("handoff_ticker") or "NVDA"
+    handoff_tkr = st.session_state.get("handoff_ticker")
+    is_new_home_handoff = bool(handoff_tkr) and st.session_state.get("_home_consumed_handoff") != handoff_tkr
+    if is_new_home_handoff and "home_ticker_input" in st.session_state:
+        # תיקון קריטי: מוחקים את ה-widget הקודם כדי ש-value החדש (מהמסך הקודם) באמת יוצג -
+        # אחרת Streamlit משאיר את הערך הישן שכבר הוקצה לאותו key, ונראה כאילו "לא קרה כלום".
+        del st.session_state["home_ticker_input"]
+
+    default_tkr = handoff_tkr or "NVDA"
     ticker = st.text_input("Ticker לניתוח (לדוגמה NVDA, TSLA, SPY)", value=default_tkr, key="home_ticker_input").strip().upper()
 
     run_clicked = st.button("▶ הרץ ניתוח מוסדי + פונדמנטלי", use_container_width=True, type="primary")
     # תמיכה ב-handoff: אם הגענו ממסך אחר עם טיקר, הרץ אוטומטית פעם אחת
-    auto_run = False
-    if st.session_state.get("handoff_ticker") and st.session_state.get("_home_consumed_handoff") != st.session_state.handoff_ticker:
-        auto_run = True
-        st.session_state._home_consumed_handoff = st.session_state.handoff_ticker
+    auto_run = is_new_home_handoff
+    if auto_run:
+        st.session_state._home_consumed_handoff = handoff_tkr
 
+    # תיקון קריטי: אם נשמור את תוצאת הניתוח רק לפי run_clicked/auto_run (מצב חד-פעמי),
+    # כל לחיצה על כפתור *בתוך* בלוק התוצאות (כמו "קבל אסטרטגיית מסחר") תגרום לבלוק כולו
+    # להיעלם בריצה החדשה - כי run_clicked חוזר ל-False וה-handoff כבר נצרך. הפתרון: לשמור
+    # את הטיקר המנותח ב-session_state כדי שהבלוק יישאר מוצג בכל ריצה הבאה, לא משנה איזה
+    # widget גרם לה.
     if run_clicked or auto_run:
+        st.session_state.home_result_ticker = ticker
+
+    show_ticker = st.session_state.get("home_result_ticker")
+    if show_ticker:
+        ticker = show_ticker
         with st.spinner("מחשב מנוע Wyckoff מתקדם..."):
             result = _compute_wyckoff(ticker)
 
@@ -859,27 +897,25 @@ def screen_home() -> None:
         st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin:26px 0 18px 0;'>", unsafe_allow_html=True)
         st.markdown("<div class='section-label'>🔍 ניתוח טכני מעמיק - Wyckoff Deep Dive</div>", unsafe_allow_html=True)
 
-        with st.expander("📈 מד הסתברות, מפת פאזות Wyckoff וגרף מחיר/נפח (Deep Dive)", expanded=True):
+        with st.expander("📊 ציון הסתברות ומפת פאזות Wyckoff (Deep Dive)", expanded=True):
             left, right = st.columns([1, 1.3])
 
             with left:
-                fig_gauge = go.Figure(go.Indicator(
-                    mode="gauge+number",
-                    value=result["current_cis"],
-                    title={'text': "הסתברות לצבירה (CIS)", 'font': {'color': "#d9e6f2", 'size': 18}},
-                    number={'font': {'color': "#d9e6f2"}},
-                    gauge={
-                        'axis': {'range': [0, 100], 'tickcolor': "white"},
-                        'bar': {'color': "rgba(255,255,255,0.4)"},
-                        'steps': [
-                            {'range': [0, 40], 'color': "#dc2626"},
-                            {'range': [40, 65], 'color': "#eab308"},
-                            {'range': [65, 100], 'color': "#16a34a"}
-                        ],
-                    }
-                ))
-                fig_gauge.update_layout(height=230, margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)")
-                st.plotly_chart(fig_gauge, use_container_width=True)
+                _cis_val = result["current_cis"]
+                _cis_color = "#16a34a" if _cis_val >= 65 else ("#eab308" if _cis_val >= 40 else "#ef4444")
+                st.markdown(
+                    f"""<div style='text-align:center; background:var(--bg-1); border:1px solid var(--line-strong);
+                        border-radius:var(--radius-lg); padding:28px 16px;'>
+                        <div style='font-size:0.85rem; color:var(--txt-2); letter-spacing:1px; text-transform:uppercase;'>
+                            הסתברות לצבירה (CIS)
+                        </div>
+                        <div style='font-size:3.6rem; font-weight:800; color:{_cis_color}; line-height:1.1; margin:10px 0;'>
+                            {_cis_val:.0f}
+                        </div>
+                        <div style='font-size:0.85rem; color:var(--txt-3);'>מתוך 100</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
                 st.caption("ציון 0-100 המודד את עוצמת כניסת הכספים המוסדיים.")
 
             with right:
@@ -921,40 +957,6 @@ def screen_home() -> None:
                         """
                     st.markdown(html, unsafe_allow_html=True)
                     st.caption(f"**זיהוי מלא:** `{cp}`")
-
-            st.markdown("<hr style='border-color: rgba(255,255,255,0.05); margin:20px 0;'>", unsafe_allow_html=True)
-
-            st.markdown("#### 📉 ניתוח ויזואלי של המחיר והנפח (Price & Volume Action)")
-            chart_df = result["df"].iloc[-150:]
-            fig_chart = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
-            fig_chart.add_trace(go.Candlestick(
-                x=chart_df.index, open=chart_df['Open'], high=chart_df['High'],
-                low=chart_df['Low'], close=chart_df['Close'], name="Price"),
-                row=1, col=1)
-            colors = ['#16a34a' if c >= o else '#dc2626' for c, o in zip(chart_df['Close'], chart_df['Open'])]
-            fig_chart.add_trace(go.Bar(
-                x=chart_df.index, y=chart_df['Volume'], marker_color=colors, name="Volume"),
-                row=2, col=1)
-            last_date = chart_df.index[-1]
-            last_low = chart_df['Low'].iloc[-1]
-            cp_marker = result['current_phase']
-            if any(x in cp_marker for x in ["Phase C", "Spring", "Phase D", "Phase E", "Markup", "Accumulation", "Re-accumulation"]):
-                marker_color = "#16a34a"
-            elif any(x in cp_marker for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"]):
-                marker_color = "#eab308"
-            else:
-                marker_color = "#dc2626"
-            fig_chart.add_annotation(
-                x=last_date, y=last_low, text=f"📌 {cp_marker}", showarrow=True, arrowhead=2,
-                arrowsize=1.2, arrowwidth=2, arrowcolor=marker_color, ax=0, ay=45,
-                font=dict(color="white", size=11, weight="bold"), bgcolor=marker_color,
-                bordercolor="rgba(255,255,255,0.7)", borderwidth=1, borderpad=3, opacity=0.95
-            )
-            fig_chart.update_layout(
-                height=450, margin=dict(l=20, r=20, t=20, b=20),
-                xaxis_rangeslider_visible=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
-            )
-            st.plotly_chart(fig_chart, use_container_width=True)
 
         with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=True):
             st.markdown(explain_score_simple(result["df"], result["current_phase"], result["current_cis"], result["allowed"]))
@@ -1073,16 +1075,27 @@ def screen_fundamental() -> None:
     st.markdown("### 📊 Fundamental Analysis - ניתוח ערך וחברה")
     st.markdown("מסך זה מנתח את הבריאות הפיננסית של החברה והתמחור שלה ביחס לסקטור, ומשלב זאת עם נתוני הכסף החכם.")
     
-    default_fund = st.session_state.get("handoff_ticker") or "MSFT"
+    handoff_fund = st.session_state.get("handoff_ticker")
+    is_new_fund_handoff = bool(handoff_fund) and st.session_state.get("_fund_consumed_handoff") != handoff_fund
+    if is_new_fund_handoff and "fund_tkr" in st.session_state:
+        del st.session_state["fund_tkr"]
+
+    default_fund = handoff_fund or "MSFT"
     tkr = st.text_input("הזן סימול לניתוח פונדמנטלי מקיף:", value=default_fund, key="fund_tkr").strip().upper()
 
     run_fund = st.button("📈 נתח פונדמנטלית", type="primary", use_container_width=True)
-    auto_fund = False
-    if st.session_state.get("handoff_ticker") and st.session_state.get("_fund_consumed_handoff") != st.session_state.handoff_ticker:
-        auto_fund = True
-        st.session_state._fund_consumed_handoff = st.session_state.handoff_ticker
+    auto_fund = is_new_fund_handoff
+    if auto_fund:
+        st.session_state._fund_consumed_handoff = handoff_fund
 
+    # תיקון קריטי: שמירת הטיקר המנותח ב-session_state כדי שבלוק התוצאות (והכפתור
+    # "קבל אסטרטגיית מסחר" שבתוכו) לא יתאפס כשלוחצים על כפתור כלשהו בתוכו.
     if run_fund or auto_fund:
+        st.session_state.fund_result_ticker = tkr
+
+    show_fund_ticker = st.session_state.get("fund_result_ticker")
+    if show_fund_ticker:
+        tkr = show_fund_ticker
         if not SCOUT_CORE_AVAILABLE:
             st.error("מודול הליבה (scout_core) לא נטען בהצלחה - לכן הניתוח הפונדמנטלי אינו זמין.")
             if SCOUT_CORE_IMPORT_ERROR:
@@ -1154,18 +1167,18 @@ def screen_fundamental() -> None:
             unsafe_allow_html=True
         )
 
-        # === נרטיב חופשי בסטייל אקמן על מצב המניה הספציפי ===
+        # === נרטיב חופשי על מצב המניה הספציפי (ניתוח ערך) ===
         narrative = build_fundamental_narrative(fdata, tkr, verdict_obj)
         st.markdown(
-            f"<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח חופשי - מצב המניה הספציפי (Ackman View)</span>{narrative}</div>",
+            f"<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח חופשי - מצב המניה הספציפי (ניתוח ערך)</span>{narrative}</div>",
             unsafe_allow_html=True,
         )
 
-        # === טבלת מכפילים - מסודרת לפי סדר חשיבות אקמני (Deep Dive - בתוך expander) ===
+        # === טבלת מכפילים - מסודרת לפי סדר חשיבות ניתוח ערך (Deep Dive - בתוך expander) ===
         ex = fdata.get("explanations", {})
-        with st.expander("📐 מכפילים ויחסים מלאים (Deep Dive - מחושבים עצמית, בסדר חשיבות אקמני)", expanded=True):
+        with st.expander("📐 מכפילים ויחסים מלאים (Deep Dive - מחושבים עצמית, בסדר חשיבות ניתוח ערך)", expanded=True):
             metrics = [
-                # (1) מכפיל רווח - הראשון שאקמן בוחן
+                # (1) מכפיל רווח - הראשון שבודקים בניתוח ערך
                 ("Forward P/E (מכפיל רווח עתידי)", fdata.get("pe_forward", "-"), ex.get("pe_forward", "")),
                 ("Trailing P/E (מכפיל רווח נוכחי)", fdata.get("pe_trailing", "-"), ex.get("pe_trailing", "")),
                 # (2) תזרים מזומנים
@@ -1260,6 +1273,12 @@ def screen_trading_scout() -> None:
 
     # אם הגענו ממסך אחר עם טיקר - נמלא אותו בטיקר הראשון
     handoff = st.session_state.get("handoff_ticker")
+    is_new_scout_handoff = bool(handoff) and st.session_state.get("_scout_consumed_handoff") != handoff
+    if is_new_scout_handoff and "ts_ticker_0" in st.session_state:
+        # תיקון קריטי: בלי זה ה-widget הראשון משאיר את הטיקר הישן (כבר הוקצה ל-key הזה),
+        # ה-value החדש מתעלם ממנו, ונראה כאילו "לא קרה כלום" בלחיצה על קבל אסטרטגיית מסחר.
+        del st.session_state["ts_ticker_0"]
+
     default_tickers = ["NVDA", "AAPL", "META", "TSLA"]
     if handoff:
         default_tickers = [handoff, "", "", ""]
@@ -1271,12 +1290,17 @@ def screen_trading_scout() -> None:
         tickers_input.append(val)
 
     run_scout = st.button("💡 הפעל רדאר חכם - קבל הסתברויות ותוכניות", type="primary", use_container_width=True)
-    auto_scout = False
-    if handoff and st.session_state.get("_scout_consumed_handoff") != handoff:
-        auto_scout = True
+    auto_scout = is_new_scout_handoff
+    if auto_scout:
         st.session_state._scout_consumed_handoff = handoff
 
+    # תיקון קריטי: שמירת רשימת הטיקרים המנותחים ב-session_state כדי שבלוק התוצאות
+    # (והכפתור "פירוט פונדמנטלי מלא" שבתוכו) לא יתאפס כשלוחצים על כפתור כלשהו בתוכו.
     if run_scout or auto_scout:
+        st.session_state.scout_result_tickers = list(tickers_input)
+
+    show_scout_tickers = st.session_state.get("scout_result_tickers")
+    if show_scout_tickers:
         if not SCOUT_CORE_AVAILABLE:
             st.error("מודול הליבה חסר, לא ניתן לייצר המלצה.")
             return
@@ -1284,7 +1308,7 @@ def screen_trading_scout() -> None:
         from trading_scout import get_trading_recommendation
 
         # UI rendering in sequential order (Stacked Vertically to avoid cutoffs)
-        for tkr in tickers_input:
+        for tkr in show_scout_tickers:
             if tkr:
                 with st.spinner(f"מנתח טביעות אצבע מוסדיות ופונדמנטליות עבור {tkr}..."):
                     try:
@@ -1733,7 +1757,9 @@ def screen_ml_trainer() -> None:
     st.text_area("Log", value=log_content, height=300, disabled=True, label_visibility="collapsed")
 
 def render_top_nav() -> None:
-    """סרגל ניווט עליון קבוע עם המבורגר בפינה הימנית — מלווה בכל מסך."""
+    """סרגל ניווט עליון קבוע עם המבורגר בפינה הימנית — מלווה בכל מסך, כולל כפתורי חזור/למעלה."""
+    st.markdown("<div id='page-top'></div>", unsafe_allow_html=True)
+
     PAGES = [
         "🏠 בית", "🗺️ מפה מוסדית", "📊 ניתוח פונדמנטלי",
         "📈 Trading Scout", "📊 Backtest", "👁️ Monitor", "🧠 ML Trainer",
@@ -1758,9 +1784,28 @@ def render_top_nav() -> None:
             help="מעבר מהיר בין מסכי המערכת",
         )
         if chosen != st.session_state.get("current_page"):
+            prev_page = st.session_state.get("current_page")
+            if prev_page:
+                st.session_state.setdefault("nav_history", [])
+                st.session_state.nav_history.append(prev_page)
             st.session_state.current_page = chosen
             st.session_state.handoff_ticker = None  # ניווט ידני - בלי טיקר תקוע
             st.rerun()
+
+    # --- כפתורים מלווים: חזור למסך הקודם + חזרה לראש העמוד ---
+    has_history = bool(st.session_state.get("nav_history"))
+    back_col, top_col, _spacer = st.columns([1.3, 1.3, 3.4])
+    with back_col:
+        if st.button("⬅️ חזור למסך הקודם", key="nav_back_btn", use_container_width=True, disabled=not has_history):
+            go_back()
+    with top_col:
+        st.markdown(
+            "<a href='#page-top' style=\"display:block; text-align:center; text-decoration:none; "
+            "background:var(--bg-2); border:1px solid var(--line-strong); border-radius:12px; "
+            "padding:0.5rem 0; color:var(--txt-1); font-weight:600; font-size:0.95rem;\">⬆️ חזרה לראש העמוד</a>",
+            unsafe_allow_html=True,
+        )
+
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:14px 0 18px 0;'>", unsafe_allow_html=True)
 
 
