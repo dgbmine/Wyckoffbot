@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V17.8 (Collapsing Sticky Nav + Floating Back + Bullet Narratives + Vertical Picks)
+INSTITUTIONAL SCOUT PRO V18.0 (Stable Queued Nav + MarketScanner Early-Pruning in Home & Map)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -119,6 +119,17 @@ except Exception as _imp_exc1:
 
         def render_verdict_banner_html(v, ticker="", cis_score=None, current_phase="", valuation=None, valuation_color="#94a3b8", extra_chips=None):
             return ""
+
+
+# --- MarketScanner (מנוע סריקת שוק נפרד עם Early Pruning) ---
+try:
+    import scout_core as _sc_module
+    from market_scanner import MarketScanner
+    MARKET_SCANNER_AVAILABLE = SCOUT_CORE_AVAILABLE
+except Exception as _ms_exc:
+    MARKET_SCANNER_AVAILABLE = False
+    MarketScanner = None
+    logger.warning("market_scanner not available: %s", _ms_exc)
 
 
 st.set_page_config(
@@ -620,6 +631,10 @@ def init_session_state() -> None:
         st.session_state.scout_result_tickers = None
     if "nav_history" not in st.session_state:
         st.session_state.nav_history = []
+    if "nav_request" not in st.session_state:
+        st.session_state.nav_request = None      # פעולת ניווט בהמתנה, מעובדת בראש main() לפני ה-widgets
+    if "market_scan_results" not in st.session_state:
+        st.session_state.market_scan_results = None
 
 
 # יקום סריקה למסך הבית - 24 מניות מובילות (מהיר)
@@ -631,33 +646,54 @@ HOME_SCAN_UNIVERSE = [
 
 
 def go_to_screen(page: str, ticker: str = None) -> None:
-    """ניווט בין מסכים עם העברת טיקר (Cross-Screen Handoff). שומר היסטוריה לכפתור 'חזור'."""
-    prev_page = st.session_state.get("current_page")
-    if prev_page and prev_page != page:
-        st.session_state.setdefault("nav_history", [])
-        st.session_state.nav_history.append(prev_page)
-    if ticker:
-        st.session_state.handoff_ticker = ticker.strip().upper()
-    st.session_state.current_page = page
-    # תיקון קריטי: אסור להקצות ל-st.session_state["nav_select"] אחרי שה-widget עם אותו
-    # key כבר אותחל באותה הרצה (render_top_nav רץ בתחילת main(), לפני קריאה זו) - זה גורם
-    # ל-StreamlitAPIException. הפתרון הנכון: למחוק את המפתח (מותר), כך שבהרצה הבאה ה-selectbox
-    # יאותחל מחדש לפי current_page/index, בלי "לקפוץ" חזרה לבחירה הקודמת.
-    if "nav_select" in st.session_state:
-        del st.session_state["nav_select"]
+    """
+    מבקש מעבר מסך (Cross-Screen Handoff). במקום לשנות מצב widget תוך כדי ריצה (מה שגרם
+    ל-StreamlitAPIException וכפתורים 'תקועים'), אנו מתורים בקשת ניווט שתעובד בראש main()
+    *לפני* שה-widget של nav_select נוצר. זו הדרך היציבה היחידה ב-Streamlit.
+    """
+    st.session_state.nav_request = {
+        "page": page,
+        "ticker": ticker.strip().upper() if ticker else None,
+        "kind": "goto",
+    }
     st.rerun()
 
 
 def go_back() -> None:
-    """חזרה למסך הקודם לפי היסטוריית הניווט (לא מוסיף רישום חדש להיסטוריה - זו צריכת היסטוריה)."""
-    history = st.session_state.get("nav_history", [])
-    if not history:
+    """מבקש חזרה למסך הקודם לפי היסטוריית הניווט (מעובד בראש main())."""
+    st.session_state.nav_request = {"kind": "back"}
+    st.rerun()
+
+
+def _process_nav_request() -> None:
+    """
+    מעבד בקשת ניווט בהמתנה - חייב לרוץ בראש main(), לפני render_top_nav וכל widget אחר.
+    כאן מותר למחוק/לאפס keys של widgets כי הם עדיין לא אותחלו בריצה הנוכחית.
+    """
+    req = st.session_state.get("nav_request")
+    if not req:
         return
-    prev_page = history.pop()
-    st.session_state.current_page = prev_page
+    st.session_state.nav_request = None  # צריכת הבקשה
+
+    if req.get("kind") == "back":
+        history = st.session_state.get("nav_history", [])
+        if history:
+            st.session_state.current_page = history.pop()
+    else:  # goto
+        page = req.get("page")
+        ticker = req.get("ticker")
+        prev_page = st.session_state.get("current_page")
+        if prev_page and prev_page != page:
+            st.session_state.setdefault("nav_history", [])
+            st.session_state.nav_history.append(prev_page)
+        if ticker:
+            st.session_state.handoff_ticker = ticker
+        if page:
+            st.session_state.current_page = page
+
+    # איפוס מפתח ה-widget של התפריט כדי שיאותחל מחדש לפי current_page (מותר - עוד לפני יצירתו)
     if "nav_select" in st.session_state:
         del st.session_state["nav_select"]
-    st.rerun()
 
 
 _TECH_PASSWORD = "0549414442"
@@ -812,6 +848,26 @@ def _render_top_picks() -> None:
         if st.button(f"🔍 סרוק {len(pool)} מניות", use_container_width=True, type="primary", key="scan_picks_btn"):
             if not SCOUT_CORE_AVAILABLE:
                 st.error("מודול הליבה חסר.")
+            elif MARKET_SCANNER_AVAILABLE:
+                # מנוע הסריקה החדש עם Early Pruning - מהיר יותר על יקום רחב
+                prog = st.progress(0.0)
+                status = st.empty()
+
+                def _home_cb(done, total, ticker, stats):
+                    try:
+                        prog.progress(min(1.0, done / max(1, total)))
+                        status.caption(f"נסרקו {done}/{total} · עברו: {stats['passed']}")
+                    except Exception:
+                        pass
+
+                scanner = MarketScanner(_sc_module)
+                with st.spinner(f"סורק {len(pool)} מניות (Early Pruning, {eta})..."):
+                    out = scanner.scan_market(
+                        mode="balanced", max_tickers=len(pool), universe=pool,
+                        top_n=5, progress_callback=_home_cb,
+                    )
+                prog.progress(1.0)
+                st.session_state.home_top_picks = out["results"]
             else:
                 with st.spinner(f"סורק {len(pool)} מניות לאיתור שילובי איכות ({eta})..."):
                     st.session_state.home_top_picks = scan_top_opportunities(pool, top_n=5, mode="Balanced")
@@ -1025,9 +1081,119 @@ def screen_home() -> None:
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
 
 
+def _build_market_universe() -> list:
+    """בונה יקום סריקה רחב מאיחוד כל רשימות הטיקרים הקיימות + יקום ברירת המחדל של הסורק."""
+    universe = []
+    for lst in (GROWTH_TICKERS, VALUE_TICKERS, COMMODITIES_TICKERS):
+        for t in lst:
+            universe.append(t)
+    try:
+        from market_scanner import DEFAULT_UNIVERSE
+        universe.extend(DEFAULT_UNIVERSE)
+    except Exception:
+        pass
+    seen = set()
+    return [t for t in universe if not (t in seen or seen.add(t))]
+
+
+def _render_market_scanner() -> None:
+    """מנוע סריקת שוק עם Early Pruning - סריקה ידנית, progress bar וזמן משוער."""
+    st.markdown("#### 🔭 סורק שוק רחב (Market Scanner + Early Pruning)")
+    st.caption("סורק מאות מניות במהירות בעזרת גיזום מוקדם: מסנן קודם לפי מחיר/נפח, אז לפי קווים אדומים של Wyckoff, ורק מי ששרד עובר ניתוח פונדמנטלי מלא. מחזיר רק שילובים חזקים.")
+
+    if not MARKET_SCANNER_AVAILABLE:
+        st.warning("מנוע הסריקה אינו זמין (חסר market_scanner.py או scout_core).")
+        return
+
+    universe = _build_market_universe()
+    mode_labels = {
+        "fast": f"סריקה מהירה ({min(len(universe), 1200)} מניות, ספים מחמירים)",
+        "balanced": f"סריקה מאוזנת ({min(len(universe), 1500)} מניות)",
+        "full": f"סריקה מלאה ({len(universe)} מניות)",
+    }
+    col_mode, col_btn = st.columns([2.5, 1])
+    with col_mode:
+        mode = st.radio(
+            "מצב סריקה",
+            options=list(mode_labels.keys()),
+            format_func=lambda k: mode_labels[k],
+            key="market_scan_mode",
+            horizontal=False,
+        )
+    max_map = {"fast": 1200, "balanced": 1500, "full": 3000}
+    eta = MarketScanner.estimate_time(min(len(universe), max_map[mode]), mode)
+    with col_btn:
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+        run_scan = st.button("🔭 הפעל סריקת שוק", type="primary", use_container_width=True, key="run_market_scan")
+        st.caption(f"זמן משוער: {eta}")
+
+    if run_scan:
+        scanner = MarketScanner(_sc_module)
+        prog_bar = st.progress(0.0)
+        status = st.empty()
+
+        def _cb(done, total, ticker, stats):
+            try:
+                prog_bar.progress(min(1.0, done / max(1, total)))
+                status.caption(
+                    f"נסרקו {done}/{total} · עברו: {stats['passed']} · "
+                    f"גוזמו (מהיר/Wyckoff/פונדמנטלי): {stats['pruned_quick']}/{stats['pruned_wyckoff']}/{stats['pruned_fundamental']}"
+                )
+            except Exception:
+                pass
+
+        with st.spinner(f"סורק שוק במצב '{mode}' ({eta})..."):
+            scan_out = scanner.scan_market(
+                mode=mode, max_tickers=max_map[mode], universe=universe,
+                top_n=20, progress_callback=_cb,
+            )
+        prog_bar.progress(1.0)
+        st.session_state.market_scan_results = scan_out
+
+    scan_out = st.session_state.get("market_scan_results")
+    if scan_out:
+        stats = scan_out["stats"]
+        st.success(
+            f"✅ הסריקה הושלמה ב-{scan_out['elapsed']:.1f} שניות · "
+            f"נסרקו {stats['scanned']} · נמצאו {len(scan_out['results'])} הזדמנויות חזקות."
+        )
+        st.caption(
+            f"גיזום: מהיר {stats['pruned_quick']} · Wyckoff {stats['pruned_wyckoff']} · "
+            f"פונדמנטלי {stats['pruned_fundamental']} · חלש {stats['pruned_weak']} · שגיאות {stats['errors']}"
+        )
+
+        results = scan_out["results"]
+        if not results:
+            st.info("לא נמצאו מניות שעברו את כל מסנני האיכות בסריקה זו.")
+        else:
+            for i, p in enumerate(results):
+                price_html = render_price_inline(p["ticker"])
+                st.markdown(
+                    f"""<div class='pick-card' style='border-right:5px solid {p['color']}; border-top:none; margin-bottom:8px;'>
+                        <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
+                            <span class='pick-rank'>#{i+1}</span>
+                            <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
+                            <span>{price_html}</span>
+                        </div>
+                        <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
+                        <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
+                            · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
+                        <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+                if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"mscan_{p['ticker']}_{i}", use_container_width=True):
+                    go_to_screen("🏠 בית", p["ticker"])
+
+    st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
+
+
 def screen_institutional_map() -> None:
     st.markdown("### 🗺️ Institutional Map - מפת כסף חכם סקטוריאלית")
     st.markdown("מסך זה ממפה את הסקטורים המרכזיים בשוק ומציג את ממוצע ה-**Institutional Accumulation Probability** (הסתברות לצבירה מוסדית) שלהם. הנתונים מתעדכנים על בסיס מניות מובילות בכל סקטור ומוצגים מהגבוה לנמוך.")
+
+    # --- מנוע סריקת שוק רחב (Early Pruning) ---
+    _render_market_scanner()
 
     MAP_SECTORS = {
         "טכנולוגיה (Technology)": {
@@ -1889,6 +2055,7 @@ def render_top_nav() -> None:
 
 def main() -> None:
     init_session_state()
+    _process_nav_request()   # מעבד בקשות ניווט לפני יצירת widgets - מונע StreamlitAPIException
     inject_css()
 
     render_top_nav()
