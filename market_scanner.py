@@ -1,6 +1,6 @@
 """
 ============================================================
-MARKET SCANNER V1.1 (V18.0) — Institutional Scout Pro
+MARKET SCANNER V1.3 (V18.2) — Institutional Scout Pro (Critical Fix: direct yfinance import, no scout_core.yf dependency; quieter logging)
 מנוע סריקת שוק נפרד עם Early Pruning (גיזום מוקדם)
 ============================================================
 עקרון מרכזי: לסרוק מהר מאות-אלפי מניות ע"י "גיזום" אגרסיבי בכל שלב -
@@ -16,6 +16,11 @@ MARKET SCANNER V1.1 (V18.0) — Institutional Scout Pro
 import logging
 import time
 from datetime import datetime, date
+
+try:
+    import yfinance as yf
+except Exception:  # pragma: no cover - סביבה ללא yfinance מותקן
+    yf = None
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +92,8 @@ class MarketScanner:
     def quick_filter(self, ticker, df, info=None):
         """
         בדיקה זולה על בסיס נתונים שכבר נשלפו (df) + info אופציונלי.
+        אם info לא הועבר, מנסה לשלוף אותו בעצמו (fallback בטוח) לבדיקת שווי שוק -
+        אך כל כשל בשליפה לא חוסם את הבדיקות הזולות (מחיר/נפח) שלא תלויות ב-info.
         מחזיר (passed: bool, reason: str).
         """
         if df is None or df.empty or len(df) < 60:
@@ -99,6 +106,15 @@ class MarketScanner:
         avg_vol = float(df["Volume"].tail(30).mean())
         if avg_vol < self.min_avg_volume:
             return False, f"נפח ממוצע נמוך ({avg_vol:,.0f} < {self.min_avg_volume:,.0f})"
+
+        # שווי שוק - fallback בטוח: אם info לא הועבר, ננסה לשלוף אותו עצמאית
+        # (import ישיר של yfinance, לא תלוי במבנה הפנימי של scout_core)
+        if info is None and yf is not None:
+            try:
+                info = yf.Ticker(ticker).info
+            except Exception as exc:
+                logger.debug("quick_filter: info fetch failed for %s (continuing without it): %s", ticker, exc)
+                info = None  # כשל בשליפה לא פוסל - ממשיכים בלי בדיקת שווי שוק
 
         # שווי שוק - אם זמין ב-info; אחרת לא חוסמים (כדי לא לפסול בטעות)
         if info:
@@ -142,7 +158,7 @@ class MarketScanner:
             cis = float(self.engine.composite_cis(factors, df).iloc[-1])
             return True, "עבר קווים אדומים Wyckoff", {"phase": phase, "cis": cis, "factors": factors}
         except Exception as exc:
-            logger.warning("passes_wyckoff_red_lines failed: %s", exc)
+            logger.debug("passes_wyckoff_red_lines failed: %s", exc)
             return False, f"שגיאת חישוב Wyckoff: {exc}", {}
 
     # ---------------------------------------------------------------
@@ -151,75 +167,82 @@ class MarketScanner:
     def passes_fundamental_red_lines(self, fund_data):
         """
         פוסל שילוב גרוע מובהק: יקר + מינוף גבוה + תזרים חופשי נמוך.
-        מחזיר (passed, reason).
+        מחזיר (passed, reason). כל כשל בנתונים -> לא פוסל (ברירת מחדל בטוחה).
         """
         if not fund_data:
             return True, "אין נתונים פונדמנטליים - לא פוסל"
+        try:
+            raw = fund_data.get("_raw", {})
+            valuation = fund_data.get("valuation", "הוגן")
+            fcf_y = raw.get("fcf_yield", 0.0)
+            nde = raw.get("net_debt_ebitda", 0.0)
 
-        raw = fund_data.get("_raw", {})
-        valuation = fund_data.get("valuation", "הוגן")
-        fcf_y = raw.get("fcf_yield", 0.0)
-        nde = raw.get("net_debt_ebitda", 0.0)
+            expensive = valuation == "יקר"
+            high_debt = nde and nde > 3.0
+            weak_fcf = fcf_y is not None and fcf_y < 1.0
 
-        expensive = valuation == "יקר"
-        high_debt = nde and nde > 3.0
-        weak_fcf = fcf_y is not None and fcf_y < 1.0
-
-        if expensive and high_debt and weak_fcf:
-            return False, f"שילוב גרוע: יקר + מינוף גבוה ({nde:.1f}x) + תזרים חלש ({fcf_y:.1f}%)"
-        return True, "עבר קווים אדומים פונדמנטליים"
+            if expensive and high_debt and weak_fcf:
+                return False, f"שילוב גרוע: יקר + מינוף גבוה ({nde:.1f}x) + תזרים חלש ({fcf_y:.1f}%)"
+            return True, "עבר קווים אדומים פונדמנטליים"
+        except Exception as exc:
+            logger.debug("passes_fundamental_red_lines data issue (not filtering): %s", exc)
+            return True, "שגיאת נתונים פונדמנטליים - לא פוסל"
 
     # ---------------------------------------------------------------
     # ניתוח מלא של טיקר בודד (אחרי שעבר את כל הגיזומים)
     # ---------------------------------------------------------------
     def _full_analyze(self, ticker, wyckoff_payload):
-        phase = wyckoff_payload.get("phase", "")
-        cis = wyckoff_payload.get("cis", 0.0)
+        try:
+            phase = wyckoff_payload.get("phase", "")
+            cis = wyckoff_payload.get("cis", 0.0)
 
-        fund_data = self.sc.get_fundamental_data(ticker)
-        ok_fund, fund_reason = self.passes_fundamental_red_lines(fund_data)
-        if not ok_fund:
-            return None, fund_reason
+            fund_data = self.sc.get_fundamental_data(ticker)
+            ok_fund, fund_reason = self.passes_fundamental_red_lines(fund_data)
+            if not ok_fund:
+                return None, fund_reason
 
-        verdict = self.sc.synthesize_verdict(fund_data, cis, phase, ticker)
-        # רק שילובים חזקים נכנסים לתוצאות
-        if verdict.get("tier") not in ("STRONG_BUY", "BUY"):
-            return None, f"דירוג לא חזק מספיק ({verdict.get('tier')})"
+            verdict = self.sc.synthesize_verdict(fund_data, cis, phase, ticker)
+            # רק שילובים חזקים נכנסים לתוצאות
+            if verdict.get("tier") not in ("STRONG_BUY", "BUY"):
+                return None, f"דירוג לא חזק מספיק ({verdict.get('tier')})"
 
-        raw = fund_data.get("_raw", {}) if fund_data else {}
-        fund_quality = 0.0
-        fund_quality += min(30, (raw.get("fcf_yield", 0) or 0) * 5)
-        fund_quality += 20 if (fund_data and fund_data.get("valuation") == "זול") else (
-            10 if (fund_data and fund_data.get("valuation") == "הוגן") else 0)
-        om = raw.get("op_margin", 0) or 0
-        bom = raw.get("bench_om", 12) or 12
-        fund_quality += 15 if (om and om > bom) else 0
-        fund_quality += 10 if (raw.get("peg", 0) and 0 < raw.get("peg") < 1.5) else 0
-        fund_quality += 10 if ((raw.get("net_debt_ebitda", 0) or 0) < 2) else 0
-        fund_quality = min(85, fund_quality) + 15
+            raw = fund_data.get("_raw", {}) if fund_data else {}
+            fund_quality = 0.0
+            fund_quality += min(30, (raw.get("fcf_yield", 0) or 0) * 5)
+            fund_quality += 20 if (fund_data and fund_data.get("valuation") == "זול") else (
+                10 if (fund_data and fund_data.get("valuation") == "הוגן") else 0)
+            om = raw.get("op_margin", 0) or 0
+            bom = raw.get("bench_om", 12) or 12
+            fund_quality += 15 if (om and om > bom) else 0
+            fund_quality += 10 if (raw.get("peg", 0) and 0 < raw.get("peg") < 1.5) else 0
+            fund_quality += 10 if ((raw.get("net_debt_ebitda", 0) or 0) < 2) else 0
+            fund_quality = min(85, fund_quality) + 15
 
-        tier_bonus = {"STRONG_BUY": 12, "BUY": 6}.get(verdict.get("tier"), 0)
-        composite = round(cis * 0.5 + fund_quality * 0.5 + tier_bonus, 1)
+            tier_bonus = {"STRONG_BUY": 12, "BUY": 6}.get(verdict.get("tier"), 0)
+            composite = round(cis * 0.5 + fund_quality * 0.5 + tier_bonus, 1)
 
-        result = {
-            "ticker": ticker,
-            "cis": round(cis, 1),
-            "phase": phase,
-            "valuation": fund_data.get("valuation", "-") if fund_data else "-",
-            "valuation_color": fund_data.get("valuation_color", "#94a3b8") if fund_data else "#94a3b8",
-            "fcf_yield": fund_data.get("fcf_yield", "N/A") if fund_data else "N/A",
-            "pe": (fund_data.get("pe_forward") if fund_data and fund_data.get("pe_forward") != "N/A"
-                   else (fund_data.get("pe_trailing", "N/A") if fund_data else "N/A")),
-            "sector_he": fund_data.get("sector_he", "") if fund_data else "",
-            "headline": verdict.get("headline", ""),
-            "detail": verdict.get("detail", ""),
-            "action_line": verdict.get("action_line", ""),
-            "confidence": verdict.get("confidence", ""),
-            "tier": verdict.get("tier", ""),
-            "color": verdict.get("color", "#16a34a"),
-            "composite": composite,
-        }
-        return result, "עבר ניתוח מלא"
+            result = {
+                "ticker": ticker,
+                "cis": round(cis, 1),
+                "phase": phase,
+                "valuation": fund_data.get("valuation", "-") if fund_data else "-",
+                "valuation_color": fund_data.get("valuation_color", "#94a3b8") if fund_data else "#94a3b8",
+                "fcf_yield": fund_data.get("fcf_yield", "N/A") if fund_data else "N/A",
+                "pe": (fund_data.get("pe_forward") if fund_data and fund_data.get("pe_forward") != "N/A"
+                       else (fund_data.get("pe_trailing", "N/A") if fund_data else "N/A")),
+                "sector_he": fund_data.get("sector_he", "") if fund_data else "",
+                "headline": verdict.get("headline", ""),
+                "detail": verdict.get("detail", ""),
+                "action_line": verdict.get("action_line", ""),
+                "confidence": verdict.get("confidence", ""),
+                "tier": verdict.get("tier", ""),
+                "color": verdict.get("color", "#16a34a"),
+                "composite": composite,
+            }
+            return result, "עבר ניתוח מלא"
+        except Exception as exc:
+            logger.warning("_full_analyze failed for %s: %s", ticker, exc)
+            return None, f"שגיאה בניתוח מלא: {exc}"
 
     # ---------------------------------------------------------------
     # סריקה ראשית
@@ -273,8 +296,7 @@ class MarketScanner:
                 if cached is not None:
                     results.append(cached)
                     stats["passed"] += 1
-                if progress_callback:
-                    progress_callback(i + 1, total, ticker, stats)
+                self._safe_progress(progress_callback, i + 1, total, ticker, stats)
                 continue
 
             try:
@@ -285,8 +307,6 @@ class MarketScanner:
                 if not ok_quick:
                     stats["pruned_quick"] += 1
                     self._cache[ticker] = None
-                    if progress_callback:
-                        progress_callback(i + 1, total, ticker, stats)
                     continue
 
                 # שלב 1 - Wyckoff red lines
@@ -294,8 +314,6 @@ class MarketScanner:
                 if not ok_wy:
                     stats["pruned_wyckoff"] += 1
                     self._cache[ticker] = None
-                    if progress_callback:
-                        progress_callback(i + 1, total, ticker, stats)
                     continue
 
                 # שלב 2+3 - ניתוח מלא + פונדמנטלי
@@ -306,8 +324,6 @@ class MarketScanner:
                     else:
                         stats["pruned_weak"] += 1
                     self._cache[ticker] = None
-                    if progress_callback:
-                        progress_callback(i + 1, total, ticker, stats)
                     continue
 
                 self._cache[ticker] = result
@@ -317,12 +333,22 @@ class MarketScanner:
                 stats["errors"] += 1
                 logger.warning("scan_market failed for %s: %s", ticker, exc)
             finally:
-                if progress_callback:
-                    progress_callback(i + 1, total, ticker, stats)
+                # נקודת עדכון Progress יחידה (לא כפולה) - גם בדילוג (continue) וגם בהצלחה/כשל
+                self._safe_progress(progress_callback, i + 1, total, ticker, stats)
 
         results.sort(key=lambda x: x["composite"], reverse=True)
         elapsed = time.time() - start
         return {"results": results[:top_n], "stats": stats, "elapsed": elapsed}
+
+    @staticmethod
+    def _safe_progress(progress_callback, done, total, ticker, stats):
+        """עדכון Progress בטוח - כשל בקריאה (לדוגמה תקלת UI) לא יקרוס את הסריקה."""
+        if not progress_callback:
+            return
+        try:
+            progress_callback(done, total, ticker, stats)
+        except Exception as exc:
+            logger.debug("progress_callback raised (ignored): %s", exc)
 
     @staticmethod
     def estimate_time(total, mode="balanced"):

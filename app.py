@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V18.0 (Stable Queued Nav + MarketScanner Early-Pruning in Home & Map)
+INSTITUTIONAL SCOUT PRO V18.3 (One-Shot Handoff Fix + Deduped Cards + Mobile-Collapsed Expanders)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -499,10 +499,10 @@ def inject_css() -> None:
         background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity:0.8;
     }
     .scout-card:hover { transform: translateY(-3px); border-color: rgba(56,189,248,0.5); }
-    .scout-header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 22px; }
-    .scout-title { color: var(--txt-1); font-size: 1.8rem; font-weight: 800; margin:0; display:flex; align-items:center; }
+    .scout-header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 22px; flex-wrap: wrap; gap: 10px; }
+    .scout-title { color: var(--txt-1); font-size: 1.8rem; font-weight: 800; margin:0; display:flex; align-items:center; flex-wrap: wrap; }
     .scout-title-sub { font-size: 1rem; color: var(--txt-2); font-weight: 400; padding-right: 12px; }
-    .scout-badge { padding: 8px 20px; border-radius: 30px; font-size: 0.95rem; font-weight: 700; background: var(--bg-3); border: 1px solid var(--line-strong); }
+    .scout-badge { padding: 8px 20px; border-radius: 30px; font-size: 0.95rem; font-weight: 700; background: var(--bg-3); border: 1px solid var(--line-strong); white-space: nowrap; }
     .scout-prob-container { text-align: center; margin-bottom: 18px; }
     .scout-prob-label { margin:0; color: var(--txt-2); font-weight:600; letter-spacing:1.5px; font-size:0.85rem; text-transform:uppercase; }
     .scout-prob { font-size: 4.4rem; font-weight: 800; color: var(--accent); margin: 8px 0 14px 0; line-height: 1; text-shadow: 0 0 35px rgba(56,189,248,0.4); }
@@ -511,7 +511,7 @@ def inject_css() -> None:
     .scout-stats-grid { display:flex; flex-direction:column; gap: 20px; margin-bottom: 22px; }
     .scout-stat-box { flex:1; background: var(--bg-1); border:1px solid var(--line); border-radius:16px; padding: 20px; display:flex; flex-direction:column; }
     .scout-section-title { color: var(--txt-1); font-size: 1.08rem; font-weight: 700; margin-bottom: 14px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
-    .scout-list-item { font-size: 1.0rem; color: var(--txt-2); margin-bottom: 12px; display:flex; justify-content:space-between; align-items:center; }
+    .scout-list-item { font-size: 1.0rem; color: var(--txt-2); margin-bottom: 12px; display:flex; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 6px; }
     .scout-alert-box { padding: 18px 22px; border-radius: 14px; margin-top: 22px; border-right: 4px solid var(--neg); background: rgba(239,68,68,0.06); }
     .scout-alert-title { font-size: 1.05rem; color: var(--txt-1); font-weight:bold; margin-bottom:12px; display:block; }
     .scout-alert-text { font-size: 0.92rem; display:block; color: var(--txt-2); line-height: 1.6; margin-bottom: 6px; }
@@ -547,6 +547,28 @@ def inject_css() -> None:
     .map-card-label { font-size: 0.88rem; color: var(--txt-2); margin: 12px 0 6px 0; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
     .map-card-score { margin:0; font-size: 3.2rem; font-weight: 800; line-height: 1.1; }
     .map-desc { font-size: 0.9rem; color: var(--txt-2); margin-top: 18px; line-height: 1.6; padding-top: 16px; border-top: 1px dashed var(--line-strong); }
+
+    /* ============================================================
+       MOBILE - מבטיח שכרטיסיות (Trading Scout, Home Picks) לא נחתכות,
+       נערמות אנכית עם whitespace תקין, וטקסט/מספרים גדולים מצטמצמים
+       ============================================================ */
+    @media (max-width: 640px) {
+        .block-container { padding-left: 0.7rem; padding-right: 0.7rem; }
+        .scout-card { padding: 20px 16px; }
+        .scout-title { font-size: 1.3rem; }
+        .scout-prob { font-size: 3.0rem; }
+        .scout-badge { font-size: 0.82rem; padding: 6px 14px; }
+        .pick-card { padding: 14px 14px; }
+        .pick-ticker { font-size: 1.35rem; }
+        .vb-headline { font-size: 1.2rem !important; }
+        .vb-body { padding: 18px 18px !important; }
+        .price-header .ph-price { font-size: 1.6rem; }
+        .main-header h1 { font-size: 1.3rem; }
+        .map-card-score { font-size: 2.2rem; }
+        .narrative-box { padding: 16px 18px; }
+        .float-back-wrap { bottom: 14px; left: 14px; }
+        .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
+    }
 
     /* nav */
     .topnav-spacer { height: 8px; }
@@ -633,6 +655,8 @@ def init_session_state() -> None:
         st.session_state.nav_history = []
     if "nav_request" not in st.session_state:
         st.session_state.nav_request = None      # פעולת ניווט בהמתנה, מעובדת בראש main() לפני ה-widgets
+    if "handoff_pending" not in st.session_state:
+        st.session_state.handoff_pending = False  # דגל חד-פעמי: טיקר טרי הועבר, מסך היעד צריך להפעיל ניתוח אוטומטי
     if "market_scan_results" not in st.session_state:
         st.session_state.market_scan_results = None
 
@@ -688,6 +712,11 @@ def _process_nav_request() -> None:
             st.session_state.nav_history.append(prev_page)
         if ticker:
             st.session_state.handoff_ticker = ticker
+            # דגל חד-פעמי: ניווט טרי עם טיקר התרחש עכשיו. המסך שירונדר הבא (ורק הוא)
+            # "יצרוך" אותו ויפעיל ניתוח אוטומטי - גם אם הטיקר זהה לביקור קודם באותו מסך.
+            # זה מחליף את התלות הישנה ב-_home_consumed_handoff/_fund_consumed_handoff/_scout_consumed_handoff
+            # שהייתה נכשלת בדיוק במקרה הזה (ביקור חוזר עם אותו טיקר לא היה מפעיל ניתוח מחדש).
+            st.session_state.handoff_pending = True
         if page:
             st.session_state.current_page = page
 
@@ -820,6 +849,31 @@ def _get_home_scan_pool(width_label: str) -> list:
     return pool
 
 
+def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str = "🏠 בית") -> None:
+    """
+    רכיב משותף לכרטיס תוצאת סריקה (מניה + Verdict + ציון) - מקור אמת יחיד.
+    משמש גם ב-_render_top_picks וגם ב-_render_market_scanner, כדי למנוע כפילות קוד
+    וסיכון לאי-עקביות בין שני מסכי הסריקה.
+    """
+    price_html = render_price_inline(p["ticker"])
+    st.markdown(
+        f"""<div class='pick-card' style='border-right:5px solid {p['color']}; border-top:none; margin-bottom:8px;'>
+            <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
+                <span class='pick-rank'>#{idx+1}</span>
+                <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
+                <span>{price_html}</span>
+            </div>
+            <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
+            <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
+                · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
+            <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+    if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"{key_prefix}_{p['ticker']}_{idx}", use_container_width=True):
+        go_to_screen(dest_page, p["ticker"])
+
+
 def _render_top_picks() -> None:
     """מציג עד 5 מניות בהזדמנות מצוינת (Wyckoff + פונדמנטלי איכותי). לחיצה -> ניתוח מלא."""
     st.markdown("#### 🌟 ההזדמנויות הבולטות בשוק כרגע (Wyckoff + פונדמנטלי)")
@@ -882,24 +936,7 @@ def _render_top_picks() -> None:
     else:
         # Q23=D: רשימה אנכית (לא רשת) עם יותר פירוט בכל שורה
         for i, p in enumerate(picks):
-            price_html = render_price_inline(p['ticker'])
-            st.markdown(
-                f"""<div class='pick-card' style='border-right:5px solid {p['color']}; border-top:none; margin-bottom:8px;'>
-                    <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
-                        <span class='pick-rank'>#{i+1}</span>
-                        <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
-                        <span>{price_html}</span>
-                    </div>
-                    <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
-                    <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
-                        · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
-                    <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
-            # Q5: לחיצה -> מסך הבית עם ניתוח Wyckoff מלא + פונדמנטלי בשורה אחת (והרצה אוטומטית)
-            if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"pick_{p['ticker']}_{i}", use_container_width=True):
-                go_to_screen("🏠 בית", p["ticker"])
+            _render_pick_result_card(p, i, key_prefix="pick", dest_page="🏠 בית")
 
     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
     if st.button("🗺️ אפשרות לסריקות נוספות (לפי סקטור)", use_container_width=True, key="more_scans_btn"):
@@ -966,7 +1003,7 @@ def screen_home() -> None:
     # --- חיפוש מניה ספציפית ---
     st.markdown("#### 🔎 ניתוח מניה ספציפית")
     handoff_tkr = st.session_state.get("handoff_ticker")
-    is_new_home_handoff = bool(handoff_tkr) and st.session_state.get("_home_consumed_handoff") != handoff_tkr
+    is_new_home_handoff = bool(handoff_tkr) and st.session_state.get("handoff_pending", False)
     if is_new_home_handoff and "home_ticker_input" in st.session_state:
         # תיקון קריטי: מוחקים את ה-widget הקודם כדי ש-value החדש (מהמסך הקודם) באמת יוצג -
         # אחרת Streamlit משאיר את הערך הישן שכבר הוקצה לאותו key, ונראה כאילו "לא קרה כלום".
@@ -979,7 +1016,7 @@ def screen_home() -> None:
     # תמיכה ב-handoff: אם הגענו ממסך אחר עם טיקר, הרץ אוטומטית פעם אחת
     auto_run = is_new_home_handoff
     if auto_run:
-        st.session_state._home_consumed_handoff = handoff_tkr
+        st.session_state.handoff_pending = False  # נוצל - ניקוי חד-פעמי, לא משאיר מפתח ישן מיותר
 
     # תיקון קריטי: אם נשמור את תוצאת הניתוח רק לפי run_clicked/auto_run (מצב חד-פעמי),
     # כל לחיצה על כפתור *בתוך* בלוק התוצאות (כמו "קבל אסטרטגיית מסחר") תגרום לבלוק כולו
@@ -1014,7 +1051,7 @@ def screen_home() -> None:
         st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin:26px 0 18px 0;'>", unsafe_allow_html=True)
         st.markdown("<div class='section-label'>🔍 ניתוח טכני מעמיק - Wyckoff Deep Dive</div>", unsafe_allow_html=True)
 
-        with st.expander("📊 ציון הסתברות ומפת פאזות Wyckoff (Deep Dive)", expanded=True):
+        with st.expander("📊 ציון הסתברות ומפת פאזות Wyckoff (Deep Dive)", expanded=False):
             left, right = st.columns([1, 1.3])
 
             with left:
@@ -1075,7 +1112,7 @@ def screen_home() -> None:
                     st.markdown(html, unsafe_allow_html=True)
                     st.caption(f"**זיהוי מלא:** `{cp}`")
 
-        with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=True):
+        with st.expander("📝 הסבר פשוט למתחילים (בשפה מדוברת)", expanded=False):
             st.markdown(explain_score_simple(result["df"], result["current_phase"], result["current_cis"], result["allowed"]))
 
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
@@ -1167,23 +1204,7 @@ def _render_market_scanner() -> None:
             st.info("לא נמצאו מניות שעברו את כל מסנני האיכות בסריקה זו.")
         else:
             for i, p in enumerate(results):
-                price_html = render_price_inline(p["ticker"])
-                st.markdown(
-                    f"""<div class='pick-card' style='border-right:5px solid {p['color']}; border-top:none; margin-bottom:8px;'>
-                        <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
-                            <span class='pick-rank'>#{i+1}</span>
-                            <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
-                            <span>{price_html}</span>
-                        </div>
-                        <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
-                        <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
-                            · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
-                        <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
-                    </div>""",
-                    unsafe_allow_html=True,
-                )
-                if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"mscan_{p['ticker']}_{i}", use_container_width=True):
-                    go_to_screen("🏠 בית", p["ticker"])
+                _render_pick_result_card(p, i, key_prefix="mscan", dest_page="🏠 בית")
 
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
 
@@ -1303,7 +1324,7 @@ def screen_fundamental() -> None:
     st.markdown("מסך זה מנתח את הבריאות הפיננסית של החברה והתמחור שלה ביחס לסקטור, ומשלב זאת עם נתוני הכסף החכם.")
     
     handoff_fund = st.session_state.get("handoff_ticker")
-    is_new_fund_handoff = bool(handoff_fund) and st.session_state.get("_fund_consumed_handoff") != handoff_fund
+    is_new_fund_handoff = bool(handoff_fund) and st.session_state.get("handoff_pending", False)
     if is_new_fund_handoff and "fund_tkr" in st.session_state:
         del st.session_state["fund_tkr"]
 
@@ -1313,7 +1334,7 @@ def screen_fundamental() -> None:
     run_fund = st.button("📈 נתח פונדמנטלית", type="primary", use_container_width=True)
     auto_fund = is_new_fund_handoff
     if auto_fund:
-        st.session_state._fund_consumed_handoff = handoff_fund
+        st.session_state.handoff_pending = False  # נוצל - ניקוי חד-פעמי
 
     # תיקון קריטי: שמירת הטיקר המנותח ב-session_state כדי שבלוק התוצאות (והכפתור
     # "קבל אסטרטגיית מסחר" שבתוכו) לא יתאפס כשלוחצים על כפתור כלשהו בתוכו.
@@ -1403,7 +1424,7 @@ def screen_fundamental() -> None:
 
         # === טבלת מכפילים - מסודרת לפי סדר חשיבות ניתוח ערך (Deep Dive - בתוך expander) ===
         ex = fdata.get("explanations", {})
-        with st.expander("📐 מכפילים ויחסים מלאים (Deep Dive - מחושבים עצמית, בסדר חשיבות ניתוח ערך)", expanded=True):
+        with st.expander("📐 מכפילים ויחסים מלאים (Deep Dive - מחושבים עצמית, בסדר חשיבות ניתוח ערך)", expanded=False):
             metrics = [
                 # (1) מכפיל רווח - הראשון שבודקים בניתוח ערך
                 ("Forward P/E (מכפיל רווח עתידי)", fdata.get("pe_forward", "-"), ex.get("pe_forward", "")),
@@ -1500,7 +1521,7 @@ def screen_trading_scout() -> None:
 
     # אם הגענו ממסך אחר עם טיקר - נמלא אותו בטיקר הראשון
     handoff = st.session_state.get("handoff_ticker")
-    is_new_scout_handoff = bool(handoff) and st.session_state.get("_scout_consumed_handoff") != handoff
+    is_new_scout_handoff = bool(handoff) and st.session_state.get("handoff_pending", False)
     if is_new_scout_handoff and "ts_ticker_0" in st.session_state:
         # תיקון קריטי: בלי זה ה-widget הראשון משאיר את הטיקר הישן (כבר הוקצה ל-key הזה),
         # ה-value החדש מתעלם ממנו, ונראה כאילו "לא קרה כלום" בלחיצה על קבל אסטרטגיית מסחר.
@@ -1519,7 +1540,7 @@ def screen_trading_scout() -> None:
     run_scout = st.button("💡 הפעל רדאר חכם - קבל הסתברויות ותוכניות", type="primary", use_container_width=True)
     auto_scout = is_new_scout_handoff
     if auto_scout:
-        st.session_state._scout_consumed_handoff = handoff
+        st.session_state.handoff_pending = False  # נוצל - ניקוי חד-פעמי
 
     # תיקון קריטי: שמירת רשימת הטיקרים המנותחים ב-session_state כדי שבלוק התוצאות
     # (והכפתור "פירוט פונדמנטלי מלא" שבתוכו) לא יתאפס כשלוחצים על כפתור כלשהו בתוכו.
@@ -1693,7 +1714,7 @@ def screen_trading_scout() -> None:
                 ]
 
                 # === שלב 3: Drill-down אחד מאוחד - ניתוח טכני + אסטרטגיית מסחר, עם whitespace ברור בין החלקים ===
-                with st.expander(f"🔍 Drill-down מלא ל-{tkr}: Wyckoff, Smart Money ואסטרטגיית מסחר", expanded=(_scout_idx == 0)):
+                with st.expander(f"🔍 Drill-down מלא ל-{tkr}: Wyckoff, Smart Money ואסטרטגיית מסחר", expanded=False):
                     st.markdown("".join(card_parts), unsafe_allow_html=True)
 
                     st.markdown("<div style='height:34px;'></div>", unsafe_allow_html=True)
