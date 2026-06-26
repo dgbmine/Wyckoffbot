@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V18.3 (One-Shot Handoff Fix + Deduped Cards + Mobile-Collapsed Expanders)
+INSTITUTIONAL SCOUT PRO V18.5 (Full-Market Scan Button + Sector MarketScanner + Card Carousel)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -568,6 +568,8 @@ def inject_css() -> None:
         .narrative-box { padding: 16px 18px; }
         .float-back-wrap { bottom: 14px; left: 14px; }
         .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
+        /* כפתורי דפדוף Carousel גדולים ונוחים למגע במובייל */
+        .stButton > button { min-height: 46px; font-size: 1.0rem; }
     }
 
     /* nav */
@@ -659,6 +661,12 @@ def init_session_state() -> None:
         st.session_state.handoff_pending = False  # דגל חד-פעמי: טיקר טרי הועבר, מסך היעד צריך להפעיל ניתוח אוטומטי
     if "market_scan_results" not in st.session_state:
         st.session_state.market_scan_results = None
+    if "home_card_index" not in st.session_state:
+        st.session_state.home_card_index = 0       # אינדקס דפדוף כרטיסיות במסך הבית
+    if "scan_card_index" not in st.session_state:
+        st.session_state.scan_card_index = 0        # אינדקס דפדוף כרטיסיות בסריקת שוק
+    if "auto_run_market_scan" not in st.session_state:
+        st.session_state.auto_run_market_scan = False  # טריגר חד-פעמי מכפתור "סריקת שוק מלאה" בבית
 
 
 # יקום סריקה למסך הבית - 24 מניות מובילות (מהיר)
@@ -874,6 +882,43 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
         go_to_screen(dest_page, p["ticker"])
 
 
+def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_page: str = "🏠 בית") -> None:
+    """
+    תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם, עם חצים
+    גדולים ונוחים (גם במובייל) ואינדקס "X מתוך Y". האינדקס נשמר ב-session_state
+    תחת index_key כדי שיישמר בין ריצות. הכרטיס עצמו זהה לחלוטין ל-_render_pick_result_card.
+    """
+    if not results:
+        return
+
+    total = len(results)
+    # אתחול/קיבוע אינדקס בטווח תקין (חשוב אם רשימת התוצאות התקצרה בסריקה חדשה)
+    cur = st.session_state.get(index_key, 0)
+    if not isinstance(cur, int) or cur < 0 or cur >= total:
+        cur = 0
+        st.session_state[index_key] = 0
+
+    # שורת ניווט: חץ קודם (ימני ב-RTL) | אינדקס | חץ הבא
+    nav_prev, nav_label, nav_next = st.columns([1, 2, 1])
+    with nav_prev:
+        if st.button("◀ הקודם", key=f"{key_prefix}_prev", use_container_width=True, disabled=(cur <= 0)):
+            st.session_state[index_key] = max(0, cur - 1)
+            st.rerun()
+    with nav_label:
+        st.markdown(
+            f"<div style='text-align:center; font-weight:700; color:var(--txt-2); padding-top:6px;'>"
+            f"כרטיס {cur + 1} מתוך {total}</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_next:
+        if st.button("הבא ▶", key=f"{key_prefix}_next", use_container_width=True, disabled=(cur >= total - 1)):
+            st.session_state[index_key] = min(total - 1, cur + 1)
+            st.rerun()
+
+    # הכרטיס הנוכחי בלבד (אותו עיצוב כרטיס בדיוק)
+    _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
+
+
 def _render_top_picks() -> None:
     """מציג עד 5 מניות בהזדמנות מצוינת (Wyckoff + פונדמנטלי איכותי). לחיצה -> ניתוח מלא."""
     st.markdown("#### 🌟 ההזדמנויות הבולטות בשוק כרגע (Wyckoff + פונדמנטלי)")
@@ -922,9 +967,11 @@ def _render_top_picks() -> None:
                     )
                 prog.progress(1.0)
                 st.session_state.home_top_picks = out["results"]
+                st.session_state.home_card_index = 0  # איפוס דפדוף לסריקה חדשה
             else:
                 with st.spinner(f"סורק {len(pool)} מניות לאיתור שילובי איכות ({eta})..."):
                     st.session_state.home_top_picks = scan_top_opportunities(pool, top_n=5, mode="Balanced")
+                    st.session_state.home_card_index = 0
     with c2:
         st.caption(f"זמן משוער לסריקה: {eta}")
 
@@ -934,13 +981,18 @@ def _render_top_picks() -> None:
     elif not picks:
         st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק) ביקום הסריקה. נסה רוחב חיפוש גדול יותר, או שהשוק במצב המתנה.")
     else:
-        # Q23=D: רשימה אנכית (לא רשת) עם יותר פירוט בכל שורה
-        for i, p in enumerate(picks):
-            _render_pick_result_card(p, i, key_prefix="pick", dest_page="🏠 בית")
+        # תצוגת כרטיסיות עם דפדוף (Carousel) - כרטיס אחד בכל פעם עם חצים
+        _render_card_carousel(picks, key_prefix="home_pick", index_key="home_card_index", dest_page="🏠 בית")
 
     st.markdown("<div style='margin-top:10px;'></div>", unsafe_allow_html=True)
     if st.button("🗺️ אפשרות לסריקות נוספות (לפי סקטור)", use_container_width=True, key="more_scans_btn"):
         go_to_screen("🗺️ מפה מוסדית")
+
+    # --- כפתור סריקת שוק מלאה (כל השוק) - מפעיל אוטומטית את הסורק הכללי במפה ---
+    if st.button("🔭 סריקת שוק מלאה (כל השוק)", use_container_width=True, type="primary", key="home_full_market_scan"):
+        st.session_state.auto_run_market_scan = True
+        go_to_screen("🗺️ מפה מוסדית")
+    st.caption("סריקה רחבה על כל השוק האמריקאי עם Early Pruning.")
 
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
 
@@ -1164,6 +1216,12 @@ def _render_market_scanner() -> None:
         run_scan = st.button("🔭 הפעל סריקת שוק", type="primary", use_container_width=True, key="run_market_scan")
         st.caption(f"זמן משוער: {eta}")
 
+    # הפעלה אוטומטית כשהגענו מכפתור "סריקת שוק מלאה" שבמסך הבית (חד-פעמי)
+    auto_scan = st.session_state.get("auto_run_market_scan", False)
+    if auto_scan:
+        st.session_state.auto_run_market_scan = False
+        run_scan = True
+
     if run_scan:
         scanner = MarketScanner(_sc_module)
         prog_bar = st.progress(0.0)
@@ -1186,6 +1244,7 @@ def _render_market_scanner() -> None:
             )
         prog_bar.progress(1.0)
         st.session_state.market_scan_results = scan_out
+        st.session_state.scan_card_index = 0  # איפוס דפדוף לסריקה חדשה
 
     scan_out = st.session_state.get("market_scan_results")
     if scan_out:
@@ -1203,8 +1262,8 @@ def _render_market_scanner() -> None:
         if not results:
             st.info("לא נמצאו מניות שעברו את כל מסנני האיכות בסריקה זו.")
         else:
-            for i, p in enumerate(results):
-                _render_pick_result_card(p, i, key_prefix="mscan", dest_page="🏠 בית")
+            # תצוגת כרטיסיות עם דפדוף (Carousel) - זהה למסך הבית
+            _render_card_carousel(results, key_prefix="mscan", index_key="scan_card_index", dest_page="🏠 בית")
 
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
 
@@ -1295,6 +1354,26 @@ def screen_institutional_map() -> None:
             if st.button(f"🔍 סרוק מניות מעניינות ב{sector}", key=f"sector_scan_btn::{sector}", use_container_width=True):
                 if not SCOUT_CORE_AVAILABLE:
                     st.error("מודול הליבה חסר.")
+                elif MARKET_SCANNER_AVAILABLE:
+                    # אותו מנוע MarketScanner עם Early Pruning, מוגבל לטיקרים של הסקטור הזה
+                    scanner = MarketScanner(_sc_module)
+                    prog_sec = st.progress(0.0)
+                    status_sec = st.empty()
+
+                    def _sec_cb(done, total, ticker, stats):
+                        try:
+                            prog_sec.progress(min(1.0, done / max(1, total)))
+                            status_sec.caption(f"נסרקו {done}/{total} · עברו: {stats['passed']}")
+                        except Exception:
+                            pass
+
+                    with st.spinner(f"סורק {len(data['tickers'])} מניות ב{sector} (Early Pruning)..."):
+                        sec_out = scanner.scan_market(
+                            mode="balanced", max_tickers=len(data["tickers"]),
+                            universe=data["tickers"], top_n=6, progress_callback=_sec_cb,
+                        )
+                    prog_sec.progress(1.0)
+                    st.session_state[scan_key] = sec_out["results"]
                 else:
                     with st.spinner(f"סורק {len(data['tickers'])} מניות ב{sector}..."):
                         st.session_state[scan_key] = scan_top_opportunities(data["tickers"], top_n=6, mode="Balanced")
