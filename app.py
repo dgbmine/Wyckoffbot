@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V19.3 (Carousel Arrows Reverted to Proven st.columns + Negative-Margin Technique)
+INSTITUTIONAL SCOUT PRO V19.4 (True HTML-Embedded Overlay Arrows via query-param nav)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -469,50 +469,58 @@ def inject_css() -> None:
     }
 
     /* ============================================================
-       CAROUSEL - חצים על שולי הכרטיס דרך עמודות st.columns אמיתיות (קינון DOM
-       מובטח ע"י Streamlit) + margin שלילי שמושך אותן פיזית על גבי שולי הכרטיס.
-       זו הטכניקה היחידה שהוכחה כעובדת בפועל - position:absolute נכשל כי לא
-       היה לו "הורה ממוקם" אמיתי (החצים צפו לפינת העמוד, לא על הכרטיס).
+       CAROUSEL - חצים כ-Overlay אמיתי: קישורי <a> מוטמעים בתוך אותו DIV של
+       הכרטיס (.carousel-pick-card), ולכן position:absolute שלהם מתייחס נכון
+       לכרטיס עצמו (ההורה הממוקם האמיתי). זה ה-overlay האמיתי שביקש המשתמש -
+       החצים יושבים פיזית על שולי הכרטיס, ממורכזים אנכית, ולא יכולים "לצוף"
+       למקום אחר כי הם חלק בלתי נפרד מ-HTML של הכרטיס.
        ============================================================ */
     @keyframes carouselCardIn {
         from { opacity: 0; transform: translateY(6px) scale(0.985); }
         to   { opacity: 1; transform: translateY(0) scale(1); }
     }
-    /* שורת ה-columns מתמתחת לגובה אחיד (ברירת המחדל של flex), כך שעמודת החץ
-       תמיד בגובה הכרטיס - מאפשר מרכוז אנכי אמיתי בלי "מספר קסם". זו תוספת
-       בטוחה: align-items:stretch הוא כבר ברירת המחדל, לא משנה התנהגות קיימת. */
-    div[data-testid="stHorizontalBlock"] { align-items: stretch !important; }
-    .carousel-arrow-col {
-        height: 100%;
-        min-height: 220px;
-        display: flex !important;
-        align-items: center;
-        justify-content: center;
-        position: relative;
-        z-index: 10;
-    }
-    /* margin שלילי "מושך" את החץ פיזית על גבי שולי הכרטיס - "▶" על השול הימני
-       (כמו השול הירוק), "◀" על השול השמאלי המקביל - לא מוטה ע"י RTL כי margin
-       -left/-right הם פיזיים. */
-    .carousel-arrow-right { margin-left: -22px; }
-    .carousel-arrow-left  { margin-right: -22px; }
-    .carousel-arrow-col .stButton { width: 100%; }
-    .carousel-arrow-col .stButton > button {
-        font-size: 1.6rem !important; font-weight: 800 !important;
-        width: 58px !important; height: 58px !important; min-height: 58px !important;
-        border-radius: 50% !important; padding: 0 !important;
-        background: linear-gradient(155deg, var(--bg-3), var(--bg-2)) !important;
-        box-shadow: 0 4px 18px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.25) !important;
-        backdrop-filter: blur(2px);
-        transition: transform 0.2s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease, border-color 0.2s ease !important;
-    }
-    .carousel-arrow-col .stButton > button:hover {
-        border-color: var(--accent) !important;
-        box-shadow: 0 0 32px rgba(56,189,248,0.65), 0 6px 24px rgba(56,189,248,0.45) !important;
-        transform: scale(1.12);
-    }
-    .carousel-arrow-col .stButton > button:disabled { opacity: 0.25 !important; }
     .pick-card { min-height: 220px; }
+    /* הכרטיס בקרוסלה: position:relative + ריווח פנימי בצדדים כדי שהטקסט לא
+       יתנגש עם החצים, ו-overflow:visible כדי שה-glow של החצים יחרוג יפה. */
+    .carousel-pick-card {
+        position: relative !important;
+        padding-left: 70px !important;
+        padding-right: 70px !important;
+        overflow: visible !important;
+        animation: carouselCardIn 0.32s cubic-bezier(.2,.8,.2,1);
+    }
+    /* החץ עצמו - עיגול ממוקם absolute מול הכרטיס, ממורכז אנכית (top:50%) */
+    .carousel-nav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 30;
+        width: 58px; height: 58px;
+        display: flex; align-items: center; justify-content: center;
+        border-radius: 50%;
+        font-size: 1.55rem; font-weight: 800;
+        text-decoration: none !important; color: var(--txt-1) !important;
+        background: linear-gradient(155deg, var(--bg-3), var(--bg-2));
+        box-shadow: 0 4px 18px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.25);
+        border: 1px solid var(--line-strong);
+        backdrop-filter: blur(2px);
+        transition: transform 0.2s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease, border-color 0.2s ease;
+        cursor: pointer;
+    }
+    /* "◀" צמוד לשמאל הכרטיס, "▶" צמוד לימין - left/right פיזיים (לא מוטים ע"י RTL) */
+    .carousel-nav-left  { left: 8px; }
+    .carousel-nav-right { right: 8px; }
+    .carousel-nav:hover {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 32px rgba(56,189,248,0.7), 0 6px 24px rgba(56,189,248,0.5);
+        transform: translateY(-50%) scale(1.12);
+        color: var(--accent) !important;
+    }
+    /* חץ מנוטרל (קצה הרשימה) - עמום ולא לחיץ */
+    .carousel-nav-disabled {
+        opacity: 0.22; pointer-events: none; cursor: default;
+        box-shadow: none;
+    }
     .carousel-index-badge {
         text-align:center; font-weight: 700; color: var(--txt-2);
         background: var(--bg-1); border: 1px solid var(--line);
@@ -699,15 +707,15 @@ def inject_css() -> None:
         .narrative-box { padding: 16px 18px; }
         .float-back-wrap { bottom: 14px; left: 14px; }
         .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
-        /* כפתורי דפדוף Carousel גדולים ונוחים למגע במובייל - Overlay אמיתי על שולי הכרטיס */
+        /* חצי דפדוף Carousel גדולים ונוחים למגע במובייל - Overlay אמיתי בתוך הכרטיס */
         .stButton > button { min-height: 46px; font-size: 1.0rem; }
-        .carousel-arrow-col .stButton > button {
-            width: 56px !important; height: 56px !important; min-height: 56px !important;
-            font-size: 1.55rem !important;
+        .carousel-nav {
+            width: 56px; height: 56px; font-size: 1.5rem;
         }
-        .carousel-arrow-right { margin-left: -14px; }
-        .carousel-arrow-left  { margin-right: -14px; }
-        .carousel-arrow-col, .pick-card { min-height: 250px; }
+        .carousel-nav-left  { left: 4px; }
+        .carousel-nav-right { right: 4px; }
+        .carousel-pick-card { padding-left: 64px !important; padding-right: 64px !important; }
+        .pick-card { min-height: 250px; }
         .carousel-index-row { margin-top: 18px; }
         /* כפתורים עגולים במובייל (180-200px) עם טקסט גדול וברור, ורווח נדיב מסביב */
         .home-landing { padding: 22px 0 16px 0; }
@@ -1052,78 +1060,102 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
         go_to_screen(dest_page, p["ticker"])
 
 
+def _carousel_consume_query_nav(index_key: str, total: int) -> int:
+    """
+    קורא בקשת דפדוף שהגיעה דרך query param (מהחצים שהם קישורי <a> בתוך ה-HTML
+    של הכרטיס). מעדכן את index_key ב-session_state, מנקה את ה-param, ומחזיר את
+    האינדקס הנוכחי. שיטה זו יציבה: החצים הם חלק בלתי נפרד מ-HTML הכרטיס (Overlay
+    אמיתי), והניווט מתבצע צד-שרת דרך ה-URL בלי תלות בעטיפות של Streamlit.
+    """
+    cur = st.session_state.get(index_key, 0)
+    if not isinstance(cur, int) or cur < 0 or cur >= total:
+        cur = 0
+
+    try:
+        qp = st.query_params
+        raw = qp.get(index_key)
+        if raw is not None:
+            try:
+                requested = int(raw)
+                if 0 <= requested < total:
+                    cur = requested
+            except (ValueError, TypeError):
+                pass
+            # ניקוי ה-param כדי שרענון/ניווט עתידי לא "ייתקע" על ערך ישן
+            try:
+                del qp[index_key]
+            except Exception:
+                pass
+    except Exception:
+        # תאימות לאחור: אם st.query_params לא נתמך, פשוט ממשיכים עם cur הקיים
+        pass
+
+    st.session_state[index_key] = cur
+    return cur
+
+
 def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_page: str = "🏠 בית") -> None:
     """
-    תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם, עם חצים
-    הצמודים פיזית לשולי הכרטיס (ימני/שמאלי, דרך margin שלילי על עמודות st.columns
-    אמיתיות), ואינדקס "X מתוך Y" מעוצב. האינדקס נשמר ב-session_state תחת index_key.
+    תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם. החצים
+    (◀ ▶) הם Overlay אמיתי: הם מוטמעים *בתוך* אותו בלוק HTML של הכרטיס עצמו
+    (אלמנט DOM יחיד שבשליטה מלאה, ש-Streamlit לא יכול לפצל), וממוקמים
+    position:absolute מול ה-position:relative של הכרטיס. הם מנווטים דרך
+    query param (?index_key=N) שנקרא בחזרה ע"י st.query_params - צד-שרת ויציב.
 
-    הבהרה קריטית ליציבות: הלוגיקה כאן משנה אך ורק את index_key ב-session_state
-    וקוראת ל-st.rerun() - היא *לא* נוגעת ב-current_page / nav_request / handoff_ticker,
-    ולכן הדפדוף בין כרטיסים נשאר תמיד באותו מסך ולא יכול "לזרוק" למסך הבית.
-    הניווט למסך אחר קורה רק אם המשתמש לוחץ במפורש על כפתור "ניתוח מלא" שבתוך הכרטיס.
-    כל לחיצת חץ עטופה ב-try/except הגנתי: אם תתרחש שגיאה לא צפויה כלשהי (לדוגמה
-    שליפת מחיר שנכשלת), היא תוצג כהודעה באותו מסך - ולא תוכל לקרוס את כל הסקריפט
-    (קריסה כוללת היא התרחיש היחיד שבאמת היה יכול "להחזיר" משתמש למסך הבית
-    בעקבות רענון/חיבור מחדש של הדפדפן).
+    הבהרה קריטית ליציבות: הדפדוף משנה אך ורק את index_key (דרך ה-query param)
+    ו*לא* נוגע ב-current_page / nav_request / handoff_ticker, ולכן נשאר תמיד
+    באותו מסך ולא יכול "לזרוק" למסך הבית. הניווט למסך אחר קורה רק בלחיצה
+    מפורשת על כפתור "ניתוח מלא" (כפתור Streamlit אמיתי, מתחת לכרטיס).
     """
     if not results:
         return
 
     total = len(results)
-    # אתחול/קיבוע אינדקס בטווח תקין (חשוב אם רשימת התוצאות התקצרה בסריקה חדשה)
-    cur = st.session_state.get(index_key, 0)
-    if not isinstance(cur, int) or cur < 0 or cur >= total:
-        cur = 0
-        st.session_state[index_key] = 0
+    # קריאת בקשת דפדוף מה-URL (חצי ה-Overlay) + קיבוע אינדקס לטווח תקין
+    cur = _carousel_consume_query_nav(index_key, total)
 
-    # --- חצים על שולי הכרטיס דרך עמודות st.columns אמיתיות (קינון DOM מובטח
-    #     ע"י Streamlit - בניגוד ל-position:absolute שדרש "הורה ממוקם" אמיתי
-    #     שלא התקבל בפועל; החצים צפו לפינת העמוד, לא על הכרטיס - זה היה הבאג).
-    #     עמודת החץ הצמודה לכרטיס מקבלת margin שלילי שמושך אותה פיזית על גבי
-    #     שולי הכרטיס (ליד אותו השול הצבוע - הימני או השמאלי), ומרכוז אנכי
-    #     ע"י flex (שורת ה-columns כברירת מחדל "מתמתחת" לגובה האחיד הגבוה
-    #     ביותר - הכרטיס - כך שהחץ ממורכז נכון בלי תלות בגובה בפועל). ---
-    col_next, col_card, col_prev = st.columns([1, 6, 1])
+    p = results[cur]
+    price_html = render_price_inline(p["ticker"])
 
-    with col_next:
-        st.markdown("<div class='carousel-arrow-col carousel-arrow-right'>", unsafe_allow_html=True)
-        if st.button("▶", key=f"{key_prefix}_next", use_container_width=True,
-                    disabled=(cur >= total - 1), help="המניה הבאה"):
-            _ok = False
-            try:
-                st.session_state[index_key] = min(total - 1, cur + 1)
-                _ok = True
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-            if _ok:
-                st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
-        st.markdown("</div>", unsafe_allow_html=True)
+    # חצים כ-Overlay אמיתי: קישורי <a> בתוך אותו DIV של הכרטיס. target=_self
+    # כדי שהניווט יקרה באותו חלון (לא טאב חדש). disabled מיוצג ע"י היעדר href.
+    prev_attr = (f"href='?{index_key}={cur-1}' " if cur > 0 else "")
+    next_attr = (f"href='?{index_key}={cur+1}' " if cur < total - 1 else "")
+    prev_disabled = "" if cur > 0 else "carousel-nav-disabled"
+    next_disabled = "" if cur < total - 1 else "carousel-nav-disabled"
 
-    with col_card:
-        try:
-            _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
-        except Exception as exc:
-            st.error(f"שגיאה בהצגת הכרטיס: {exc}")
+    try:
+        st.markdown(
+            f"""<div class='pick-card carousel-pick-card' style='border-right:5px solid {p['color']}; border-top:none;'>
+                <a {prev_attr}target='_self' class='carousel-nav carousel-nav-left {prev_disabled}' title='המניה הקודמת'>◀</a>
+                <a {next_attr}target='_self' class='carousel-nav carousel-nav-right {next_disabled}' title='המניה הבאה'>▶</a>
+                <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
+                    <span class='pick-rank'>#{cur+1}</span>
+                    <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
+                    <span>{price_html}</span>
+                </div>
+                <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
+                <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
+                    · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
+                <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    except Exception as exc:
+        st.error(f"שגיאה בהצגת הכרטיס: {exc}")
 
-    with col_prev:
-        st.markdown("<div class='carousel-arrow-col carousel-arrow-left'>", unsafe_allow_html=True)
-        if st.button("◀", key=f"{key_prefix}_prev", use_container_width=True,
-                    disabled=(cur <= 0), help="המניה הקודמת"):
-            _ok = False
-            try:
-                st.session_state[index_key] = max(0, cur - 1)
-                _ok = True
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-            if _ok:
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
+    # אינדקס מעוצב
     st.markdown(
         f"<div class='carousel-index-row'><span class='carousel-index-badge'>כרטיס {cur + 1} מתוך {total}</span></div>",
         unsafe_allow_html=True,
     )
+
+    # כפתור "ניתוח מלא" - כפתור Streamlit אמיתי (צריך לוגיקת home_mode + ניווט)
+    if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"{key_prefix}_full_{p['ticker']}_{cur}", use_container_width=True):
+        if dest_page == "📈 Trading Scout":
+            # קביעת מצב הבית מראש ל-"results" כדי שכל דרך חזרה תנחת על הקרוסלה
+            st.session_state.home_mode = "results"
+        go_to_screen(dest_page, p["ticker"])
 
 
 def _render_top_picks() -> None:
