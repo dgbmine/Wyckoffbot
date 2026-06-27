@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V19.1 (True position:absolute Overlay Arrows + Mobile Polish + Lighter Money Rain)
+INSTITUTIONAL SCOUT PRO V19.2 (Real st.container Overlay Arrows + home_mode-Safe Back Navigation)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -450,8 +450,9 @@ def inject_css() -> None:
     .pick-card {
         background: linear-gradient(155deg, var(--bg-2), var(--bg-1));
         border: 1px solid var(--line); border-radius: var(--radius);
-        padding: 22px 24px; margin-bottom: 12px; height: 100%;
+        padding: 22px 24px; margin-bottom: 12px; height: 100%; min-height: 220px;
         transition: transform 0.25s cubic-bezier(.2,.8,.2,1), border-color 0.25s ease, box-shadow 0.25s ease;
+        animation: carouselCardIn 0.32s cubic-bezier(.2,.8,.2,1);
     }
     .pick-card:hover {
         transform: translateY(-4px);
@@ -476,16 +477,13 @@ def inject_css() -> None:
         from { opacity: 0; transform: translateY(6px) scale(0.985); }
         to   { opacity: 1; transform: translateY(0) scale(1); }
     }
-    /* carousel-stage הוא ה-position:relative היחיד שצריך - הכרטיס וה-overlay
-       של החצים הם כולם ילדים שלו, כך שהחצים ממורכזים אנכית תמיד נכון
-       (top:50% + translateY(-50%)) בלי תלות בגובה האמיתי של הכרטיס - אין יותר
-       "מספר קסם" שמנחש איפה מרכז הכרטיס נמצא. */
-    .carousel-stage {
-        position: relative;
-        min-height: 220px;
-    }
-    .carousel-card-wrap {
-        animation: carouselCardIn 0.32s cubic-bezier(.2,.8,.2,1);
+    /* carousel-stage: ה-position:relative היחיד שצריך, ממוקד דרך המחלקה האמיתית
+       שש-Streamlit מוסיף ל-st.container(key=...) (st-key-<key>). זה ה-overlay
+       האמיתי - הכרטיס והחצים הם ילדים אמיתיים שלו ב-DOM (לא "תג HTML פתוח"
+       חוצה-קריאות, שלא יוצר קינון אמיתי ב-Streamlit וגרם לחצים להיראות מתחת
+       לכרטיס במקום עליו). הסלקטור תופס לפי תת-מחרוזת כך שיעבוד לכל key_prefix. */
+    div[class*="carousel_stage"] {
+        position: relative !important;
         min-height: 220px;
     }
     .carousel-arrow-overlay {
@@ -706,7 +704,7 @@ def inject_css() -> None:
         }
         .carousel-arrow-overlay-right { right: -10px; }
         .carousel-arrow-overlay-left  { left: -10px; }
-        .carousel-stage, .carousel-card-wrap { min-height: 250px; }
+        div[class*="carousel_stage"], .pick-card { min-height: 250px; }
         .carousel-index-row { margin-top: 18px; }
         /* כפתורים עגולים במובייל (180-200px) עם טקסט גדול וברור, ורווח נדיב מסביב */
         .home-landing { padding: 22px 0 16px 0; }
@@ -1042,6 +1040,12 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
         unsafe_allow_html=True,
     )
     if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"{key_prefix}_{p['ticker']}_{idx}", use_container_width=True):
+        if dest_page == "📈 Trading Scout":
+            # תיקון קריטי: קובעים את מצב הבית מראש ל-"results" (קרוסלה) כדי שכל דרך
+            # חזרה - כפתור הניווט הכללי "⬅️ חזור למסך הקודם", הכפתור הצף, או
+            # "⬅️ חזור לקרוסלה" הספציפי - תנחת תמיד על הקרוסלה ולא על מסך הנחיתה
+            # (שני העיגולים) או על ראש העמוד.
+            st.session_state.home_mode = "results"
         go_to_screen(dest_page, p["ticker"])
 
 
@@ -1070,44 +1074,48 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         cur = 0
         st.session_state[index_key] = 0
 
-    # --- carousel-stage: ה-position:relative היחיד. הכרטיס וה-overlay של החצים
-    #     הם ילדים שלו - כך שהחצים ממורכזים אנכית אמיתי (top:50%) בלי "מספר קסם". ---
-    st.markdown("<div class='carousel-stage'>", unsafe_allow_html=True)
-
-    st.markdown("<div class='carousel-card-wrap'>", unsafe_allow_html=True)
+    # --- carousel-stage: חייב להיות st.container() אמיתי (לא HTML פתוח דרך
+    #     st.markdown) כדי שהכרטיס והחצים יהיו ילדים אמיתיים שלו ב-DOM, ו-
+    #     position:absolute על החצים יתייחס נכון לגבולות הכרטיס. שתי קריאות
+    #     st.markdown נפרדות עם "תג פתוח" אינן יוצרות קינון אמיתי ב-Streamlit -
+    #     זה היה הבאג: החצים נראו מתחת לכרטיס ולא overlay עליו. ---
     try:
-        _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
-    except Exception as exc:
-        st.error(f"שגיאה בהצגת הכרטיס: {exc}")
-    st.markdown("</div>", unsafe_allow_html=True)
+        stage = st.container(key=f"{key_prefix}_carousel_stage")
+    except TypeError:
+        # תאימות לאחור: גרסת Streamlit ישנה שלא תומכת ב-key על container
+        stage = st.container()
 
-    # חץ "▶" (הבא) - Overlay אמיתי, צמוד לימין הכרטיס
-    st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-right'>", unsafe_allow_html=True)
-    if st.button("▶", key=f"{key_prefix}_next", disabled=(cur >= total - 1), help="המניה הבאה"):
-        _ok = False
+    with stage:
         try:
-            st.session_state[index_key] = min(total - 1, cur + 1)
-            _ok = True
+            _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
         except Exception as exc:
-            st.error(f"שגיאה במעבר כרטיס: {exc}")
-        if _ok:
-            st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
-    st.markdown("</div>", unsafe_allow_html=True)
+            st.error(f"שגיאה בהצגת הכרטיס: {exc}")
 
-    # חץ "◀" (הקודם) - Overlay אמיתי, צמוד לשמאל הכרטיס
-    st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-left'>", unsafe_allow_html=True)
-    if st.button("◀", key=f"{key_prefix}_prev", disabled=(cur <= 0), help="המניה הקודמת"):
-        _ok = False
-        try:
-            st.session_state[index_key] = max(0, cur - 1)
-            _ok = True
-        except Exception as exc:
-            st.error(f"שגיאה במעבר כרטיס: {exc}")
-        if _ok:
-            st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+        # חץ "▶" (הבא) - Overlay אמיתי, צמוד לימין הכרטיס (ילד אמיתי של stage)
+        st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-right'>", unsafe_allow_html=True)
+        if st.button("▶", key=f"{key_prefix}_next", disabled=(cur >= total - 1), help="המניה הבאה"):
+            _ok = False
+            try:
+                st.session_state[index_key] = min(total - 1, cur + 1)
+                _ok = True
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+            if _ok:
+                st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)  # /carousel-stage
+        # חץ "◀" (הקודם) - Overlay אמיתי, צמוד לשמאל הכרטיס (ילד אמיתי של stage)
+        st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-left'>", unsafe_allow_html=True)
+        if st.button("◀", key=f"{key_prefix}_prev", disabled=(cur <= 0), help="המניה הקודמת"):
+            _ok = False
+            try:
+                st.session_state[index_key] = max(0, cur - 1)
+                _ok = True
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+            if _ok:
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown(
         f"<div class='carousel-index-row'><span class='carousel-index-badge'>כרטיס {cur + 1} מתוך {total}</span></div>",
