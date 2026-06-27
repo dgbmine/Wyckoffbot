@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V18.8 (True Absolute-Overlay Carousel Arrows + Rerun-Safe Hardening)
+INSTITUTIONAL SCOUT PRO V19.1 (True position:absolute Overlay Arrows + Mobile Polish + Lighter Money Rain)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -476,46 +476,42 @@ def inject_css() -> None:
         from { opacity: 0; transform: translateY(6px) scale(0.985); }
         to   { opacity: 1; transform: translateY(0) scale(1); }
     }
+    /* carousel-stage הוא ה-position:relative היחיד שצריך - הכרטיס וה-overlay
+       של החצים הם כולם ילדים שלו, כך שהחצים ממורכזים אנכית תמיד נכון
+       (top:50% + translateY(-50%)) בלי תלות בגובה האמיתי של הכרטיס - אין יותר
+       "מספר קסם" שמנחש איפה מרכז הכרטיס נמצא. */
+    .carousel-stage {
+        position: relative;
+        min-height: 220px;
+    }
     .carousel-card-wrap {
         animation: carouselCardIn 0.32s cubic-bezier(.2,.8,.2,1);
         min-height: 220px;
-        position: relative;
     }
-    /* שורת החצים נמשכת כלפי מעלה לתוך שטח הכרטיס (overlay אמיתי) ולא תופסת גובה משלה */
-    .carousel-arrow-row {
-        position: relative;
-        height: 0;
-        z-index: 20;
-        pointer-events: none;   /* רק הכפתורים עצמם לחיצים, לא הרקע השקוף */
+    .carousel-arrow-overlay {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 30;
     }
-    .carousel-arrow-row [data-testid="column"] { display: flex; align-items: center; }
-    .carousel-arrow-col {
-        pointer-events: auto;
-        display: flex !important;
-        align-items: center;
-        justify-content: center;
-        /* מושך את החצים אל מרכז גובה הכרטיס שמתחת */
-        transform: translateY(130px);
-        position: relative;
-        z-index: 25;
-    }
-    .carousel-arrow-right { justify-content: flex-start; padding-left: 4px; }
-    .carousel-arrow-left { justify-content: flex-end; padding-right: 4px; }
-    .carousel-arrow-col .stButton { width: auto; }
-    .carousel-arrow-col .stButton > button {
-        font-size: 1.5rem !important; font-weight: 800 !important;
-        width: 52px !important; height: 52px !important; min-height: 52px !important;
+    /* right/left פיזיים (לא מוטים ע"י RTL) - "▶" צמוד לימין הכרטיס, "◀" צמוד לשמאלו */
+    .carousel-arrow-overlay-right { right: -18px; }
+    .carousel-arrow-overlay-left  { left: -18px; }
+    .carousel-arrow-overlay .stButton > button {
+        font-size: 1.6rem !important; font-weight: 800 !important;
+        width: 58px !important; height: 58px !important; min-height: 58px !important;
         border-radius: 50% !important; padding: 0 !important;
         background: linear-gradient(155deg, var(--bg-3), var(--bg-2)) !important;
-        box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 1px rgba(56,189,248,0.2) !important;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.25) !important;
         backdrop-filter: blur(2px);
+        transition: transform 0.2s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease, border-color 0.2s ease !important;
     }
-    .carousel-arrow-col .stButton > button:hover {
+    .carousel-arrow-overlay .stButton > button:hover {
         border-color: var(--accent) !important;
-        box-shadow: 0 0 28px rgba(56,189,248,0.6), 0 6px 22px rgba(56,189,248,0.4) !important;
-        transform: scale(1.1);
+        box-shadow: 0 0 32px rgba(56,189,248,0.65), 0 6px 24px rgba(56,189,248,0.45) !important;
+        transform: scale(1.12);
     }
-    .carousel-arrow-col .stButton > button:disabled { opacity: 0.28 !important; }
+    .carousel-arrow-overlay .stButton > button:disabled { opacity: 0.25 !important; }
     .carousel-index-badge {
         text-align:center; font-weight: 700; color: var(--txt-2);
         background: var(--bg-1); border: 1px solid var(--line);
@@ -523,6 +519,74 @@ def inject_css() -> None:
         font-size: 0.85rem; letter-spacing: 0.5px; margin: 10px auto 0 auto;
     }
     .carousel-index-row { text-align: center; margin-top: 12px; }
+
+    /* ============================================================
+       HOME LANDING - שני כפתורים עגולים גדולים + אנימציית שטרות
+       ============================================================ */
+    .home-landing { text-align: center; padding: 30px 0 10px 0; }
+    .home-landing-title {
+        font-size: 2.0rem; font-weight: 800; color: var(--txt-1);
+        margin-bottom: 8px; letter-spacing: -0.5px;
+    }
+    .home-landing-sub { font-size: 1.0rem; color: var(--txt-2); margin-bottom: 36px; }
+    .home-orb-label {
+        text-align: center; font-size: 1.15rem; font-weight: 800;
+        margin-top: 14px; color: var(--txt-1);
+    }
+    .home-orb-desc { text-align:center; font-size: 0.85rem; color: var(--txt-3); margin-top: 4px; }
+
+    .orb-check .stButton > button, .orb-find .stButton > button {
+        width: 230px !important; height: 230px !important; border-radius: 50% !important;
+        font-size: 1.6rem !important; font-weight: 800 !important; line-height: 1.3 !important;
+        border: none !important; color: #04121f !important;
+        margin: 0 auto !important; display: block !important;
+        transition: transform 0.25s cubic-bezier(.2,.8,.2,1), box-shadow 0.25s ease, filter 0.2s ease !important;
+        white-space: pre-line !important;
+    }
+    .orb-check .stButton > button {
+        background: radial-gradient(circle at 35% 30%, #5eead4, #0ea5e9) !important;
+        box-shadow: 0 14px 50px rgba(14,165,233,0.5), inset 0 -8px 22px rgba(0,0,0,0.18) !important;
+    }
+    .orb-check .stButton > button:hover {
+        transform: translateY(-6px) scale(1.04); filter: brightness(1.08);
+        box-shadow: 0 22px 64px rgba(14,165,233,0.65), inset 0 -8px 22px rgba(0,0,0,0.18) !important;
+    }
+    .orb-find .stButton > button {
+        background: radial-gradient(circle at 35% 30%, #c084fc, #d4af37) !important;
+        color: #1a1206 !important;
+        box-shadow: 0 14px 50px rgba(192,132,252,0.5), inset 0 -8px 22px rgba(0,0,0,0.2) !important;
+    }
+    .orb-find .stButton > button:hover {
+        transform: translateY(-6px) scale(1.04); filter: brightness(1.08);
+        box-shadow: 0 22px 64px rgba(212,175,55,0.65), inset 0 -8px 22px rgba(0,0,0,0.2) !important;
+    }
+
+    .find-loader-wrap { text-align:center; padding: 20px 0; position: relative; }
+    .find-loader {
+        width: 230px; height: 230px; border-radius: 50%; margin: 0 auto;
+        background: radial-gradient(circle at 35% 30%, #c084fc, #d4af37);
+        display: flex; align-items: center; justify-content: center;
+        box-shadow: 0 14px 60px rgba(212,175,55,0.6);
+        position: relative; overflow: hidden;
+        animation: findPulse 1.6s ease-in-out infinite;
+    }
+    @keyframes findPulse {
+        0%,100% { box-shadow: 0 14px 60px rgba(212,175,55,0.5); }
+        50%     { box-shadow: 0 14px 80px rgba(212,175,55,0.9); }
+    }
+    .find-pct { font-size: 3.4rem; font-weight: 800; color: #1a1206; z-index:2; }
+
+    .money-rain { position: relative; height: 0; overflow: visible; pointer-events:none; }
+    .money-bill {
+        position: absolute; top: -40px; font-size: 1.8rem;
+        animation: moneyFall linear infinite;
+    }
+    @keyframes moneyFall {
+        0%   { transform: translateY(-40px) rotate(0deg); opacity: 0; }
+        10%  { opacity: 1; }
+        90%  { opacity: 1; }
+        100% { transform: translateY(420px) rotate(360deg); opacity: 0; }
+    }
 
     /* ============================================================
        FUNDAMENTAL screen
@@ -634,14 +698,28 @@ def inject_css() -> None:
         .narrative-box { padding: 16px 18px; }
         .float-back-wrap { bottom: 14px; left: 14px; }
         .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
-        /* כפתורי דפדוף Carousel גדולים ונוחים למגע במובייל - Overlay על שולי הכרטיס */
+        /* כפתורי דפדוף Carousel גדולים ונוחים למגע במובייל - Overlay אמיתי על שולי הכרטיס */
         .stButton > button { min-height: 46px; font-size: 1.0rem; }
-        .carousel-arrow-col .stButton > button {
-            width: 48px !important; height: 48px !important; min-height: 48px !important;
-            font-size: 1.4rem !important;
+        .carousel-arrow-overlay .stButton > button {
+            width: 56px !important; height: 56px !important; min-height: 56px !important;
+            font-size: 1.55rem !important;
         }
-        .carousel-card-wrap { min-height: 250px; }
-        .carousel-arrow-col { transform: translateY(140px); }
+        .carousel-arrow-overlay-right { right: -10px; }
+        .carousel-arrow-overlay-left  { left: -10px; }
+        .carousel-stage, .carousel-card-wrap { min-height: 250px; }
+        .carousel-index-row { margin-top: 18px; }
+        /* כפתורים עגולים במובייל (180-200px) עם טקסט גדול וברור, ורווח נדיב מסביב */
+        .home-landing { padding: 22px 0 16px 0; }
+        .home-landing-sub { margin-bottom: 44px; }
+        .orb-check .stButton > button, .orb-find .stButton > button {
+            width: 190px !important; height: 190px !important; font-size: 1.35rem !important;
+            line-height: 1.4 !important;
+        }
+        .home-orb-label { font-size: 1.25rem; margin-top: 18px; }
+        .home-orb-desc { font-size: 0.9rem; padding: 0 8px; margin-top: 8px; }
+        .find-loader { width: 190px; height: 190px; }
+        .find-pct { font-size: 2.8rem; }
+        .home-landing-title { font-size: 1.5rem; }
     }
 
     /* nav */
@@ -739,6 +817,12 @@ def init_session_state() -> None:
         st.session_state.scan_card_index = 0        # אינדקס דפדוף כרטיסיות בסריקת שוק
     if "auto_run_market_scan" not in st.session_state:
         st.session_state.auto_run_market_scan = False  # טריגר חד-פעמי מכפתור "סריקת שוק מלאה" בבית
+    if "home_mode" not in st.session_state:
+        st.session_state.home_mode = "landing"   # landing (שני כפתורים) / check (סריקה ידנית) / results (קרוסלה)
+    if "home_scan_results" not in st.session_state:
+        st.session_state.home_scan_results = None  # תוצאות "תמצא לי" לשמירה בין ריצות
+    if "run_find_scan" not in st.session_state:
+        st.session_state.run_find_scan = False     # טריגר חד-פעמי להפעלת סריקת "תמצא לי"
 
 
 # יקום סריקה למסך הבית - 24 מניות מובילות (מהיר)
@@ -986,43 +1070,45 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         cur = 0
         st.session_state[index_key] = 0
 
-    # --- שכבת חצים (Overlay) - מרונדרת ראשונה עם גובה 0, כך שהכרטיס שמתחת
-    #     "עולה" אליה והחצים יושבים פיזית על גבי שולי הכרטיס (z-index גבוה). ---
-    st.markdown("<div class='carousel-arrow-row'>", unsafe_allow_html=True)
-    a_next, a_mid, a_prev = st.columns([1, 6, 1])
-    with a_next:
-        st.markdown("<div class='carousel-arrow-col carousel-arrow-right'>", unsafe_allow_html=True)
-        if st.button("▶", key=f"{key_prefix}_next", disabled=(cur >= total - 1), help="המניה הבאה"):
-            _ok = False
-            try:
-                st.session_state[index_key] = min(total - 1, cur + 1)
-                _ok = True
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-            if _ok:
-                st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
-        st.markdown("</div>", unsafe_allow_html=True)
-    with a_prev:
-        st.markdown("<div class='carousel-arrow-col carousel-arrow-left'>", unsafe_allow_html=True)
-        if st.button("◀", key=f"{key_prefix}_prev", disabled=(cur <= 0), help="המניה הקודמת"):
-            _ok = False
-            try:
-                st.session_state[index_key] = max(0, cur - 1)
-                _ok = True
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-            if _ok:
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)  # /carousel-arrow-row
+    # --- carousel-stage: ה-position:relative היחיד. הכרטיס וה-overlay של החצים
+    #     הם ילדים שלו - כך שהחצים ממורכזים אנכית אמיתי (top:50%) בלי "מספר קסם". ---
+    st.markdown("<div class='carousel-stage'>", unsafe_allow_html=True)
 
-    # --- הכרטיס עצמו (ברוחב מלא), והחצים מעליו כ-Overlay ---
     st.markdown("<div class='carousel-card-wrap'>", unsafe_allow_html=True)
     try:
         _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
     except Exception as exc:
         st.error(f"שגיאה בהצגת הכרטיס: {exc}")
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # חץ "▶" (הבא) - Overlay אמיתי, צמוד לימין הכרטיס
+    st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-right'>", unsafe_allow_html=True)
+    if st.button("▶", key=f"{key_prefix}_next", disabled=(cur >= total - 1), help="המניה הבאה"):
+        _ok = False
+        try:
+            st.session_state[index_key] = min(total - 1, cur + 1)
+            _ok = True
+        except Exception as exc:
+            st.error(f"שגיאה במעבר כרטיס: {exc}")
+        if _ok:
+            st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # חץ "◀" (הקודם) - Overlay אמיתי, צמוד לשמאל הכרטיס
+    st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-left'>", unsafe_allow_html=True)
+    if st.button("◀", key=f"{key_prefix}_prev", disabled=(cur <= 0), help="המניה הקודמת"):
+        _ok = False
+        try:
+            st.session_state[index_key] = max(0, cur - 1)
+            _ok = True
+        except Exception as exc:
+            st.error(f"שגיאה במעבר כרטיס: {exc}")
+        if _ok:
+            st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)  # /carousel-stage
+
     st.markdown(
         f"<div class='carousel-index-row'><span class='carousel-index-badge'>כרטיס {cur + 1} מתוך {total}</span></div>",
         unsafe_allow_html=True,
@@ -1156,7 +1242,125 @@ def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phas
         st.caption("אסטרטגיית מסחר = תוכנית כניסה/סטופ/יעדים. ניתוח פונדמנטלי מלא = טבלת מכפילים מפורטת והסברים.")
 
 
+def _render_find_money_animation(pct: int) -> None:
+    """עיגול טעינה גדול עם אחוזים גדולים וברורים + אנימציית שטרות נופלים קלה (לשלב 'תמצא לי')."""
+    bills = ""
+    # הופחת מ-8 ל-5 שטרות, ומשכים קוצרו - אנימציה חלקה וקלה יותר לדפדפן
+    positions = [12, 30, 50, 70, 88]
+    durs = [1.6, 1.9, 1.7, 2.0, 1.8]
+    emojis = ["💵", "💰", "💵", "🪙", "💸"]
+    for i, left in enumerate(positions):
+        bills += (f"<span class='money-bill' style='left:{left}%; "
+                  f"animation-duration:{durs[i]}s; animation-delay:{i*0.15:.2f}s;'>{emojis[i]}</span>")
+    st.markdown(f"<div class='money-rain'>{bills}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='find-loader-wrap'><div class='find-loader'><span class='find-pct'>{pct}%</span></div>"
+        f"<div class='home-orb-desc' style='margin-top:16px; font-size:1.0rem;'>סורק את כל השוק עם Early Pruning...</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _run_find_scan() -> None:
+    """מריץ סריקת שוק מלאה עם אנימציית שטרות + אחוזי התקדמות, ושומר תוצאות ב-session_state."""
+    universe = _build_market_universe()
+    anim_slot = st.empty()
+
+    if not MARKET_SCANNER_AVAILABLE:
+        with anim_slot.container():
+            st.error("מנוע הסריקה אינו זמין כרגע.")
+        st.session_state.home_scan_results = []
+        return
+
+    scanner = MarketScanner(_sc_module)
+
+    def _cb(done, total, ticker, stats):
+        try:
+            pct = int(min(100, done / max(1, total) * 100))
+            with anim_slot.container():
+                _render_find_money_animation(pct)
+        except Exception:
+            pass
+
+    try:
+        out = scanner.scan_market(
+            mode="balanced", max_tickers=min(len(universe), 1500),
+            universe=universe, top_n=20, progress_callback=_cb,
+        )
+        st.session_state.home_scan_results = out["results"]
+        st.session_state.scan_card_index = 0
+    except Exception as exc:
+        st.session_state.home_scan_results = []
+        anim_slot.error(f"⚠️ שגיאה בסריקה: {exc}")
+        return
+    anim_slot.empty()
+
+
 def screen_home() -> None:
+    mode = st.session_state.get("home_mode", "landing")
+
+    # ===================== מצב נחיתה: שני כפתורים עגולים =====================
+    if mode == "landing":
+        st.markdown(
+            "<div class='home-landing'>"
+            "<div class='home-landing-title'>📈 Wyckoff Institutional Analyst</div>"
+            "<div class='home-landing-sub'>רדאר הכסף החכם - מה תרצה לעשות?</div>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        _c1, col_check, _cmid, col_find, _c2 = st.columns([1, 2, 0.4, 2, 1])
+        with col_check:
+            st.markdown("<div class='orb-check'>", unsafe_allow_html=True)
+            if st.button("🔍\nתבדוק לי", key="orb_check_btn"):
+                st.session_state.home_mode = "check"
+                st.rerun()
+            st.markdown("</div><div class='home-orb-label'>תבדוק לי</div>"
+                        "<div class='home-orb-desc'>הזן טיקר וקבל ניתוח Wyckoff + פונדמנטלי מלא</div>",
+                        unsafe_allow_html=True)
+        with col_find:
+            st.markdown("<div class='orb-find'>", unsafe_allow_html=True)
+            if st.button("💰\nתמצא לי", key="orb_find_btn"):
+                st.session_state.home_mode = "results"
+                st.session_state.run_find_scan = True
+                st.rerun()
+            st.markdown("</div><div class='home-orb-label'>תמצא לי</div>"
+                        "<div class='home-orb-desc'>סריקת שוק מלאה - המערכת תמצא עבורך את ההזדמנויות</div>",
+                        unsafe_allow_html=True)
+        return
+
+    # ===================== מצב תוצאות: אנימציה + קרוסלה =====================
+    if mode == "results":
+        top_l, top_r = st.columns([3, 1])
+        with top_r:
+            if st.button("⬅️ חזרה לתפריט", key="results_back_home", use_container_width=True):
+                st.session_state.home_mode = "landing"
+                st.rerun()
+
+        if st.session_state.get("run_find_scan", False):
+            st.session_state.run_find_scan = False
+            st.markdown("<div class='home-landing-title' style='text-align:center;'>💰 מחפש עבורך הזדמנויות...</div>", unsafe_allow_html=True)
+            _run_find_scan()
+            st.rerun()  # הסריקה הסתיימה - ריצה מחדש נקייה שתציג את הקרוסלה
+
+        results = st.session_state.get("home_scan_results")
+        st.markdown("<div class='home-landing-title' style='text-align:center;'>🌟 ההזדמנויות שנמצאו עבורך</div>", unsafe_allow_html=True)
+        if results is None:
+            st.info("טוען...")
+        elif not results:
+            st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק). נסה שוב מאוחר יותר.")
+        else:
+            st.caption(f"נמצאו {len(results)} מניות איכותיות. דפדף בין הכרטיסים ולחץ 'ניתוח מלא' למעבר לתוכנית מסחר.")
+            # לחיצה על כרטיס -> Trading Scout (ניתוח Wyckoff + פונדמנטלי + תוכנית מסחר)
+            _render_card_carousel(results, key_prefix="find_scan", index_key="scan_card_index", dest_page="📈 Trading Scout")
+        return
+
+    # ===================== מצב בדיקה ידנית (הזרימה המקורית המלאה) =====================
+    # כותרת + כפתור חזרה לתפריט
+    back_l, back_r = st.columns([3, 1])
+    with back_r:
+        if st.button("⬅️ חזרה לתפריט", key="check_back_home", use_container_width=True):
+            st.session_state.home_mode = "landing"
+            st.rerun()
+
     st.markdown("### 🏠 Wyckoff Analyst - רדאר הכסף החכם")
 
     st.markdown("""
@@ -1707,6 +1911,14 @@ def screen_fundamental() -> None:
                 st.info("לא נמצאו מניות העונות לקריטריונים (זולות פונדמנטלית + איסוף מוסדי סביר).")
 
 def screen_trading_scout() -> None:
+    # כפתור חזרה לקרוסלה - מוצג רק אם הגענו מקרוסלת "תמצא לי" (יש תוצאות שמורות)
+    if st.session_state.get("home_scan_results"):
+        _bk_l, _bk_r = st.columns([3, 1])
+        with _bk_r:
+            if st.button("⬅️ חזור לקרוסלה", key="ts_back_to_carousel", use_container_width=True):
+                st.session_state.home_mode = "results"
+                go_to_screen("🏠 בית")
+
     st.markdown("### 📈 Trading Scout - תכנון עסקאות ובדיקת הסתברויות")
     st.info("⚠️ **הבהרה קריטית:** זהו כלי עזר אנליטי אוטומטי המעריך הסתברויות לאיסוף מוסדי. אינו מהווה תחליף לניהול סיכונים עצמאי או ייעוץ.")
     
