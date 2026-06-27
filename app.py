@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V18.5 (Full-Market Scan Button + Sector MarketScanner + Card Carousel)
+INSTITUTIONAL SCOUT PRO V18.8 (True Absolute-Overlay Carousel Arrows + Rerun-Safe Hardening)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -330,24 +330,29 @@ def inject_css() -> None:
     [data-testid="stMetricLabel"] { color: var(--txt-2) !important; font-weight: 500 !important; }
     [data-testid="stMetricDelta"] { color: var(--pos-soft) !important; }
 
-    /* ---------- Buttons ---------- */
+    /* ---------- Buttons (Million Dollar Polish) ---------- */
     .stButton > button {
         border-radius: 12px !important; font-weight: 600 !important;
         border: 1px solid var(--line-strong) !important;
         background: var(--bg-2) !important; color: var(--txt-1) !important;
-        transition: all 0.18s ease !important;
+        transition: all 0.22s cubic-bezier(.2,.8,.2,1) !important;
     }
     .stButton > button:hover {
         border-color: var(--accent) !important;
         background: var(--bg-3) !important;
-        transform: translateY(-1px);
+        transform: translateY(-2px);
+        box-shadow: 0 6px 18px rgba(56,189,248,0.22) !important;
     }
+    .stButton > button:active { transform: translateY(0); }
     .stButton > button[kind="primary"] {
         background: linear-gradient(135deg, #0ea5e9, #38bdf8) !important;
-        color: #04121f !important; border: none !important; font-weight: 700 !important;
-        box-shadow: 0 6px 20px rgba(56,189,248,0.25) !important;
+        color: #04121f !important; border: none !important; font-weight: 800 !important;
+        box-shadow: 0 8px 28px rgba(56,189,248,0.35), 0 0 0 1px rgba(56,189,248,0.25) !important;
     }
-    .stButton > button[kind="primary"]:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .stButton > button[kind="primary"]:hover {
+        filter: brightness(1.1); transform: translateY(-2px);
+        box-shadow: 0 12px 36px rgba(56,189,248,0.5), 0 0 0 1px rgba(56,189,248,0.4) !important;
+    }
 
     /* selectbox / radio / inputs */
     .stTextInput input, .stSelectbox div[data-baseweb="select"] > div {
@@ -445,18 +450,79 @@ def inject_css() -> None:
     .pick-card {
         background: linear-gradient(155deg, var(--bg-2), var(--bg-1));
         border: 1px solid var(--line); border-radius: var(--radius);
-        padding: 18px 20px; margin-bottom: 12px; height: 100%;
-        transition: transform 0.2s ease, border-color 0.2s ease;
+        padding: 22px 24px; margin-bottom: 12px; height: 100%;
+        transition: transform 0.25s cubic-bezier(.2,.8,.2,1), border-color 0.25s ease, box-shadow 0.25s ease;
     }
-    .pick-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+    .pick-card:hover {
+        transform: translateY(-4px);
+        border-color: var(--accent);
+        box-shadow: 0 14px 38px rgba(56,189,248,0.22), 0 0 0 1px rgba(56,189,248,0.15);
+    }
     .pick-rank { font-family:'Inter'; font-size: 0.72rem; color: var(--txt-3); font-weight: 800; letter-spacing: 1.5px; }
     .pick-ticker { font-family:'Inter'; font-size: 1.7rem; font-weight: 800; color: var(--txt-1); line-height: 1.05; margin: 2px 0; }
-    .pick-headline { font-size: 0.92rem; font-weight: 700; margin: 8px 0 8px 0; line-height:1.4; }
-    .pick-meta { font-size: 0.8rem; color: var(--txt-2); line-height: 1.65; }
+    .pick-headline { font-size: 0.92rem; font-weight: 700; margin: 12px 0 12px 0; line-height:1.5; }
+    .pick-meta { font-size: 0.8rem; color: var(--txt-2); line-height: 1.8; margin-bottom: 6px; }
     .pick-score-pill {
         display:inline-block; background: rgba(56,189,248,0.12); color: var(--accent);
-        border-radius: 14px; padding: 3px 12px; font-size: 0.78rem; font-weight: 700; margin-top: 10px;
+        border-radius: 14px; padding: 5px 14px; font-size: 0.78rem; font-weight: 700; margin-top: 14px;
     }
+
+    /* ============================================================
+       CAROUSEL - חצים כ-Overlay ממשי על שולי הכרטיס (לא בשורה מעליו),
+       עם גובה מינימלי קבוע לכרטיס ולעמודת החץ - כך שהם תמיד מיושרים
+       זהה בין כרטיסים שונים (מונע "קפיצת" מיקום שעלולה לגרום ללחיצה שגויה).
+       ============================================================ */
+    @keyframes carouselCardIn {
+        from { opacity: 0; transform: translateY(6px) scale(0.985); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .carousel-card-wrap {
+        animation: carouselCardIn 0.32s cubic-bezier(.2,.8,.2,1);
+        min-height: 220px;
+        position: relative;
+    }
+    /* שורת החצים נמשכת כלפי מעלה לתוך שטח הכרטיס (overlay אמיתי) ולא תופסת גובה משלה */
+    .carousel-arrow-row {
+        position: relative;
+        height: 0;
+        z-index: 20;
+        pointer-events: none;   /* רק הכפתורים עצמם לחיצים, לא הרקע השקוף */
+    }
+    .carousel-arrow-row [data-testid="column"] { display: flex; align-items: center; }
+    .carousel-arrow-col {
+        pointer-events: auto;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        /* מושך את החצים אל מרכז גובה הכרטיס שמתחת */
+        transform: translateY(130px);
+        position: relative;
+        z-index: 25;
+    }
+    .carousel-arrow-right { justify-content: flex-start; padding-left: 4px; }
+    .carousel-arrow-left { justify-content: flex-end; padding-right: 4px; }
+    .carousel-arrow-col .stButton { width: auto; }
+    .carousel-arrow-col .stButton > button {
+        font-size: 1.5rem !important; font-weight: 800 !important;
+        width: 52px !important; height: 52px !important; min-height: 52px !important;
+        border-radius: 50% !important; padding: 0 !important;
+        background: linear-gradient(155deg, var(--bg-3), var(--bg-2)) !important;
+        box-shadow: 0 4px 18px rgba(0,0,0,0.45), 0 0 0 1px rgba(56,189,248,0.2) !important;
+        backdrop-filter: blur(2px);
+    }
+    .carousel-arrow-col .stButton > button:hover {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 28px rgba(56,189,248,0.6), 0 6px 22px rgba(56,189,248,0.4) !important;
+        transform: scale(1.1);
+    }
+    .carousel-arrow-col .stButton > button:disabled { opacity: 0.28 !important; }
+    .carousel-index-badge {
+        text-align:center; font-weight: 700; color: var(--txt-2);
+        background: var(--bg-1); border: 1px solid var(--line);
+        border-radius: 20px; padding: 6px 18px; display: inline-block;
+        font-size: 0.85rem; letter-spacing: 0.5px; margin: 10px auto 0 auto;
+    }
+    .carousel-index-row { text-align: center; margin-top: 12px; }
 
     /* ============================================================
        FUNDAMENTAL screen
@@ -568,8 +634,14 @@ def inject_css() -> None:
         .narrative-box { padding: 16px 18px; }
         .float-back-wrap { bottom: 14px; left: 14px; }
         .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
-        /* כפתורי דפדוף Carousel גדולים ונוחים למגע במובייל */
+        /* כפתורי דפדוף Carousel גדולים ונוחים למגע במובייל - Overlay על שולי הכרטיס */
         .stButton > button { min-height: 46px; font-size: 1.0rem; }
+        .carousel-arrow-col .stButton > button {
+            width: 48px !important; height: 48px !important; min-height: 48px !important;
+            font-size: 1.4rem !important;
+        }
+        .carousel-card-wrap { min-height: 250px; }
+        .carousel-arrow-col { transform: translateY(140px); }
     }
 
     /* nav */
@@ -683,17 +755,24 @@ def go_to_screen(page: str, ticker: str = None) -> None:
     ל-StreamlitAPIException וכפתורים 'תקועים'), אנו מתורים בקשת ניווט שתעובד בראש main()
     *לפני* שה-widget של nav_select נוצר. זו הדרך היציבה היחידה ב-Streamlit.
     """
-    st.session_state.nav_request = {
-        "page": page,
-        "ticker": ticker.strip().upper() if ticker else None,
-        "kind": "goto",
-    }
-    st.rerun()
+    try:
+        st.session_state.nav_request = {
+            "page": page,
+            "ticker": ticker.strip().upper() if ticker else None,
+            "kind": "goto",
+        }
+    except Exception:
+        # אם משום מה לא ניתן לתור את הבקשה - לפחות נעדכן ישירות, בלי לקרוס
+        st.session_state.current_page = page
+    st.rerun()  # מחוץ ל-try: st.rerun מממש את עצמו ע"י חריגה פנימית שאסור לבלוע
 
 
 def go_back() -> None:
     """מבקש חזרה למסך הקודם לפי היסטוריית הניווט (מעובד בראש main())."""
-    st.session_state.nav_request = {"kind": "back"}
+    try:
+        st.session_state.nav_request = {"kind": "back"}
+    except Exception:
+        pass
     st.rerun()
 
 
@@ -885,8 +964,17 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
 def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_page: str = "🏠 בית") -> None:
     """
     תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם, עם חצים
-    גדולים ונוחים (גם במובייל) ואינדקס "X מתוך Y". האינדקס נשמר ב-session_state
-    תחת index_key כדי שיישמר בין ריצות. הכרטיס עצמו זהה לחלוטין ל-_render_pick_result_card.
+    שמופיעים כ-Overlay ממשי על שולי הכרטיס עצמו (לא בשורה נפרדת מעליו), ואינדקס
+    "X מתוך Y" מעוצב. האינדקס נשמר ב-session_state תחת index_key כדי שיישמר בין ריצות.
+
+    הבהרה קריטית ליציבות: הלוגיקה כאן משנה אך ורק את index_key ב-session_state
+    וקוראת ל-st.rerun() - היא *לא* נוגעת ב-current_page / nav_request / handoff_ticker,
+    ולכן הדפדוף בין כרטיסים נשאר תמיד באותו מסך ולא יכול "לזרוק" למסך הבית.
+    הניווט למסך אחר קורה רק אם המשתמש לוחץ במפורש על כפתור "ניתוח מלא" שבתוך הכרטיס.
+    כל לחיצת חץ עטופה ב-try/except הגנתי: אם תתרחש שגיאה לא צפויה כלשהי (לדוגמה
+    שליפת מחיר שנכשלת), היא תוצג כהודעה באותו מסך - ולא תוכל לקרוס את כל הסקריפט
+    (קריסה כוללת היא התרחיש היחיד שבאמת היה יכול "להחזיר" משתמש למסך הבית
+    בעקבות רענון/חיבור מחדש של הדפדפן).
     """
     if not results:
         return
@@ -898,25 +986,47 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         cur = 0
         st.session_state[index_key] = 0
 
-    # שורת ניווט: חץ קודם (ימני ב-RTL) | אינדקס | חץ הבא
-    nav_prev, nav_label, nav_next = st.columns([1, 2, 1])
-    with nav_prev:
-        if st.button("◀ הקודם", key=f"{key_prefix}_prev", use_container_width=True, disabled=(cur <= 0)):
-            st.session_state[index_key] = max(0, cur - 1)
-            st.rerun()
-    with nav_label:
-        st.markdown(
-            f"<div style='text-align:center; font-weight:700; color:var(--txt-2); padding-top:6px;'>"
-            f"כרטיס {cur + 1} מתוך {total}</div>",
-            unsafe_allow_html=True,
-        )
-    with nav_next:
-        if st.button("הבא ▶", key=f"{key_prefix}_next", use_container_width=True, disabled=(cur >= total - 1)):
-            st.session_state[index_key] = min(total - 1, cur + 1)
-            st.rerun()
+    # --- שכבת חצים (Overlay) - מרונדרת ראשונה עם גובה 0, כך שהכרטיס שמתחת
+    #     "עולה" אליה והחצים יושבים פיזית על גבי שולי הכרטיס (z-index גבוה). ---
+    st.markdown("<div class='carousel-arrow-row'>", unsafe_allow_html=True)
+    a_next, a_mid, a_prev = st.columns([1, 6, 1])
+    with a_next:
+        st.markdown("<div class='carousel-arrow-col carousel-arrow-right'>", unsafe_allow_html=True)
+        if st.button("▶", key=f"{key_prefix}_next", disabled=(cur >= total - 1), help="המניה הבאה"):
+            _ok = False
+            try:
+                st.session_state[index_key] = min(total - 1, cur + 1)
+                _ok = True
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+            if _ok:
+                st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
+        st.markdown("</div>", unsafe_allow_html=True)
+    with a_prev:
+        st.markdown("<div class='carousel-arrow-col carousel-arrow-left'>", unsafe_allow_html=True)
+        if st.button("◀", key=f"{key_prefix}_prev", disabled=(cur <= 0), help="המניה הקודמת"):
+            _ok = False
+            try:
+                st.session_state[index_key] = max(0, cur - 1)
+                _ok = True
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+            if _ok:
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)  # /carousel-arrow-row
 
-    # הכרטיס הנוכחי בלבד (אותו עיצוב כרטיס בדיוק)
-    _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
+    # --- הכרטיס עצמו (ברוחב מלא), והחצים מעליו כ-Overlay ---
+    st.markdown("<div class='carousel-card-wrap'>", unsafe_allow_html=True)
+    try:
+        _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
+    except Exception as exc:
+        st.error(f"שגיאה בהצגת הכרטיס: {exc}")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='carousel-index-row'><span class='carousel-index-badge'>כרטיס {cur + 1} מתוך {total}</span></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _render_top_picks() -> None:
@@ -945,33 +1055,38 @@ def _render_top_picks() -> None:
     c1, c2 = st.columns([1, 3])
     with c1:
         if st.button(f"🔍 סרוק {len(pool)} מניות", use_container_width=True, type="primary", key="scan_picks_btn"):
-            if not SCOUT_CORE_AVAILABLE:
-                st.error("מודול הליבה חסר.")
-            elif MARKET_SCANNER_AVAILABLE:
-                # מנוע הסריקה החדש עם Early Pruning - מהיר יותר על יקום רחב
-                prog = st.progress(0.0)
-                status = st.empty()
+            try:
+                if not SCOUT_CORE_AVAILABLE:
+                    st.error("מודול הליבה חסר.")
+                elif MARKET_SCANNER_AVAILABLE:
+                    # מנוע הסריקה החדש עם Early Pruning - מהיר יותר על יקום רחב
+                    prog = st.progress(0.0)
+                    status = st.empty()
 
-                def _home_cb(done, total, ticker, stats):
-                    try:
-                        prog.progress(min(1.0, done / max(1, total)))
-                        status.caption(f"נסרקו {done}/{total} · עברו: {stats['passed']}")
-                    except Exception:
-                        pass
+                    def _home_cb(done, total, ticker, stats):
+                        try:
+                            prog.progress(min(1.0, done / max(1, total)))
+                            status.caption(f"נסרקו {done}/{total} · עברו: {stats['passed']}")
+                        except Exception:
+                            pass
 
-                scanner = MarketScanner(_sc_module)
-                with st.spinner(f"סורק {len(pool)} מניות (Early Pruning, {eta})..."):
-                    out = scanner.scan_market(
-                        mode="balanced", max_tickers=len(pool), universe=pool,
-                        top_n=5, progress_callback=_home_cb,
-                    )
-                prog.progress(1.0)
-                st.session_state.home_top_picks = out["results"]
-                st.session_state.home_card_index = 0  # איפוס דפדוף לסריקה חדשה
-            else:
-                with st.spinner(f"סורק {len(pool)} מניות לאיתור שילובי איכות ({eta})..."):
-                    st.session_state.home_top_picks = scan_top_opportunities(pool, top_n=5, mode="Balanced")
-                    st.session_state.home_card_index = 0
+                    scanner = MarketScanner(_sc_module)
+                    with st.spinner(f"סורק {len(pool)} מניות (Early Pruning, {eta})..."):
+                        out = scanner.scan_market(
+                            mode="balanced", max_tickers=len(pool), universe=pool,
+                            top_n=5, progress_callback=_home_cb,
+                        )
+                    prog.progress(1.0)
+                    st.session_state.home_top_picks = out["results"]
+                    st.session_state.home_card_index = 0  # איפוס דפדוף לסריקה חדשה
+                else:
+                    with st.spinner(f"סורק {len(pool)} מניות לאיתור שילובי איכות ({eta})..."):
+                        st.session_state.home_top_picks = scan_top_opportunities(pool, top_n=5, mode="Balanced")
+                        st.session_state.home_card_index = 0
+            except Exception as exc:
+                # הגנה קריטית: שגיאה לא צפויה כאן מוצגת מקומית, לא מקריסה את הסקריפט
+                st.error(f"⚠️ שגיאה בסריקה: {exc}")
+                st.session_state.home_top_picks = []
     with c2:
         st.caption(f"זמן משוער לסריקה: {eta}")
 
@@ -1223,28 +1338,33 @@ def _render_market_scanner() -> None:
         run_scan = True
 
     if run_scan:
-        scanner = MarketScanner(_sc_module)
-        prog_bar = st.progress(0.0)
-        status = st.empty()
+        try:
+            scanner = MarketScanner(_sc_module)
+            prog_bar = st.progress(0.0)
+            status = st.empty()
 
-        def _cb(done, total, ticker, stats):
-            try:
-                prog_bar.progress(min(1.0, done / max(1, total)))
-                status.caption(
-                    f"נסרקו {done}/{total} · עברו: {stats['passed']} · "
-                    f"גוזמו (מהיר/Wyckoff/פונדמנטלי): {stats['pruned_quick']}/{stats['pruned_wyckoff']}/{stats['pruned_fundamental']}"
+            def _cb(done, total, ticker, stats):
+                try:
+                    prog_bar.progress(min(1.0, done / max(1, total)))
+                    status.caption(
+                        f"נסרקו {done}/{total} · עברו: {stats['passed']} · "
+                        f"גוזמו (מהיר/Wyckoff/פונדמנטלי): {stats['pruned_quick']}/{stats['pruned_wyckoff']}/{stats['pruned_fundamental']}"
+                    )
+                except Exception:
+                    pass
+
+            with st.spinner(f"סורק שוק במצב '{mode}' ({eta})..."):
+                scan_out = scanner.scan_market(
+                    mode=mode, max_tickers=max_map[mode], universe=universe,
+                    top_n=20, progress_callback=_cb,
                 )
-            except Exception:
-                pass
-
-        with st.spinner(f"סורק שוק במצב '{mode}' ({eta})..."):
-            scan_out = scanner.scan_market(
-                mode=mode, max_tickers=max_map[mode], universe=universe,
-                top_n=20, progress_callback=_cb,
-            )
-        prog_bar.progress(1.0)
-        st.session_state.market_scan_results = scan_out
-        st.session_state.scan_card_index = 0  # איפוס דפדוף לסריקה חדשה
+            prog_bar.progress(1.0)
+            st.session_state.market_scan_results = scan_out
+            st.session_state.scan_card_index = 0  # איפוס דפדוף לסריקה חדשה
+        except Exception as exc:
+            # הגנה קריטית: שגיאה לא צפויה כאן מוצגת מקומית, לא מקריסה את הסקריפט
+            st.error(f"⚠️ שגיאה בסריקת השוק: {exc}")
+            st.session_state.market_scan_results = None
 
     scan_out = st.session_state.get("market_scan_results")
     if scan_out:
@@ -1352,31 +1472,38 @@ def screen_institutional_map() -> None:
             st.caption(data["desc"])
             scan_key = f"sector_picks::{sector}"
             if st.button(f"🔍 סרוק מניות מעניינות ב{sector}", key=f"sector_scan_btn::{sector}", use_container_width=True):
-                if not SCOUT_CORE_AVAILABLE:
-                    st.error("מודול הליבה חסר.")
-                elif MARKET_SCANNER_AVAILABLE:
-                    # אותו מנוע MarketScanner עם Early Pruning, מוגבל לטיקרים של הסקטור הזה
-                    scanner = MarketScanner(_sc_module)
-                    prog_sec = st.progress(0.0)
-                    status_sec = st.empty()
+                try:
+                    if not SCOUT_CORE_AVAILABLE:
+                        st.error("מודול הליבה חסר.")
+                    elif MARKET_SCANNER_AVAILABLE:
+                        # אותו מנוע MarketScanner עם Early Pruning, מוגבל לטיקרים של הסקטור הזה
+                        scanner = MarketScanner(_sc_module)
+                        prog_sec = st.progress(0.0)
+                        status_sec = st.empty()
 
-                    def _sec_cb(done, total, ticker, stats):
-                        try:
-                            prog_sec.progress(min(1.0, done / max(1, total)))
-                            status_sec.caption(f"נסרקו {done}/{total} · עברו: {stats['passed']}")
-                        except Exception:
-                            pass
+                        def _sec_cb(done, total, ticker, stats):
+                            try:
+                                prog_sec.progress(min(1.0, done / max(1, total)))
+                                status_sec.caption(f"נסרקו {done}/{total} · עברו: {stats['passed']}")
+                            except Exception:
+                                pass
 
-                    with st.spinner(f"סורק {len(data['tickers'])} מניות ב{sector} (Early Pruning)..."):
-                        sec_out = scanner.scan_market(
-                            mode="balanced", max_tickers=len(data["tickers"]),
-                            universe=data["tickers"], top_n=6, progress_callback=_sec_cb,
-                        )
-                    prog_sec.progress(1.0)
-                    st.session_state[scan_key] = sec_out["results"]
-                else:
-                    with st.spinner(f"סורק {len(data['tickers'])} מניות ב{sector}..."):
-                        st.session_state[scan_key] = scan_top_opportunities(data["tickers"], top_n=6, mode="Balanced")
+                        with st.spinner(f"סורק {len(data['tickers'])} מניות ב{sector} (Early Pruning)..."):
+                            sec_out = scanner.scan_market(
+                                mode="balanced", max_tickers=len(data["tickers"]),
+                                universe=data["tickers"], top_n=6, progress_callback=_sec_cb,
+                            )
+                        prog_sec.progress(1.0)
+                        st.session_state[scan_key] = sec_out["results"]
+                    else:
+                        with st.spinner(f"סורק {len(data['tickers'])} מניות ב{sector}..."):
+                            st.session_state[scan_key] = scan_top_opportunities(data["tickers"], top_n=6, mode="Balanced")
+                except Exception as exc:
+                    # הגנה קריטית: שגיאה לא צפויה (לדוגמה תקלת רשת חולפת) מוצגת כאן בתוך
+                    # ה-expander של הסקטור הזה בלבד - היא לעולם לא מקריסה את כל הסקריפט
+                    # ולכן לא יכולה "לזרוק" את המשתמש למסך הבית.
+                    st.error(f"⚠️ שגיאה בסריקת {sector}: {exc}")
+                    st.session_state[scan_key] = []
 
             results = st.session_state.get(scan_key)
             if results is None:
