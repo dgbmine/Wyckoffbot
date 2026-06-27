@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V19.4 (True HTML-Embedded Overlay Arrows via query-param nav)
+INSTITUTIONAL SCOUT PRO V19.5 (Hidden-Button-Bridge Carousel Arrows - No More Page Reload)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -1060,50 +1060,22 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
         go_to_screen(dest_page, p["ticker"])
 
 
-def _carousel_consume_query_nav(index_key: str, total: int) -> int:
-    """
-    קורא בקשת דפדוף שהגיעה דרך query param (מהחצים שהם קישורי <a> בתוך ה-HTML
-    של הכרטיס). מעדכן את index_key ב-session_state, מנקה את ה-param, ומחזיר את
-    האינדקס הנוכחי. שיטה זו יציבה: החצים הם חלק בלתי נפרד מ-HTML הכרטיס (Overlay
-    אמיתי), והניווט מתבצע צד-שרת דרך ה-URL בלי תלות בעטיפות של Streamlit.
-    """
-    cur = st.session_state.get(index_key, 0)
-    if not isinstance(cur, int) or cur < 0 or cur >= total:
-        cur = 0
-
-    try:
-        qp = st.query_params
-        raw = qp.get(index_key)
-        if raw is not None:
-            try:
-                requested = int(raw)
-                if 0 <= requested < total:
-                    cur = requested
-            except (ValueError, TypeError):
-                pass
-            # ניקוי ה-param כדי שרענון/ניווט עתידי לא "ייתקע" על ערך ישן
-            try:
-                del qp[index_key]
-            except Exception:
-                pass
-    except Exception:
-        # תאימות לאחור: אם st.query_params לא נתמך, פשוט ממשיכים עם cur הקיים
-        pass
-
-    st.session_state[index_key] = cur
-    return cur
-
-
 def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_page: str = "🏠 בית") -> None:
     """
     תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם. החצים
-    (◀ ▶) הם Overlay אמיתי: הם מוטמעים *בתוך* אותו בלוק HTML של הכרטיס עצמו
-    (אלמנט DOM יחיד שבשליטה מלאה, ש-Streamlit לא יכול לפצל), וממוקמים
-    position:absolute מול ה-position:relative של הכרטיס. הם מנווטים דרך
-    query param (?index_key=N) שנקרא בחזרה ע"י st.query_params - צד-שרת ויציב.
+    (◀ ▶) הם Overlay אמיתי: מוטמעים *בתוך* אותו בלוק HTML של הכרטיס עצמו
+    (אלמנט DOM יחיד שבשליטה מלאה), וממוקמים position:absolute מול ה-
+    position:relative של הכרטיס - הם נשארים בדיוק באותו מיקום (מאומת ותקין).
 
-    הבהרה קריטית ליציבות: הדפדוף משנה אך ורק את index_key (דרך ה-query param)
-    ו*לא* נוגע ב-current_page / nav_request / handoff_ticker, ולכן נשאר תמיד
+    תיקון קריטי (לעומת גרסה קודמת): החצים *אינם* קישורי <a href> רגילים יותר -
+    קישור כזה הוא ניווט דפדפן אמיתי (HTTP GET מלא), שמרענן את כל הדף ומאפס את
+    כל ה-session_state (כולל home_scan_results, home_mode) - זו הייתה הבעיה
+    שדיווחת עליה ("הכרטיסיות נעלמות"). הפתרון: לחיצה על החץ מריצה קוד JS שמאתר
+    ומפעיל ("clicks") כפתור Streamlit אמיתי אך חבוי, שמבצע עדכון state + st.rerun()
+    תקין (לא רענון דפדפן) - כל המידע נשמר, רק האינדקס מתעדכן.
+
+    הבהרה קריטית ליציבות: הדפדוף משנה אך ורק את index_key ב-session_state ו-
+    *לא* נוגע ב-current_page / nav_request / handoff_ticker, ולכן נשאר תמיד
     באותו מסך ולא יכול "לזרוק" למסך הבית. הניווט למסך אחר קורה רק בלחיצה
     מפורשת על כפתור "ניתוח מלא" (כפתור Streamlit אמיתי, מתחת לכרטיס).
     """
@@ -1111,24 +1083,72 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         return
 
     total = len(results)
-    # קריאת בקשת דפדוף מה-URL (חצי ה-Overlay) + קיבוע אינדקס לטווח תקין
-    cur = _carousel_consume_query_nav(index_key, total)
+    cur = st.session_state.get(index_key, 0)
+    if not isinstance(cur, int) or cur < 0 or cur >= total:
+        cur = 0
+        st.session_state[index_key] = 0
 
     p = results[cur]
     price_html = render_price_inline(p["ticker"])
 
-    # חצים כ-Overlay אמיתי: קישורי <a> בתוך אותו DIV של הכרטיס. target=_self
-    # כדי שהניווט יקרה באותו חלון (לא טאב חדש). disabled מיוצג ע"י היעדר href.
-    prev_attr = (f"href='?{index_key}={cur-1}' " if cur > 0 else "")
-    next_attr = (f"href='?{index_key}={cur+1}' " if cur < total - 1 else "")
-    prev_disabled = "" if cur > 0 else "carousel-nav-disabled"
+    # סימוני טקסט ייחודיים (לכל מופע קרוסלה) שה-JS מאתר בהם את כפתורי הגישור
+    # החבויים - בדיוק כמו הטכניקה הקיימת והמוכחת של הכפתור הצף "⬆️ חזרה לראש העמוד".
+    next_marker = f"⟫cnav_next_{key_prefix}⟪"
+    prev_marker = f"⟫cnav_prev_{key_prefix}⟪"
+
     next_disabled = "" if cur < total - 1 else "carousel-nav-disabled"
+    prev_disabled = "" if cur > 0 else "carousel-nav-disabled"
+
+    def _bridge_click_js(marker: str) -> str:
+        # מאתר כפתור Streamlit אמיתי לפי הטקסט הייחודי שלו ומפעיל עליו click() -
+        # זה מפעיל rerun תקין של Streamlit (לא רענון דפדפן), כל ה-state נשמר.
+        # מנסה גם document וגם window.parent.document (כמו הכפתור הצף הקיים
+        # "⬆️ חזרה לראש העמוד" שמשתמש באותה טכניקה מוכחת) - כדי לעבוד גם אם
+        # Streamlit מרונדר את האפליקציה בתוך iframe.
+        return (
+            "try{"
+            f"var found=false; var docs=[document, window.parent.document];"
+            "for(var d=0; d<docs.length && !found; d++){"
+            "  try{ var bs=docs[d].querySelectorAll('button');"
+            "    for(var i=0;i<bs.length;i++){"
+            f"      if(bs[i].innerText.indexOf('{marker}')>-1){{bs[i].click(); found=true; break;}}"
+            "    }"
+            "  }catch(e){}"
+            "}"
+            "}catch(e){} return false;"
+        )
+
+    def _bridge_hide_js(marker: str) -> str:
+        # מסתיר את כפתור הגישור (חבוי, אך עדיין קליק-בילי דרך JS) - קביעת style
+        # ישירות על האלמנט שנמצא לפי הטקסט, בלי תלות בניחוש מחלקות CSS פנימיות
+        # של Streamlit. מופעל אוטומטית בטעינה דרך img onerror (תרגיל מוכר -
+        # תגי <script> לא רצים כש-Streamlit מזריק HTML, אבל onerror כן).
+        return (
+            "try{"
+            "var docs=[document, window.parent.document];"
+            "for(var d=0; d<docs.length; d++){"
+            "  try{ var bs=docs[d].querySelectorAll('button');"
+            "    for(var i=0;i<bs.length;i++){"
+            f"      if(bs[i].innerText.indexOf('{marker}')>-1){{"
+            "        bs[i].style.position='fixed'; bs[i].style.left='-9999px'; bs[i].style.top='-9999px';"
+            "        bs[i].style.width='1px'; bs[i].style.height='1px'; bs[i].style.opacity='0'; bs[i].style.minHeight='1px';"
+            "        var wrap = bs[i].closest('[data-testid=\\'stButton\\']') || bs[i].parentElement;"
+            "        if(wrap){wrap.style.position='fixed'; wrap.style.left='-9999px'; wrap.style.top='-9999px'; wrap.style.height='1px'; wrap.style.width='1px'; wrap.style.overflow='hidden';}"
+            "      }"
+            "    }"
+            "  }catch(e){}"
+            "}"
+            "}catch(e){}"
+        )
+
+    next_onclick = _bridge_click_js(next_marker) if cur < total - 1 else "return false;"
+    prev_onclick = _bridge_click_js(prev_marker) if cur > 0 else "return false;"
 
     try:
         st.markdown(
             f"""<div class='pick-card carousel-pick-card' style='border-right:5px solid {p['color']}; border-top:none;'>
-                <a {prev_attr}target='_self' class='carousel-nav carousel-nav-left {prev_disabled}' title='המניה הקודמת'>◀</a>
-                <a {next_attr}target='_self' class='carousel-nav carousel-nav-right {next_disabled}' title='המניה הבאה'>▶</a>
+                <a href='#' onclick="{prev_onclick}" class='carousel-nav carousel-nav-left {prev_disabled}' title='המניה הקודמת'>◀</a>
+                <a href='#' onclick="{next_onclick}" class='carousel-nav carousel-nav-right {next_disabled}' title='המניה הבאה'>▶</a>
                 <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
                     <span class='pick-rank'>#{cur+1}</span>
                     <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
@@ -1150,7 +1170,31 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         unsafe_allow_html=True,
     )
 
-    # כפתור "ניתוח מלא" - כפתור Streamlit אמיתי (צריך לוגיקת home_mode + ניווט)
+    # --- כפתורי גישור חבויים (אמיתיים, ל-Streamlit) - לעולם לא נראים למשתמש,
+    #     אך זה מה שמפעיל בפועל את עדכון ה-state + st.rerun() כשה-JS לוחץ עליהם. ---
+    if st.button(next_marker, key=f"{key_prefix}_bridge_next"):
+        if cur < total - 1:
+            try:
+                st.session_state[index_key] = cur + 1
+                st.rerun()
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+    if st.button(prev_marker, key=f"{key_prefix}_bridge_prev"):
+        if cur > 0:
+            try:
+                st.session_state[index_key] = cur - 1
+                st.rerun()
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+
+    # תרגיל onerror: מריץ JS אוטומטית בטעינת הדף כדי להסתיר את שני כפתורי
+    # הגישור (img עם src לא תקין -> onerror יורה תמיד, ללא תלות בקליק).
+    st.markdown(
+        f"<img src='x' style='display:none;width:0;height:0;' "
+        f"onerror=\"{_bridge_hide_js(next_marker)}{_bridge_hide_js(prev_marker)}\">",
+        unsafe_allow_html=True,
+    )
+
     if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"{key_prefix}_full_{p['ticker']}_{cur}", use_container_width=True):
         if dest_page == "📈 Trading Scout":
             # קביעת מצב הבית מראש ל-"results" כדי שכל דרך חזרה תנחת על הקרוסלה
