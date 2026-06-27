@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V19.2 (Real st.container Overlay Arrows + home_mode-Safe Back Navigation)
+INSTITUTIONAL SCOUT PRO V19.3 (Carousel Arrows Reverted to Proven st.columns + Negative-Margin Technique)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -469,33 +469,35 @@ def inject_css() -> None:
     }
 
     /* ============================================================
-       CAROUSEL - חצים כ-Overlay ממשי על שולי הכרטיס (לא בשורה מעליו),
-       עם גובה מינימלי קבוע לכרטיס ולעמודת החץ - כך שהם תמיד מיושרים
-       זהה בין כרטיסים שונים (מונע "קפיצת" מיקום שעלולה לגרום ללחיצה שגויה).
+       CAROUSEL - חצים על שולי הכרטיס דרך עמודות st.columns אמיתיות (קינון DOM
+       מובטח ע"י Streamlit) + margin שלילי שמושך אותן פיזית על גבי שולי הכרטיס.
+       זו הטכניקה היחידה שהוכחה כעובדת בפועל - position:absolute נכשל כי לא
+       היה לו "הורה ממוקם" אמיתי (החצים צפו לפינת העמוד, לא על הכרטיס).
        ============================================================ */
     @keyframes carouselCardIn {
         from { opacity: 0; transform: translateY(6px) scale(0.985); }
         to   { opacity: 1; transform: translateY(0) scale(1); }
     }
-    /* carousel-stage: ה-position:relative היחיד שצריך, ממוקד דרך המחלקה האמיתית
-       שש-Streamlit מוסיף ל-st.container(key=...) (st-key-<key>). זה ה-overlay
-       האמיתי - הכרטיס והחצים הם ילדים אמיתיים שלו ב-DOM (לא "תג HTML פתוח"
-       חוצה-קריאות, שלא יוצר קינון אמיתי ב-Streamlit וגרם לחצים להיראות מתחת
-       לכרטיס במקום עליו). הסלקטור תופס לפי תת-מחרוזת כך שיעבוד לכל key_prefix. */
-    div[class*="carousel_stage"] {
-        position: relative !important;
+    /* שורת ה-columns מתמתחת לגובה אחיד (ברירת המחדל של flex), כך שעמודת החץ
+       תמיד בגובה הכרטיס - מאפשר מרכוז אנכי אמיתי בלי "מספר קסם". זו תוספת
+       בטוחה: align-items:stretch הוא כבר ברירת המחדל, לא משנה התנהגות קיימת. */
+    div[data-testid="stHorizontalBlock"] { align-items: stretch !important; }
+    .carousel-arrow-col {
+        height: 100%;
         min-height: 220px;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        z-index: 10;
     }
-    .carousel-arrow-overlay {
-        position: absolute;
-        top: 50%;
-        transform: translateY(-50%);
-        z-index: 30;
-    }
-    /* right/left פיזיים (לא מוטים ע"י RTL) - "▶" צמוד לימין הכרטיס, "◀" צמוד לשמאלו */
-    .carousel-arrow-overlay-right { right: -18px; }
-    .carousel-arrow-overlay-left  { left: -18px; }
-    .carousel-arrow-overlay .stButton > button {
+    /* margin שלילי "מושך" את החץ פיזית על גבי שולי הכרטיס - "▶" על השול הימני
+       (כמו השול הירוק), "◀" על השול השמאלי המקביל - לא מוטה ע"י RTL כי margin
+       -left/-right הם פיזיים. */
+    .carousel-arrow-right { margin-left: -22px; }
+    .carousel-arrow-left  { margin-right: -22px; }
+    .carousel-arrow-col .stButton { width: 100%; }
+    .carousel-arrow-col .stButton > button {
         font-size: 1.6rem !important; font-weight: 800 !important;
         width: 58px !important; height: 58px !important; min-height: 58px !important;
         border-radius: 50% !important; padding: 0 !important;
@@ -504,12 +506,13 @@ def inject_css() -> None:
         backdrop-filter: blur(2px);
         transition: transform 0.2s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease, border-color 0.2s ease !important;
     }
-    .carousel-arrow-overlay .stButton > button:hover {
+    .carousel-arrow-col .stButton > button:hover {
         border-color: var(--accent) !important;
         box-shadow: 0 0 32px rgba(56,189,248,0.65), 0 6px 24px rgba(56,189,248,0.45) !important;
         transform: scale(1.12);
     }
-    .carousel-arrow-overlay .stButton > button:disabled { opacity: 0.25 !important; }
+    .carousel-arrow-col .stButton > button:disabled { opacity: 0.25 !important; }
+    .pick-card { min-height: 220px; }
     .carousel-index-badge {
         text-align:center; font-weight: 700; color: var(--txt-2);
         background: var(--bg-1); border: 1px solid var(--line);
@@ -698,13 +701,13 @@ def inject_css() -> None:
         .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
         /* כפתורי דפדוף Carousel גדולים ונוחים למגע במובייל - Overlay אמיתי על שולי הכרטיס */
         .stButton > button { min-height: 46px; font-size: 1.0rem; }
-        .carousel-arrow-overlay .stButton > button {
+        .carousel-arrow-col .stButton > button {
             width: 56px !important; height: 56px !important; min-height: 56px !important;
             font-size: 1.55rem !important;
         }
-        .carousel-arrow-overlay-right { right: -10px; }
-        .carousel-arrow-overlay-left  { left: -10px; }
-        div[class*="carousel_stage"], .pick-card { min-height: 250px; }
+        .carousel-arrow-right { margin-left: -14px; }
+        .carousel-arrow-left  { margin-right: -14px; }
+        .carousel-arrow-col, .pick-card { min-height: 250px; }
         .carousel-index-row { margin-top: 18px; }
         /* כפתורים עגולים במובייל (180-200px) עם טקסט גדול וברור, ורווח נדיב מסביב */
         .home-landing { padding: 22px 0 16px 0; }
@@ -1052,8 +1055,8 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
 def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_page: str = "🏠 בית") -> None:
     """
     תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם, עם חצים
-    שמופיעים כ-Overlay ממשי על שולי הכרטיס עצמו (לא בשורה נפרדת מעליו), ואינדקס
-    "X מתוך Y" מעוצב. האינדקס נשמר ב-session_state תחת index_key כדי שיישמר בין ריצות.
+    הצמודים פיזית לשולי הכרטיס (ימני/שמאלי, דרך margin שלילי על עמודות st.columns
+    אמיתיות), ואינדקס "X מתוך Y" מעוצב. האינדקס נשמר ב-session_state תחת index_key.
 
     הבהרה קריטית ליציבות: הלוגיקה כאן משנה אך ורק את index_key ב-session_state
     וקוראת ל-st.rerun() - היא *לא* נוגעת ב-current_page / nav_request / handoff_ticker,
@@ -1074,26 +1077,19 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         cur = 0
         st.session_state[index_key] = 0
 
-    # --- carousel-stage: חייב להיות st.container() אמיתי (לא HTML פתוח דרך
-    #     st.markdown) כדי שהכרטיס והחצים יהיו ילדים אמיתיים שלו ב-DOM, ו-
-    #     position:absolute על החצים יתייחס נכון לגבולות הכרטיס. שתי קריאות
-    #     st.markdown נפרדות עם "תג פתוח" אינן יוצרות קינון אמיתי ב-Streamlit -
-    #     זה היה הבאג: החצים נראו מתחת לכרטיס ולא overlay עליו. ---
-    try:
-        stage = st.container(key=f"{key_prefix}_carousel_stage")
-    except TypeError:
-        # תאימות לאחור: גרסת Streamlit ישנה שלא תומכת ב-key על container
-        stage = st.container()
+    # --- חצים על שולי הכרטיס דרך עמודות st.columns אמיתיות (קינון DOM מובטח
+    #     ע"י Streamlit - בניגוד ל-position:absolute שדרש "הורה ממוקם" אמיתי
+    #     שלא התקבל בפועל; החצים צפו לפינת העמוד, לא על הכרטיס - זה היה הבאג).
+    #     עמודת החץ הצמודה לכרטיס מקבלת margin שלילי שמושך אותה פיזית על גבי
+    #     שולי הכרטיס (ליד אותו השול הצבוע - הימני או השמאלי), ומרכוז אנכי
+    #     ע"י flex (שורת ה-columns כברירת מחדל "מתמתחת" לגובה האחיד הגבוה
+    #     ביותר - הכרטיס - כך שהחץ ממורכז נכון בלי תלות בגובה בפועל). ---
+    col_next, col_card, col_prev = st.columns([1, 6, 1])
 
-    with stage:
-        try:
-            _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
-        except Exception as exc:
-            st.error(f"שגיאה בהצגת הכרטיס: {exc}")
-
-        # חץ "▶" (הבא) - Overlay אמיתי, צמוד לימין הכרטיס (ילד אמיתי של stage)
-        st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-right'>", unsafe_allow_html=True)
-        if st.button("▶", key=f"{key_prefix}_next", disabled=(cur >= total - 1), help="המניה הבאה"):
+    with col_next:
+        st.markdown("<div class='carousel-arrow-col carousel-arrow-right'>", unsafe_allow_html=True)
+        if st.button("▶", key=f"{key_prefix}_next", use_container_width=True,
+                    disabled=(cur >= total - 1), help="המניה הבאה"):
             _ok = False
             try:
                 st.session_state[index_key] = min(total - 1, cur + 1)
@@ -1104,9 +1100,16 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
                 st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # חץ "◀" (הקודם) - Overlay אמיתי, צמוד לשמאל הכרטיס (ילד אמיתי של stage)
-        st.markdown("<div class='carousel-arrow-overlay carousel-arrow-overlay-left'>", unsafe_allow_html=True)
-        if st.button("◀", key=f"{key_prefix}_prev", disabled=(cur <= 0), help="המניה הקודמת"):
+    with col_card:
+        try:
+            _render_pick_result_card(results[cur], cur, key_prefix=key_prefix, dest_page=dest_page)
+        except Exception as exc:
+            st.error(f"שגיאה בהצגת הכרטיס: {exc}")
+
+    with col_prev:
+        st.markdown("<div class='carousel-arrow-col carousel-arrow-left'>", unsafe_allow_html=True)
+        if st.button("◀", key=f"{key_prefix}_prev", use_container_width=True,
+                    disabled=(cur <= 0), help="המניה הקודמת"):
             _ok = False
             try:
                 st.session_state[index_key] = max(0, cur - 1)
