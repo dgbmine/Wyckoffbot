@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V19.5 (Hidden-Button-Bridge Carousel Arrows - No More Page Reload)
+INSTITUTIONAL SCOUT PRO V19.6 (Simple Reliable st.button Arrows + Analyst-Office Animation + 3D Design Upgrade)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -265,6 +265,18 @@ def inject_css() -> None:
         background: var(--bg-0); color: var(--txt-1);
         letter-spacing: 0.1px;
     }
+    /* רקע מקצועי עדין: navy עמוק + רשת דקה (כמו נייר גרפים/דאטה) + זוהר accent רך.
+       מאוד עדין כדי לשמור על "Institutional Minimalist" - לא צעקני. */
+    .stApp {
+        background-color: var(--bg-0);
+        background-image:
+            radial-gradient(900px circle at 12% -8%, rgba(56,189,248,0.07), transparent 45%),
+            radial-gradient(800px circle at 100% 0%, rgba(125,108,255,0.05), transparent 40%),
+            linear-gradient(rgba(56,189,248,0.030) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(56,189,248,0.030) 1px, transparent 1px);
+        background-size: 100% 100%, 100% 100%, 44px 44px, 44px 44px;
+        background-attachment: fixed;
+    }
     .block-container { padding-top: 1.4rem; padding-bottom: 3rem; max-width: 1180px; }
 
     /* generous whitespace between stacked blocks */
@@ -330,28 +342,28 @@ def inject_css() -> None:
     [data-testid="stMetricLabel"] { color: var(--txt-2) !important; font-weight: 500 !important; }
     [data-testid="stMetricDelta"] { color: var(--pos-soft) !important; }
 
-    /* ---------- Buttons (Million Dollar Polish) ---------- */
+    /* ---------- Buttons (Million Dollar Polish - 3D) ---------- */
     .stButton > button {
         border-radius: 12px !important; font-weight: 600 !important;
         border: 1px solid var(--line-strong) !important;
-        background: var(--bg-2) !important; color: var(--txt-1) !important;
+        background: linear-gradient(180deg, var(--bg-3), var(--bg-2)) !important; color: var(--txt-1) !important;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05) !important;
         transition: all 0.22s cubic-bezier(.2,.8,.2,1) !important;
     }
     .stButton > button:hover {
         border-color: var(--accent) !important;
-        background: var(--bg-3) !important;
         transform: translateY(-2px);
-        box-shadow: 0 6px 18px rgba(56,189,248,0.22) !important;
+        box-shadow: 0 8px 22px rgba(56,189,248,0.28), inset 0 1px 0 rgba(255,255,255,0.07) !important;
     }
-    .stButton > button:active { transform: translateY(0); }
+    .stButton > button:active { transform: translateY(0); box-shadow: 0 2px 6px rgba(0,0,0,0.4) !important; }
     .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #0ea5e9, #38bdf8) !important;
+        background: linear-gradient(135deg, #0284c7, #0ea5e9 40%, #38bdf8) !important;
         color: #04121f !important; border: none !important; font-weight: 800 !important;
-        box-shadow: 0 8px 28px rgba(56,189,248,0.35), 0 0 0 1px rgba(56,189,248,0.25) !important;
+        box-shadow: 0 8px 28px rgba(56,189,248,0.4), inset 0 1px 0 rgba(255,255,255,0.25), 0 0 0 1px rgba(56,189,248,0.25) !important;
     }
     .stButton > button[kind="primary"]:hover {
-        filter: brightness(1.1); transform: translateY(-2px);
-        box-shadow: 0 12px 36px rgba(56,189,248,0.5), 0 0 0 1px rgba(56,189,248,0.4) !important;
+        filter: brightness(1.1); transform: translateY(-3px);
+        box-shadow: 0 14px 40px rgba(56,189,248,0.55), inset 0 1px 0 rgba(255,255,255,0.3), 0 0 0 1px rgba(56,189,248,0.4) !important;
     }
 
     /* selectbox / radio / inputs */
@@ -469,57 +481,48 @@ def inject_css() -> None:
     }
 
     /* ============================================================
-       CAROUSEL - חצים כ-Overlay אמיתי: קישורי <a> מוטמעים בתוך אותו DIV של
-       הכרטיס (.carousel-pick-card), ולכן position:absolute שלהם מתייחס נכון
-       לכרטיס עצמו (ההורה הממוקם האמיתי). זה ה-overlay האמיתי שביקש המשתמש -
-       החצים יושבים פיזית על שולי הכרטיס, ממורכזים אנכית, ולא יכולים "לצוף"
-       למקום אחר כי הם חלק בלתי נפרד מ-HTML של הכרטיס.
+       CAROUSEL - חצים פשוטים ואמינים: כפתורי st.button אמיתיים בעמודות משני
+       צידי הכרטיס (לא overlay, לא absolute, לא JS - widgets מקוריים של
+       Streamlit שמובטח שעובדים בכל סביבה). מעוצבים כעיגולים תלת-מימדיים.
        ============================================================ */
     @keyframes carouselCardIn {
         from { opacity: 0; transform: translateY(6px) scale(0.985); }
         to   { opacity: 1; transform: translateY(0) scale(1); }
     }
-    .pick-card { min-height: 220px; }
-    /* הכרטיס בקרוסלה: position:relative + ריווח פנימי בצדדים כדי שהטקסט לא
-       יתנגש עם החצים, ו-overflow:visible כדי שה-glow של החצים יחרוג יפה. */
+    .pick-card { min-height: 200px; }
     .carousel-pick-card {
-        position: relative !important;
-        padding-left: 70px !important;
-        padding-right: 70px !important;
         overflow: visible !important;
         animation: carouselCardIn 0.32s cubic-bezier(.2,.8,.2,1);
     }
-    /* החץ עצמו - עיגול ממוקם absolute מול הכרטיס, ממורכז אנכית (top:50%) */
-    .carousel-nav {
-        position: absolute;
-        top: 50%;
-        transform: translateY(-50%);
-        z-index: 30;
-        width: 58px; height: 58px;
+    /* תא החץ - ממרכז את כפתור החץ אנכית לגובה הכרטיס שלצידו */
+    .carousel-arrow-cell {
         display: flex; align-items: center; justify-content: center;
-        border-radius: 50%;
-        font-size: 1.55rem; font-weight: 800;
-        text-decoration: none !important; color: var(--txt-1) !important;
-        background: linear-gradient(155deg, var(--bg-3), var(--bg-2));
-        box-shadow: 0 4px 18px rgba(0,0,0,0.5), 0 0 0 1px rgba(56,189,248,0.25);
-        border: 1px solid var(--line-strong);
-        backdrop-filter: blur(2px);
-        transition: transform 0.2s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease, border-color 0.2s ease;
-        cursor: pointer;
+        min-height: 200px; height: 100%;
     }
-    /* "◀" צמוד לשמאל הכרטיס, "▶" צמוד לימין - left/right פיזיים (לא מוטים ע"י RTL) */
-    .carousel-nav-left  { left: 8px; }
-    .carousel-nav-right { right: 8px; }
-    .carousel-nav:hover {
+    /* מרכוז אנכי של שורת הקרוסלה כך שהחצים ביחס לאמצע הכרטיס (תוספת בטוחה) */
+    div[data-testid="stHorizontalBlock"]:has(.carousel-arrow-cell) { align-items: center !important; }
+    /* כפתורי החץ (st.button בתוך carousel-arrow-cell) - עיגולים תלת-מימדיים גדולים.
+       מכוון דרך ה-div של carousel-arrow-cell ואחריו ה-stButton (אחאים ב-DOM). */
+    .carousel-arrow-cell + div[data-testid="stButton"] > button,
+    .carousel-arrow-cell ~ div[data-testid="stButton"] > button {
+        width: 60px !important; height: 60px !important; min-height: 60px !important;
+        border-radius: 50% !important; padding: 0 !important;
+        font-size: 1.5rem !important; font-weight: 800 !important;
+        background: linear-gradient(160deg, var(--bg-3), var(--bg-1)) !important;
+        border: 1px solid var(--line-strong) !important;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(56,189,248,0.18) !important;
+        transition: transform 0.18s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease, border-color 0.2s ease !important;
+        margin: 0 auto !important;
+    }
+    .carousel-arrow-cell + div[data-testid="stButton"] > button:hover,
+    .carousel-arrow-cell ~ div[data-testid="stButton"] > button:hover {
         border-color: var(--accent) !important;
-        box-shadow: 0 0 32px rgba(56,189,248,0.7), 0 6px 24px rgba(56,189,248,0.5);
-        transform: translateY(-50%) scale(1.12);
-        color: var(--accent) !important;
+        box-shadow: 0 0 30px rgba(56,189,248,0.6), 0 8px 24px rgba(56,189,248,0.4), inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        transform: translateY(-3px) scale(1.08);
     }
-    /* חץ מנוטרל (קצה הרשימה) - עמום ולא לחיץ */
-    .carousel-nav-disabled {
-        opacity: 0.22; pointer-events: none; cursor: default;
-        box-shadow: none;
+    .carousel-arrow-cell + div[data-testid="stButton"] > button:disabled,
+    .carousel-arrow-cell ~ div[data-testid="stButton"] > button:disabled {
+        opacity: 0.25 !important; box-shadow: none !important; transform: none !important;
     }
     .carousel-index-badge {
         text-align:center; font-weight: 700; color: var(--txt-2);
@@ -585,16 +588,148 @@ def inject_css() -> None:
     }
     .find-pct { font-size: 3.4rem; font-weight: 800; color: #1a1206; z-index:2; }
 
-    .money-rain { position: relative; height: 0; overflow: visible; pointer-events:none; }
-    .money-bill {
-        position: absolute; top: -40px; font-size: 1.8rem;
-        animation: moneyFall linear infinite;
+    /* ============================================================
+       OFFICE SCENE - סצנת משרד אנליסטים עובד (אנימציית CSS לשלב "תמצא לי")
+       ============================================================ */
+    .office-scene {
+        position: relative; height: 190px; width: 100%;
+        margin: 4px auto 6px auto; max-width: 560px;
+        overflow: hidden; border-radius: 16px;
+        background: linear-gradient(180deg, #0c1828 0%, #0a1422 70%, #0a1220 100%);
+        border: 1px solid var(--line);
+        box-shadow: inset 0 2px 24px rgba(0,0,0,0.45);
     }
-    @keyframes moneyFall {
-        0%   { transform: translateY(-40px) rotate(0deg); opacity: 0; }
-        10%  { opacity: 1; }
-        90%  { opacity: 1; }
-        100% { transform: translateY(420px) rotate(360deg); opacity: 0; }
+    .office-floor {
+        position: absolute; bottom: 0; left: 0; right: 0; height: 46px;
+        background: linear-gradient(180deg, rgba(56,189,248,0.06), rgba(56,189,248,0.02));
+        border-top: 1px solid rgba(56,189,248,0.18);
+    }
+    .office-window {
+        position: absolute; top: 16px; left: 8%; width: 70px; height: 46px;
+        border-radius: 5px; border: 1px solid rgba(56,189,248,0.18);
+        background: linear-gradient(135deg, rgba(56,189,248,0.10), rgba(56,189,248,0.02));
+        overflow: hidden;
+    }
+    .office-window::after {
+        content:''; position:absolute; top:-20px; left:-40px; width:30px; height:90px;
+        background: rgba(255,255,255,0.06); transform: rotate(25deg);
+        animation: windowSheen 5s ease-in-out infinite;
+    }
+    @keyframes windowSheen { 0%,100%{ transform: translateX(0) rotate(25deg);} 50%{ transform: translateX(120px) rotate(25deg);} }
+
+    .desk-unit { position: absolute; bottom: 30px; width: 18%; height: 120px; }
+    .desk {
+        position: absolute; bottom: 0; left: 0; right: 0; height: 12px;
+        background: linear-gradient(180deg, #243449, #182335);
+        border-radius: 3px; box-shadow: 0 3px 8px rgba(0,0,0,0.4);
+    }
+    .desk-wide { left: 0; right: 0; }
+
+    /* מסך מחשב + תרשים מתחלף */
+    .monitor {
+        position: absolute; bottom: 12px; left: 4px; width: 34px; height: 26px;
+        background: #0a1220; border: 2px solid #2b3c54; border-radius: 3px;
+        box-shadow: 0 0 10px rgba(56,189,248,0.15);
+    }
+    .monitor-big { width: 44px; height: 32px; left: 50%; transform: translateX(-50%); }
+    .monitor-chart {
+        position: absolute; left: 3px; right: 3px; bottom: 3px; height: 14px;
+        background:
+          linear-gradient(90deg, transparent 49%, rgba(56,189,248,0.5) 50%, transparent 51%) 0 0/100% 100%,
+          linear-gradient(180deg, transparent, rgba(56,189,248,0.12));
+        clip-path: polygon(0 80%, 15% 60%, 30% 70%, 45% 35%, 60% 50%, 75% 20%, 100% 30%, 100% 100%, 0 100%);
+        animation: chartPulse 1.6s ease-in-out infinite;
+    }
+    @keyframes chartPulse { 0%,100%{ opacity:0.55; } 50%{ opacity:1; } }
+    .monitor-bars { position:absolute; left:4px; right:4px; bottom:3px; height:20px; display:flex; align-items:flex-end; gap:3px; }
+    .monitor-bars span { flex:1; background: linear-gradient(180deg, #38bdf8, #0ea5e9); border-radius:1px 1px 0 0; animation: barGrow 1.4s ease-in-out infinite; }
+    .monitor-bars span:nth-child(2){ animation-delay:0.18s; }
+    .monitor-bars span:nth-child(3){ animation-delay:0.36s; }
+    .monitor-bars span:nth-child(4){ animation-delay:0.54s; }
+    .monitor-bars span:nth-child(5){ animation-delay:0.72s; }
+    @keyframes barGrow { 0%,100%{ height:25%; } 50%{ height:90%; } }
+
+    .keyboard {
+        position: absolute; bottom: 12px; right: 4px; width: 22px; height: 6px;
+        background: #2b3c54; border-radius: 2px;
+    }
+
+    /* קלסר מדפדף */
+    .folder {
+        position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+        width: 30px; height: 22px; background: #1e2c40; border:1px solid #34507a;
+        border-radius: 2px;
+    }
+    .folder-page {
+        position:absolute; top:2px; left:3px; right:3px; height:16px; background:#cdd9ea;
+        border-radius:1px; transform-origin: left center;
+        animation: flipPage 1.8s ease-in-out infinite;
+    }
+    @keyframes flipPage {
+        0%,100%{ transform: rotateY(0deg); opacity:1; }
+        45%{ transform: rotateY(-150deg); opacity:0.7; }
+        50%{ transform: rotateY(-150deg); opacity:0.7; }
+        95%{ transform: rotateY(0deg); opacity:1; }
+    }
+
+    /* דמות אנליסט */
+    .analyst { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); width: 26px; height: 42px; }
+    .analyst-head {
+        position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+        width: 14px; height: 14px; border-radius: 50%;
+        background: linear-gradient(160deg, #5a6b82, #3d4d63);
+    }
+    .analyst-body {
+        position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+        width: 22px; height: 26px; border-radius: 8px 8px 4px 4px;
+        background: linear-gradient(160deg, #38bdf8, #1d6fa5);
+    }
+    .analyst-body.body-alt { background: linear-gradient(160deg, #a78bfa, #7c5fd0); }
+    .analyst-arm {
+        position: absolute; width: 4px; height: 12px; border-radius: 3px;
+        background: #2f8fc4; bottom: 14px;
+    }
+
+    /* תנועות שונות */
+    .analyst-typing-head { animation: headBob 1.4s ease-in-out infinite; }
+    @keyframes headBob { 0%,100%{ transform: translateX(-50%) translateY(0);} 50%{ transform: translateX(-50%) translateY(2px);} }
+    .arm-type-l { left: 1px; animation: typeArm 0.5s ease-in-out infinite; }
+    .arm-type-r { right: 1px; animation: typeArm 0.5s ease-in-out infinite 0.25s; }
+    @keyframes typeArm { 0%,100%{ height:12px; } 50%{ height:8px; } }
+
+    .analyst-look-head { animation: lookHead 3s ease-in-out infinite; }
+    @keyframes lookHead { 0%,100%{ transform: translateX(-50%) rotate(0deg);} 50%{ transform: translateX(-50%) rotate(-12deg);} }
+    .arm-point { right: 0px; height: 14px; transform-origin: bottom; animation: pointArm 3s ease-in-out infinite; }
+    @keyframes pointArm { 0%,100%{ transform: rotate(20deg);} 50%{ transform: rotate(-30deg);} }
+
+    .analyst-read-head { animation: readHead 2.4s ease-in-out infinite; }
+    @keyframes readHead { 0%,100%{ transform: translateX(-50%) rotate(8deg);} 50%{ transform: translateX(-50%) rotate(-4deg);} }
+    .arm-flip { right: 2px; animation: flipArm 1.8s ease-in-out infinite; }
+    @keyframes flipArm { 0%,100%{ transform: rotate(10deg);} 45%{ transform: rotate(-25deg);} }
+
+    /* שני אנליסטים שמדברים */
+    .analyst-discuss-l { left: 18%; }
+    .analyst-discuss-r { left: 54%; }
+    .analyst-discuss-head { animation: nod 2s ease-in-out infinite; }
+    .analyst-discuss-head2 { animation: nod 2s ease-in-out infinite 1s; }
+    @keyframes nod { 0%,100%{ transform: translateX(-50%) rotate(0);} 30%{ transform: translateX(-50%) rotate(8deg);} 60%{ transform: translateX(-50%) rotate(-6deg);} }
+    .arm-gesture { right: 0; animation: gesture 2.2s ease-in-out infinite; }
+    .arm-gesture2 { left: 0; animation: gesture 2.2s ease-in-out infinite 0.6s; }
+    @keyframes gesture { 0%,100%{ transform: rotate(15deg);} 50%{ transform: rotate(-20deg);} }
+    .speech-bubble {
+        position: absolute; top: 4px; left: 40%; width: 16px; height: 11px;
+        background: rgba(255,255,255,0.85); border-radius: 6px;
+        animation: bubblePop 2.6s ease-in-out infinite;
+    }
+    .speech-bubble::after {
+        content:''; position:absolute; bottom:-4px; left:4px; width:0; height:0;
+        border-left:3px solid transparent; border-right:3px solid transparent; border-top:5px solid rgba(255,255,255,0.85);
+    }
+    @keyframes bubblePop { 0%,40%,100%{ transform: scale(0); opacity:0; } 55%,85%{ transform: scale(1); opacity:1; } }
+
+    .office-caption {
+        margin-top: 14px; font-size: 1.0rem; color: var(--txt-2);
+        font-weight: 600; text-align: center;
     }
 
     /* ============================================================
@@ -707,15 +842,15 @@ def inject_css() -> None:
         .narrative-box { padding: 16px 18px; }
         .float-back-wrap { bottom: 14px; left: 14px; }
         .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
-        /* חצי דפדוף Carousel גדולים ונוחים למגע במובייל - Overlay אמיתי בתוך הכרטיס */
+        /* חצי דפדוף Carousel גדולים ונוחים למגע במובייל */
         .stButton > button { min-height: 46px; font-size: 1.0rem; }
-        .carousel-nav {
-            width: 56px; height: 56px; font-size: 1.5rem;
+        .carousel-arrow-cell { min-height: 180px; }
+        .carousel-arrow-cell + div[data-testid="stButton"] > button,
+        .carousel-arrow-cell ~ div[data-testid="stButton"] > button {
+            width: 54px !important; height: 54px !important; min-height: 54px !important;
+            font-size: 1.4rem !important;
         }
-        .carousel-nav-left  { left: 4px; }
-        .carousel-nav-right { right: 4px; }
-        .carousel-pick-card { padding-left: 64px !important; padding-right: 64px !important; }
-        .pick-card { min-height: 250px; }
+        .pick-card { min-height: 180px; }
         .carousel-index-row { margin-top: 18px; }
         /* כפתורים עגולים במובייל (180-200px) עם טקסט גדול וברור, ורווח נדיב מסביב */
         .home-landing { padding: 22px 0 16px 0; }
@@ -1062,22 +1197,20 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
 
 def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_page: str = "🏠 בית") -> None:
     """
-    תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם. החצים
-    (◀ ▶) הם Overlay אמיתי: מוטמעים *בתוך* אותו בלוק HTML של הכרטיס עצמו
-    (אלמנט DOM יחיד שבשליטה מלאה), וממוקמים position:absolute מול ה-
-    position:relative של הכרטיס - הם נשארים בדיוק באותו מיקום (מאומת ותקין).
+    תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם, עם חצי
+    דפדוף משני צידי הכרטיס.
 
-    תיקון קריטי (לעומת גרסה קודמת): החצים *אינם* קישורי <a href> רגילים יותר -
-    קישור כזה הוא ניווט דפדפן אמיתי (HTTP GET מלא), שמרענן את כל הדף ומאפס את
-    כל ה-session_state (כולל home_scan_results, home_mode) - זו הייתה הבעיה
-    שדיווחת עליה ("הכרטיסיות נעלמות"). הפתרון: לחיצה על החץ מריצה קוד JS שמאתר
-    ומפעיל ("clicks") כפתור Streamlit אמיתי אך חבוי, שמבצע עדכון state + st.rerun()
-    תקין (לא רענון דפדפן) - כל המידע נשמר, רק האינדקס מתעדכן.
+    *** השיטה הפשוטה והאמינה ביותר ***: שלוש עמודות st.columns אמיתיות, עם
+    כפתורי st.button אמיתיים משני צידי הכרטיס. אלה ה-widgets המקוריים של
+    Streamlit - מובטח שהם עובדים בכל סביבה (כולל Cloud Run בתוך iframe),
+    בלי position:absolute, בלי JS, בלי query params, בלי טריקים. לחיצה על חץ
+    מבצעת עדכון state רגיל + st.rerun() (ריענון פנימי תקין של Streamlit, *לא*
+    רענון דפדפן) - כל ה-session_state נשמר והכרטיסיות לא נעלמות.
 
     הבהרה קריטית ליציבות: הדפדוף משנה אך ורק את index_key ב-session_state ו-
     *לא* נוגע ב-current_page / nav_request / handoff_ticker, ולכן נשאר תמיד
     באותו מסך ולא יכול "לזרוק" למסך הבית. הניווט למסך אחר קורה רק בלחיצה
-    מפורשת על כפתור "ניתוח מלא" (כפתור Streamlit אמיתי, מתחת לכרטיס).
+    מפורשת על כפתור "ניתוח מלא".
     """
     if not results:
         return
@@ -1091,78 +1224,56 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
     p = results[cur]
     price_html = render_price_inline(p["ticker"])
 
-    # סימוני טקסט ייחודיים (לכל מופע קרוסלה) שה-JS מאתר בהם את כפתורי הגישור
-    # החבויים - בדיוק כמו הטכניקה הקיימת והמוכחת של הכפתור הצף "⬆️ חזרה לראש העמוד".
-    next_marker = f"⟫cnav_next_{key_prefix}⟪"
-    prev_marker = f"⟫cnav_prev_{key_prefix}⟪"
+    # פריסה: [▶ הבא] [כרטיס] [◀ הקודם] - סדר ה-DOM הזה גורם ל-RTL להציג את "▶"
+    # בצד ימין של המסך (ליד השול הצבוע) ואת "◀" בצד שמאל, תואם את כיוון החץ.
+    col_next, col_card, col_prev = st.columns([1, 7, 1])
 
-    next_disabled = "" if cur < total - 1 else "carousel-nav-disabled"
-    prev_disabled = "" if cur > 0 else "carousel-nav-disabled"
+    with col_next:
+        st.markdown("<div class='carousel-arrow-cell'>", unsafe_allow_html=True)
+        if st.button("▶", key=f"{key_prefix}_next", use_container_width=True,
+                     disabled=(cur >= total - 1), help="המניה הבאה"):
+            _ok = False
+            try:
+                st.session_state[index_key] = min(total - 1, cur + 1)
+                _ok = True
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+            if _ok:
+                st.rerun()  # ריענון Streamlit תקין (לא רענון דפדפן) - ה-state נשמר
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    def _bridge_click_js(marker: str) -> str:
-        # מאתר כפתור Streamlit אמיתי לפי הטקסט הייחודי שלו ומפעיל עליו click() -
-        # זה מפעיל rerun תקין של Streamlit (לא רענון דפדפן), כל ה-state נשמר.
-        # מנסה גם document וגם window.parent.document (כמו הכפתור הצף הקיים
-        # "⬆️ חזרה לראש העמוד" שמשתמש באותה טכניקה מוכחת) - כדי לעבוד גם אם
-        # Streamlit מרונדר את האפליקציה בתוך iframe.
-        return (
-            "try{"
-            f"var found=false; var docs=[document, window.parent.document];"
-            "for(var d=0; d<docs.length && !found; d++){"
-            "  try{ var bs=docs[d].querySelectorAll('button');"
-            "    for(var i=0;i<bs.length;i++){"
-            f"      if(bs[i].innerText.indexOf('{marker}')>-1){{bs[i].click(); found=true; break;}}"
-            "    }"
-            "  }catch(e){}"
-            "}"
-            "}catch(e){} return false;"
-        )
+    with col_card:
+        try:
+            st.markdown(
+                f"""<div class='pick-card carousel-pick-card' style='border-right:5px solid {p['color']}; border-top:none;'>
+                    <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
+                        <span class='pick-rank'>#{cur+1}</span>
+                        <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
+                        <span>{price_html}</span>
+                    </div>
+                    <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
+                    <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
+                        · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
+                    <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+        except Exception as exc:
+            st.error(f"שגיאה בהצגת הכרטיס: {exc}")
 
-    def _bridge_hide_js(marker: str) -> str:
-        # מסתיר את כפתור הגישור (חבוי, אך עדיין קליק-בילי דרך JS) - קביעת style
-        # ישירות על האלמנט שנמצא לפי הטקסט, בלי תלות בניחוש מחלקות CSS פנימיות
-        # של Streamlit. מופעל אוטומטית בטעינה דרך img onerror (תרגיל מוכר -
-        # תגי <script> לא רצים כש-Streamlit מזריק HTML, אבל onerror כן).
-        return (
-            "try{"
-            "var docs=[document, window.parent.document];"
-            "for(var d=0; d<docs.length; d++){"
-            "  try{ var bs=docs[d].querySelectorAll('button');"
-            "    for(var i=0;i<bs.length;i++){"
-            f"      if(bs[i].innerText.indexOf('{marker}')>-1){{"
-            "        bs[i].style.position='fixed'; bs[i].style.left='-9999px'; bs[i].style.top='-9999px';"
-            "        bs[i].style.width='1px'; bs[i].style.height='1px'; bs[i].style.opacity='0'; bs[i].style.minHeight='1px';"
-            "        var wrap = bs[i].closest('[data-testid=\\'stButton\\']') || bs[i].parentElement;"
-            "        if(wrap){wrap.style.position='fixed'; wrap.style.left='-9999px'; wrap.style.top='-9999px'; wrap.style.height='1px'; wrap.style.width='1px'; wrap.style.overflow='hidden';}"
-            "      }"
-            "    }"
-            "  }catch(e){}"
-            "}"
-            "}catch(e){}"
-        )
-
-    next_onclick = _bridge_click_js(next_marker) if cur < total - 1 else "return false;"
-    prev_onclick = _bridge_click_js(prev_marker) if cur > 0 else "return false;"
-
-    try:
-        st.markdown(
-            f"""<div class='pick-card carousel-pick-card' style='border-right:5px solid {p['color']}; border-top:none;'>
-                <a href='#' onclick="{prev_onclick}" class='carousel-nav carousel-nav-left {prev_disabled}' title='המניה הקודמת'>◀</a>
-                <a href='#' onclick="{next_onclick}" class='carousel-nav carousel-nav-right {next_disabled}' title='המניה הבאה'>▶</a>
-                <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
-                    <span class='pick-rank'>#{cur+1}</span>
-                    <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
-                    <span>{price_html}</span>
-                </div>
-                <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
-                <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
-                    · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
-                <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-    except Exception as exc:
-        st.error(f"שגיאה בהצגת הכרטיס: {exc}")
+    with col_prev:
+        st.markdown("<div class='carousel-arrow-cell'>", unsafe_allow_html=True)
+        if st.button("◀", key=f"{key_prefix}_prev", use_container_width=True,
+                     disabled=(cur <= 0), help="המניה הקודמת"):
+            _ok = False
+            try:
+                st.session_state[index_key] = max(0, cur - 1)
+                _ok = True
+            except Exception as exc:
+                st.error(f"שגיאה במעבר כרטיס: {exc}")
+            if _ok:
+                st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
     # אינדקס מעוצב
     st.markdown(
@@ -1170,31 +1281,7 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         unsafe_allow_html=True,
     )
 
-    # --- כפתורי גישור חבויים (אמיתיים, ל-Streamlit) - לעולם לא נראים למשתמש,
-    #     אך זה מה שמפעיל בפועל את עדכון ה-state + st.rerun() כשה-JS לוחץ עליהם. ---
-    if st.button(next_marker, key=f"{key_prefix}_bridge_next"):
-        if cur < total - 1:
-            try:
-                st.session_state[index_key] = cur + 1
-                st.rerun()
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-    if st.button(prev_marker, key=f"{key_prefix}_bridge_prev"):
-        if cur > 0:
-            try:
-                st.session_state[index_key] = cur - 1
-                st.rerun()
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-
-    # תרגיל onerror: מריץ JS אוטומטית בטעינת הדף כדי להסתיר את שני כפתורי
-    # הגישור (img עם src לא תקין -> onerror יורה תמיד, ללא תלות בקליק).
-    st.markdown(
-        f"<img src='x' style='display:none;width:0;height:0;' "
-        f"onerror=\"{_bridge_hide_js(next_marker)}{_bridge_hide_js(prev_marker)}\">",
-        unsafe_allow_html=True,
-    )
-
+    # כפתור "ניתוח מלא" - כפתור Streamlit אמיתי (צריך לוגיקת home_mode + ניווט)
     if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"{key_prefix}_full_{p['ticker']}_{cur}", use_container_width=True):
         if dest_page == "📈 Trading Scout":
             # קביעת מצב הבית מראש ל-"results" כדי שכל דרך חזרה תנחת על הקרוסלה
@@ -1330,19 +1417,82 @@ def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phas
 
 
 def _render_find_money_animation(pct: int) -> None:
-    """עיגול טעינה גדול עם אחוזים גדולים וברורים + אנימציית שטרות נופלים קלה (לשלב 'תמצא לי')."""
-    bills = ""
-    # הופחת מ-8 ל-5 שטרות, ומשכים קוצרו - אנימציה חלקה וקלה יותר לדפדפן
-    positions = [12, 30, 50, 70, 88]
-    durs = [1.6, 1.9, 1.7, 2.0, 1.8]
-    emojis = ["💵", "💰", "💵", "🪙", "💸"]
-    for i, left in enumerate(positions):
-        bills += (f"<span class='money-bill' style='left:{left}%; "
-                  f"animation-duration:{durs[i]}s; animation-delay:{i*0.15:.2f}s;'>{emojis[i]}</span>")
-    st.markdown(f"<div class='money-rain'>{bills}</div>", unsafe_allow_html=True)
+    """
+    סצנת 'משרד אנליסטים עובד' - אנימציית CSS אלגנטית: דמויות ליד שולחנות
+    מקלידות, בוחנות גרפים, מדפדפות בקלסרים ודנות ביניהן. משדרת תחושה של
+    צוות מקצועי שעובד עבור המשתמש. כולל עיגול טעינה + אחוזים גדולים.
+    הפונקציה שומרת על שמה (משמשת את _run_find_scan) - רק התוכן הוחלף.
+    """
+    # סצנת המשרד: שורת שולחנות עם דמויות בפעולות שונות. כל אלמנט נע בעדינות.
+    office = """
+    <div class='office-scene'>
+        <div class='office-window'></div>
+        <div class='office-window' style='left:auto; right:8%;'></div>
+
+        <!-- אנליסט 1 - מקליד -->
+        <div class='desk-unit' style='left:6%;'>
+            <div class='analyst'>
+                <div class='analyst-head analyst-typing-head'></div>
+                <div class='analyst-body'></div>
+                <div class='analyst-arm arm-type-l'></div>
+                <div class='analyst-arm arm-type-r'></div>
+            </div>
+            <div class='desk'>
+                <div class='monitor'><div class='monitor-chart'></div></div>
+                <div class='keyboard'></div>
+            </div>
+        </div>
+
+        <!-- אנליסט 2 - בוחן גרף (מסתכל למסך גדול) -->
+        <div class='desk-unit' style='left:28%;'>
+            <div class='analyst'>
+                <div class='analyst-head analyst-look-head'></div>
+                <div class='analyst-body'></div>
+                <div class='analyst-arm arm-point'></div>
+            </div>
+            <div class='desk'>
+                <div class='monitor monitor-big'><div class='monitor-bars'>
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div></div>
+                <div class='keyboard'></div>
+            </div>
+        </div>
+
+        <!-- אנליסט 3 - מדפדף בקלסר -->
+        <div class='desk-unit' style='left:50%;'>
+            <div class='analyst'>
+                <div class='analyst-head analyst-read-head'></div>
+                <div class='analyst-body'></div>
+                <div class='analyst-arm arm-flip'></div>
+            </div>
+            <div class='desk'>
+                <div class='folder'><div class='folder-page'></div></div>
+            </div>
+        </div>
+
+        <!-- שני אנליסטים - דנים ביניהם -->
+        <div class='desk-unit' style='left:72%; width:24%;'>
+            <div class='analyst analyst-discuss-l'>
+                <div class='analyst-head analyst-discuss-head'></div>
+                <div class='analyst-body'></div>
+                <div class='analyst-arm arm-gesture'></div>
+            </div>
+            <div class='analyst analyst-discuss-r' style='left:54%;'>
+                <div class='analyst-head analyst-discuss-head2'></div>
+                <div class='analyst-body body-alt'></div>
+                <div class='analyst-arm arm-gesture2'></div>
+            </div>
+            <div class='speech-bubble'></div>
+            <div class='desk desk-wide'></div>
+        </div>
+
+        <div class='office-floor'></div>
+    </div>
+    """
+    st.markdown(office, unsafe_allow_html=True)
     st.markdown(
         f"<div class='find-loader-wrap'><div class='find-loader'><span class='find-pct'>{pct}%</span></div>"
-        f"<div class='home-orb-desc' style='margin-top:16px; font-size:1.0rem;'>סורק את כל השוק עם Early Pruning...</div></div>",
+        f"<div class='office-caption'>צוות האנליסטים סורק את כל השוק עבורך...</div></div>",
         unsafe_allow_html=True,
     )
 
