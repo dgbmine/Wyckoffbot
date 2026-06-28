@@ -1,6 +1,6 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V19.6 (Simple Reliable st.button Arrows + Analyst-Office Animation + 3D Design Upgrade)
+INSTITUTIONAL SCOUT PRO V19.8 (Content-Based :has() Overlay Arrows + Swipe Addition)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
 ============================================================
@@ -481,49 +481,111 @@ def inject_css() -> None:
     }
 
     /* ============================================================
-       CAROUSEL - חצים פשוטים ואמינים: כפתורי st.button אמיתיים בעמודות משני
-       צידי הכרטיס (לא overlay, לא absolute, לא JS - widgets מקוריים של
-       Streamlit שמובטח שעובדים בכל סביבה). מעוצבים כעיגולים תלת-מימדיים.
+       CAROUSEL OVERLAY ARROWS - חצים אמיתיים (st.button) הממוקמים
+       position:absolute על גבי הכרטיס. ממוקדים לפי תוכן (סימני <span>
+       ייחודיים) דרך :has() - בלי לנחש שום class פנימי של Streamlit, מה
+       שגרם לכישלון בניסיון קודם. כל חץ הוא st.container() אמיתי משלו,
+       ילד אמיתי של ה-stage החיצוני (גם הוא st.container() אמיתי) - קינון
+       DOM מובטח, לא תג HTML פתוח חוצה-קריאות.
        ============================================================ */
     @keyframes carouselCardIn {
         from { opacity: 0; transform: translateY(6px) scale(0.985); }
         to   { opacity: 1; transform: translateY(0) scale(1); }
     }
-    .pick-card { min-height: 200px; }
+    .pick-card { min-height: 220px; }
     .carousel-pick-card {
-        overflow: visible !important;
         animation: carouselCardIn 0.32s cubic-bezier(.2,.8,.2,1);
+        padding-left: 76px !important;
+        padding-right: 76px !important;
     }
-    /* תא החץ - ממרכז את כפתור החץ אנכית לגובה הכרטיס שלצידו */
-    .carousel-arrow-cell {
-        display: flex; align-items: center; justify-content: center;
-        min-height: 200px; height: 100%;
+    /* ה-stage עצמו: position:relative, מאותר לפי תוכן (cs-stage-marker) */
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-stage-marker) {
+        position: relative !important;
     }
-    /* מרכוז אנכי של שורת הקרוסלה כך שהחצים ביחס לאמצע הכרטיס (תוספת בטוחה) */
-    div[data-testid="stHorizontalBlock"]:has(.carousel-arrow-cell) { align-items: center !important; }
-    /* כפתורי החץ (st.button בתוך carousel-arrow-cell) - עיגולים תלת-מימדיים גדולים.
-       מכוון דרך ה-div של carousel-arrow-cell ואחריו ה-stButton (אחאים ב-DOM). */
-    .carousel-arrow-cell + div[data-testid="stButton"] > button,
-    .carousel-arrow-cell ~ div[data-testid="stButton"] > button {
-        width: 60px !important; height: 60px !important; min-height: 60px !important;
+    /* container החץ הבא (▶) - מאותר לפי cs-next-marker, ממוקם absolute בימין */
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-next-marker) {
+        position: absolute !important;
+        top: 50% !important; transform: translateY(-50%) !important;
+        right: 12px !important; z-index: 30 !important;
+    }
+    /* container החץ הקודם (◀) - מאותר לפי cs-prev-marker, ממוקם absolute בשמאל */
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-prev-marker) {
+        position: absolute !important;
+        top: 50% !important; transform: translateY(-50%) !important;
+        left: 12px !important; z-index: 30 !important;
+    }
+    /* עיצוב הכפתורים עצמם - עיגולים תלת-מימדיים גדולים עם hover glow חזק */
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-next-marker) button,
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-prev-marker) button {
+        width: 64px !important; height: 64px !important; min-height: 64px !important;
         border-radius: 50% !important; padding: 0 !important;
-        font-size: 1.5rem !important; font-weight: 800 !important;
+        font-size: 1.6rem !important; font-weight: 800 !important;
         background: linear-gradient(160deg, var(--bg-3), var(--bg-1)) !important;
         border: 1px solid var(--line-strong) !important;
-        box-shadow: 0 6px 18px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 1px rgba(56,189,248,0.18) !important;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.07), 0 0 0 1px rgba(56,189,248,0.2) !important;
         transition: transform 0.18s cubic-bezier(.2,.8,.2,1), box-shadow 0.2s ease, border-color 0.2s ease !important;
-        margin: 0 auto !important;
     }
-    .carousel-arrow-cell + div[data-testid="stButton"] > button:hover,
-    .carousel-arrow-cell ~ div[data-testid="stButton"] > button:hover {
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-next-marker) button:hover,
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-prev-marker) button:hover {
         border-color: var(--accent) !important;
-        box-shadow: 0 0 30px rgba(56,189,248,0.6), 0 8px 24px rgba(56,189,248,0.4), inset 0 1px 0 rgba(255,255,255,0.08) !important;
-        transform: translateY(-3px) scale(1.08);
+        box-shadow: 0 0 34px rgba(56,189,248,0.7), 0 8px 26px rgba(56,189,248,0.45), inset 0 1px 0 rgba(255,255,255,0.1) !important;
+        transform: translateY(-50%) scale(1.1) !important;
     }
-    .carousel-arrow-cell + div[data-testid="stButton"] > button:disabled,
-    .carousel-arrow-cell ~ div[data-testid="stButton"] > button:disabled {
-        opacity: 0.25 !important; box-shadow: none !important; transform: none !important;
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-next-marker) button:disabled,
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-prev-marker) button:disabled {
+        opacity: 0.25 !important; box-shadow: none !important; transform: translateY(-50%) !important;
     }
+
+    /* ============================================================
+       SWIPE CAROUSEL (תוספת) - כרטיסים בשורה אופקית עם scroll-snap. המשתמש
+       מחליק ימינה/שמאלה (מגע/trackpad) והכרטיסים נתפסים למקום עם החלקה חלקה.
+       ============================================================ */
+    .swipe-hint {
+        text-align: center; font-size: 0.95rem; font-weight: 700;
+        color: var(--accent); margin: 4px 0 12px 0; letter-spacing: 0.3px;
+        opacity: 0.9;
+    }
+    .swipe-track {
+        display: flex; flex-direction: row;
+        gap: 16px;
+        overflow-x: auto; overflow-y: hidden;
+        scroll-snap-type: x mandatory;
+        scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;   /* החלקה חלקה ב-iOS */
+        padding: 6px 4px 16px 4px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--line-strong) transparent;
+    }
+    /* פס גלילה דק ועדין (WebKit) */
+    .swipe-track::-webkit-scrollbar { height: 8px; }
+    .swipe-track::-webkit-scrollbar-track { background: transparent; }
+    .swipe-track::-webkit-scrollbar-thumb {
+        background: var(--line-strong); border-radius: 10px;
+    }
+    .swipe-track::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+    /* כל כרטיס תופס כמעט את כל הרוחב (כרטיס אחד נראה בכל פעם, רמז לבא אחריו) */
+    .swipe-card {
+        scroll-snap-align: center;
+        flex: 0 0 88%;
+        min-width: 88%;
+        box-sizing: border-box;
+        background: linear-gradient(155deg, var(--bg-2), var(--bg-1));
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 20px 22px;
+        min-height: 190px;
+        box-shadow: 0 8px 26px rgba(0,0,0,0.35);
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .swipe-card:hover {
+        border-color: var(--accent);
+        box-shadow: 0 12px 34px rgba(56,189,248,0.2);
+    }
+    .swipe-card-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+    .swipe-card .pick-ticker { font-size: 1.6rem; }
+    .swipe-price { font-size: 0.9rem; }
+
     .carousel-index-badge {
         text-align:center; font-weight: 700; color: var(--txt-2);
         background: var(--bg-1); border: 1px solid var(--line);
@@ -842,16 +904,20 @@ def inject_css() -> None:
         .narrative-box { padding: 16px 18px; }
         .float-back-wrap { bottom: 14px; left: 14px; }
         .float-back-wrap a { padding: 9px 14px; font-size: 0.82rem; }
-        /* חצי דפדוף Carousel גדולים ונוחים למגע במובייל */
-        .stButton > button { min-height: 46px; font-size: 1.0rem; }
-        .carousel-arrow-cell { min-height: 180px; }
-        .carousel-arrow-cell + div[data-testid="stButton"] > button,
-        .carousel-arrow-cell ~ div[data-testid="stButton"] > button {
-            width: 54px !important; height: 54px !important; min-height: 54px !important;
-            font-size: 1.4rem !important;
+        /* חצי Overlay במובייל - גדולים ונוחים למגע (56-60px) */
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-next-marker) button,
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-prev-marker) button {
+            width: 58px !important; height: 58px !important; min-height: 58px !important;
+            font-size: 1.45rem !important;
         }
-        .pick-card { min-height: 180px; }
-        .carousel-index-row { margin-top: 18px; }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-next-marker) { right: 6px !important; }
+        div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > span.cs-prev-marker) { left: 6px !important; }
+        .carousel-pick-card { padding-left: 64px !important; padding-right: 64px !important; }
+        /* כרטיסי החלקה במובייל - כרטיס כמעט מלא, עם רמז לבא אחריו */
+        .swipe-card { flex: 0 0 90%; min-width: 90%; padding: 16px 16px; min-height: 175px; }
+        .swipe-hint { font-size: 0.9rem; }
+        .swipe-card .pick-ticker { font-size: 1.4rem; }
+        .carousel-index-row { margin-top: 16px; }
         /* כפתורים עגולים במובייל (180-200px) עם טקסט גדול וברור, ורווח נדיב מסביב */
         .home-landing { padding: 22px 0 16px 0; }
         .home-landing-sub { margin-bottom: 44px; }
@@ -1197,20 +1263,26 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
 
 def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_page: str = "🏠 בית") -> None:
     """
-    תצוגת כרטיסיות עם דפדוף (Carousel) - מציג כרטיס מניה אחד בכל פעם, עם חצי
-    דפדוף משני צידי הכרטיס.
+    קרוסלה משולבת: כרטיס יחיד מודגש (לפי index_key) עם חצי Overlay אמיתיים
+    משני צידיו - בנוסף, למטה, רצועת Swipe של כל הכרטיסים לצפייה/החלקה מהירה.
 
-    *** השיטה הפשוטה והאמינה ביותר ***: שלוש עמודות st.columns אמיתיות, עם
-    כפתורי st.button אמיתיים משני צידי הכרטיס. אלה ה-widgets המקוריים של
-    Streamlit - מובטח שהם עובדים בכל סביבה (כולל Cloud Run בתוך iframe),
-    בלי position:absolute, בלי JS, בלי query params, בלי טריקים. לחיצה על חץ
-    מבצעת עדכון state רגיל + st.rerun() (ריענון פנימי תקין של Streamlit, *לא*
-    רענון דפדפן) - כל ה-session_state נשמר והכרטיסיות לא נעלמות.
+    *** איך ה-Overlay האמיתי הושג (אחרי 3 ניסיונות קודמים שנכשלו) ***:
+    בניסיון V19.2 קודם ניחשתי class CSS שStreamlit כביכול מוסיף ל-
+    st.container(key=...) - הניחוש היה כנראה שגוי, ולכן position:relative
+    לא הוחל בשום מקום, וה-position:absolute "ברח" לקואורדינטות של כל
+    העמוד (זו הסיבה שהחצים צפו לפינה אקראית).
 
-    הבהרה קריטית ליציבות: הדפדוף משנה אך ורק את index_key ב-session_state ו-
-    *לא* נוגע ב-current_page / nav_request / handoff_ticker, ולכן נשאר תמיד
-    באותו מסך ולא יכול "לזרוק" למסך הבית. הניווט למסך אחר קורה רק בלחיצה
-    מפורשת על כפתור "ניתוח מלא".
+    הפעם: בלי ניחוש class בכלל. כל חץ יושב בתוך st.container() *אמיתי*
+    משלו (קינון DOM מובטח ע"י Streamlit), עם תג <span> ייחודי וזעיר בתוכו
+    כ"סימן הכר". ה-CSS משתמש ב-:has() כדי לאתר *לפי תוכן* (לא לפי שם
+    class מנוחש) איזה container מכיל איזה סימן, וממקם אותו position:absolute
+    בהתאם. שני החצים וה כרטיס כולם ילדים אמיתיים של st.container() חיצוני
+    משותף (stage) שמסומן position:relative - כך שה-absolute positioning
+    מתייחס נכון לגבולות האזור, לא לכל העמוד.
+
+    הבהרה קריטית ליציבות: לחיצת חץ משנה אך ורק את index_key + st.rerun()
+    (ריענון Streamlit תקין, לא רענון דפדפן) - לא נוגעת ב-current_page/
+    nav_request/handoff_ticker, ולכן נשארת תמיד באותו מסך.
     """
     if not results:
         return
@@ -1222,33 +1294,24 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         st.session_state[index_key] = 0
 
     p = results[cur]
-    price_html = render_price_inline(p["ticker"])
+    try:
+        price_html = render_price_inline(p["ticker"])
+    except Exception:
+        price_html = ""
 
-    # פריסה: [▶ הבא] [כרטיס] [◀ הקודם] - סדר ה-DOM הזה גורם ל-RTL להציג את "▶"
-    # בצד ימין של המסך (ליד השול הצבוע) ואת "◀" בצד שמאל, תואם את כיוון החץ.
-    col_next, col_card, col_prev = st.columns([1, 7, 1])
+    # --- stage: container אמיתי המכיל את הכרטיס + שני תת-containers (חץ כל אחד) ---
+    stage = st.container()
+    with stage:
+        # סימן הכר לעוגן ה-position:relative של כל האזור (מאותר ב-CSS דרך :has(),
+        # לא דרך ניחוש class)
+        st.markdown("<span class='cs-stage-marker'></span>", unsafe_allow_html=True)
 
-    with col_next:
-        st.markdown("<div class='carousel-arrow-cell'>", unsafe_allow_html=True)
-        if st.button("▶", key=f"{key_prefix}_next", use_container_width=True,
-                     disabled=(cur >= total - 1), help="המניה הבאה"):
-            _ok = False
-            try:
-                st.session_state[index_key] = min(total - 1, cur + 1)
-                _ok = True
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-            if _ok:
-                st.rerun()  # ריענון Streamlit תקין (לא רענון דפדפן) - ה-state נשמר
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    with col_card:
         try:
             st.markdown(
                 f"""<div class='pick-card carousel-pick-card' style='border-right:5px solid {p['color']}; border-top:none;'>
                     <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
                         <span class='pick-rank'>#{cur+1}</span>
-                        <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
+                        <span class='pick-ticker' style='font-size:1.6rem;'>{p['ticker']}</span>
                         <span>{price_html}</span>
                     </div>
                     <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
@@ -1261,19 +1324,33 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         except Exception as exc:
             st.error(f"שגיאה בהצגת הכרטיס: {exc}")
 
-    with col_prev:
-        st.markdown("<div class='carousel-arrow-cell'>", unsafe_allow_html=True)
-        if st.button("◀", key=f"{key_prefix}_prev", use_container_width=True,
-                     disabled=(cur <= 0), help="המניה הקודמת"):
-            _ok = False
-            try:
-                st.session_state[index_key] = max(0, cur - 1)
-                _ok = True
-            except Exception as exc:
-                st.error(f"שגיאה במעבר כרטיס: {exc}")
-            if _ok:
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        # חץ "▶" (הבא) - container אמיתי משלו, מסומן ע"י cs-next-marker
+        next_box = st.container()
+        with next_box:
+            st.markdown("<span class='cs-next-marker'></span>", unsafe_allow_html=True)
+            if st.button("▶", key=f"{key_prefix}_next", disabled=(cur >= total - 1), help="המניה הבאה"):
+                _ok = False
+                try:
+                    st.session_state[index_key] = min(total - 1, cur + 1)
+                    _ok = True
+                except Exception as exc:
+                    st.error(f"שגיאה במעבר כרטיס: {exc}")
+                if _ok:
+                    st.rerun()  # מחוץ ל-try כדי לא לבלוע את חריגת ה-rerun הפנימית
+
+        # חץ "◀" (הקודם) - container אמיתי משלו, מסומן ע"י cs-prev-marker
+        prev_box = st.container()
+        with prev_box:
+            st.markdown("<span class='cs-prev-marker'></span>", unsafe_allow_html=True)
+            if st.button("◀", key=f"{key_prefix}_prev", disabled=(cur <= 0), help="המניה הקודמת"):
+                _ok = False
+                try:
+                    st.session_state[index_key] = max(0, cur - 1)
+                    _ok = True
+                except Exception as exc:
+                    st.error(f"שגיאה במעבר כרטיס: {exc}")
+                if _ok:
+                    st.rerun()
 
     # אינדקס מעוצב
     st.markdown(
@@ -1282,11 +1359,38 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
     )
 
     # כפתור "ניתוח מלא" - כפתור Streamlit אמיתי (צריך לוגיקת home_mode + ניווט)
-    if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"{key_prefix}_full_{p['ticker']}_{cur}", use_container_width=True):
+    if st.button(f"📊 ניתוח מלא ל-{p['ticker']}", key=f"{key_prefix}_full_{p['ticker']}_{cur}", use_container_width=True, type="primary"):
         if dest_page == "📈 Trading Scout":
             # קביעת מצב הבית מראש ל-"results" כדי שכל דרך חזרה תנחת על הקרוסלה
             st.session_state.home_mode = "results"
         go_to_screen(dest_page, p["ticker"])
+
+    # --- שמירה על Swipe כתוספת: רצועת כל הכרטיסים להחלקה/צפייה מהירה ---
+    st.markdown(
+        "<div class='swipe-hint'>👈 או החלק ימינה ושמאלה לצפייה מהירה בכולן 👉</div>",
+        unsafe_allow_html=True,
+    )
+    parts = ["<div class='swipe-track'>"]
+    for i, sp in enumerate(results):
+        try:
+            sp_price_html = render_price_inline(sp["ticker"])
+        except Exception:
+            sp_price_html = ""
+        parts.append(
+            f"<div class='swipe-card' style='border-right:5px solid {sp['color']};'>"
+            f"<div class='swipe-card-top'>"
+            f"<span class='pick-rank'>#{i+1}</span>"
+            f"<span class='pick-ticker'>{sp['ticker']}</span>"
+            f"<span class='swipe-price'>{sp_price_html}</span>"
+            f"</div>"
+            f"<div class='pick-headline' style='color:{sp['color']};'>{sp.get('headline','')}</div>"
+            f"<div class='pick-meta'>תמחור: <b style='color:{sp['valuation_color']}'>{sp['valuation']}</b> · CIS {sp['cis']:.0f}"
+            f" · Wyckoff: {sp.get('phase','-')} · FCF: {sp['fcf_yield']} · P/E: {sp['pe']} · {sp['sector_he']}</div>"
+            f"<div class='pick-score-pill'>ציון משוקלל: {sp['composite']:.0f}</div>"
+            f"</div>"
+        )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 def _render_top_picks() -> None:
@@ -1419,80 +1523,78 @@ def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phas
 def _render_find_money_animation(pct: int) -> None:
     """
     סצנת 'משרד אנליסטים עובד' - אנימציית CSS אלגנטית: דמויות ליד שולחנות
-    מקלידות, בוחנות גרפים, מדפדפות בקלסרים ודנות ביניהן. משדרת תחושה של
-    צוות מקצועי שעובד עבור המשתמש. כולל עיגול טעינה + אחוזים גדולים.
-    הפונקציה שומרת על שמה (משמשת את _run_find_scan) - רק התוכן הוחלף.
+    מקלידות, בוחנות גרפים, מדפדפות בקלסרים ודנות ביניהן. כולל עיגול טעינה
+    + אחוזים גדולים. הפונקציה שומרת על שמה (משמשת את _run_find_scan).
+
+    קריטי: כל ה-HTML חייב להיבנות כמחרוזת רציפה אחת *ללא שורות ריקות וללא
+    הזחה* - שורה ריקה בתוך בלוק HTML גורמת למעבד ה-markdown של Streamlit
+    לסגור את הבלוק ולהציג את שאר ה-HTML כטקסט גולמי (זה היה הבאג של ה-HTML
+    שדלף מאחורי העיגול). לכן הסצנה נבנית כאן כרשימת חלקים שמחוברים בלי
+    תווי שורה.
     """
-    # סצנת המשרד: שורת שולחנות עם דמויות בפעולות שונות. כל אלמנט נע בעדינות.
-    office = """
-    <div class='office-scene'>
-        <div class='office-window'></div>
-        <div class='office-window' style='left:auto; right:8%;'></div>
-
-        <!-- אנליסט 1 - מקליד -->
-        <div class='desk-unit' style='left:6%;'>
-            <div class='analyst'>
-                <div class='analyst-head analyst-typing-head'></div>
-                <div class='analyst-body'></div>
-                <div class='analyst-arm arm-type-l'></div>
-                <div class='analyst-arm arm-type-r'></div>
-            </div>
-            <div class='desk'>
-                <div class='monitor'><div class='monitor-chart'></div></div>
-                <div class='keyboard'></div>
-            </div>
-        </div>
-
-        <!-- אנליסט 2 - בוחן גרף (מסתכל למסך גדול) -->
-        <div class='desk-unit' style='left:28%;'>
-            <div class='analyst'>
-                <div class='analyst-head analyst-look-head'></div>
-                <div class='analyst-body'></div>
-                <div class='analyst-arm arm-point'></div>
-            </div>
-            <div class='desk'>
-                <div class='monitor monitor-big'><div class='monitor-bars'>
-                    <span></span><span></span><span></span><span></span><span></span>
-                </div></div>
-                <div class='keyboard'></div>
-            </div>
-        </div>
-
-        <!-- אנליסט 3 - מדפדף בקלסר -->
-        <div class='desk-unit' style='left:50%;'>
-            <div class='analyst'>
-                <div class='analyst-head analyst-read-head'></div>
-                <div class='analyst-body'></div>
-                <div class='analyst-arm arm-flip'></div>
-            </div>
-            <div class='desk'>
-                <div class='folder'><div class='folder-page'></div></div>
-            </div>
-        </div>
-
-        <!-- שני אנליסטים - דנים ביניהם -->
-        <div class='desk-unit' style='left:72%; width:24%;'>
-            <div class='analyst analyst-discuss-l'>
-                <div class='analyst-head analyst-discuss-head'></div>
-                <div class='analyst-body'></div>
-                <div class='analyst-arm arm-gesture'></div>
-            </div>
-            <div class='analyst analyst-discuss-r' style='left:54%;'>
-                <div class='analyst-head analyst-discuss-head2'></div>
-                <div class='analyst-body body-alt'></div>
-                <div class='analyst-arm arm-gesture2'></div>
-            </div>
-            <div class='speech-bubble'></div>
-            <div class='desk desk-wide'></div>
-        </div>
-
-        <div class='office-floor'></div>
-    </div>
-    """
-    st.markdown(office, unsafe_allow_html=True)
+    parts = [
+        "<div class='office-scene'>",
+        "<div class='office-window'></div>",
+        "<div class='office-window' style='left:auto; right:8%;'></div>",
+        # אנליסט 1 - מקליד
+        "<div class='desk-unit' style='left:6%;'>",
+        "<div class='analyst'>",
+        "<div class='analyst-head analyst-typing-head'></div>",
+        "<div class='analyst-body'></div>",
+        "<div class='analyst-arm arm-type-l'></div>",
+        "<div class='analyst-arm arm-type-r'></div>",
+        "</div>",
+        "<div class='desk'>",
+        "<div class='monitor'><div class='monitor-chart'></div></div>",
+        "<div class='keyboard'></div>",
+        "</div>",
+        "</div>",
+        # אנליסט 2 - בוחן גרף
+        "<div class='desk-unit' style='left:28%;'>",
+        "<div class='analyst'>",
+        "<div class='analyst-head analyst-look-head'></div>",
+        "<div class='analyst-body'></div>",
+        "<div class='analyst-arm arm-point'></div>",
+        "</div>",
+        "<div class='desk'>",
+        "<div class='monitor monitor-big'><div class='monitor-bars'><span></span><span></span><span></span><span></span><span></span></div></div>",
+        "<div class='keyboard'></div>",
+        "</div>",
+        "</div>",
+        # אנליסט 3 - מדפדף בקלסר
+        "<div class='desk-unit' style='left:50%;'>",
+        "<div class='analyst'>",
+        "<div class='analyst-head analyst-read-head'></div>",
+        "<div class='analyst-body'></div>",
+        "<div class='analyst-arm arm-flip'></div>",
+        "</div>",
+        "<div class='desk'>",
+        "<div class='folder'><div class='folder-page'></div></div>",
+        "</div>",
+        "</div>",
+        # שני אנליסטים - דנים ביניהם
+        "<div class='desk-unit' style='left:72%; width:24%;'>",
+        "<div class='analyst analyst-discuss-l'>",
+        "<div class='analyst-head analyst-discuss-head'></div>",
+        "<div class='analyst-body'></div>",
+        "<div class='analyst-arm arm-gesture'></div>",
+        "</div>",
+        "<div class='analyst analyst-discuss-r' style='left:54%;'>",
+        "<div class='analyst-head analyst-discuss-head2'></div>",
+        "<div class='analyst-body body-alt'></div>",
+        "<div class='analyst-arm arm-gesture2'></div>",
+        "</div>",
+        "<div class='speech-bubble'></div>",
+        "<div class='desk desk-wide'></div>",
+        "</div>",
+        "<div class='office-floor'></div>",
+        "</div>",
+    ]
+    # חיבור בלי תווי שורה כלל - בלוק HTML רציף אחד
+    st.markdown("".join(parts), unsafe_allow_html=True)
     st.markdown(
         f"<div class='find-loader-wrap'><div class='find-loader'><span class='find-pct'>{pct}%</span></div>"
-        f"<div class='office-caption'>צוות האנליסטים סורק את כל השוק עבורך...</div></div>",
+        f"<div class='office-caption'>המערכת סורקת עבורך את השוק...</div></div>",
         unsafe_allow_html=True,
     )
 
