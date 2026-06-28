@@ -1,8 +1,21 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V20.0 (Premium Institutional Visual Overhaul)
+INSTITUTIONAL SCOUT PRO V20.2 (Feedback-Driven Update)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V20.2 — שיפורים מבוססי משוב שטח (סבב ראשון, סוחר וויקוף 1-3 שנות ניסיון):
+  1. דיוק זיהוי פאזות: שכבת אימות (Confirmation Overlay) מעל מנוע הליבה
+     שמשדרגת מצבי "TRANSITION" שגויים כשמבנה המחיר/נפח ברור (תיקון "בעיית WULF"),
+     מבלי לגעת במנוע ה-FactorEngine המוגן.
+  2. הסבר "למה הפאזה הזו": Evidence Engine שמפרט נפח, מחיר, ספיגה, OBV, RS.
+  3. נתונים: רצועת סטטוס טריות (Data Freshness) + אזהרת נתון חסר/מיושן + רבעון אחרון שדווח.
+  4. CIS: מפענח משמעות הציון ("מה אומר 78") + פירוט פקטורים ("למה קיבלתי את הציון").
+  5. תוכנית מסחר Swing ישימה: כניסה/סטופ/יעדים מדורגים + תרחישי Shakeout/Breakout
+     + הפרדה ברורה בין וויקוף (קצר-בינוני) לפונדמנטלי (ארוך).
+  6. סריקה: הדגשת מניות בפאזת C / Spring / Shakeout / איסוף חזק + Macro Technical Radar קל.
+  כל השינויים בשכבת האפליקציה בלבד — קבצי הליבה (scout_core / market_scanner / trading_scout)
+  לא שונו כדי לשמר את ה-IP והיציבות.
 ============================================================
 """
 
@@ -992,6 +1005,126 @@ def inject_css() -> None:
 
     /* nav */
     .topnav-spacer { height: 8px; }
+
+    /* ============================================================
+       V20.2 FEEDBACK COMPONENTS (Institutional Minimalist preserved)
+       ============================================================ */
+
+    /* --- רצועת סטטוס נתונים (Data Freshness) --- */
+    .data-status {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+        background: var(--glass); border: 1px solid var(--glass-border);
+        border-radius: 14px; padding: 10px 14px; margin: 6px 0 14px 0;
+        backdrop-filter: blur(6px);
+    }
+    .ds-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        font-size: 0.86rem; color: var(--txt-2); font-weight: 600;
+        background: rgba(255,255,255,0.03); border: 1px solid var(--line);
+        border-radius: 10px; padding: 5px 11px;
+    }
+    .ds-chip b { color: var(--txt-1); font-weight: 700; }
+    .ds-fresh  { border-color: rgba(34,197,94,0.4);  color: var(--pos-soft); }
+    .ds-warn   { border-color: rgba(234,179,8,0.45);  color: var(--warn-soft); }
+    .ds-stale  { border-color: rgba(239,68,68,0.5);   color: #fca5a5; background: rgba(239,68,68,0.06); }
+    .ds-fresh b, .ds-warn b, .ds-stale b { color: inherit; }
+
+    /* --- בלוק ראיות פאזה (Why this phase) --- */
+    .phase-evidence {
+        background: var(--glass); border: 1px solid var(--glass-border);
+        border-radius: var(--radius); padding: 18px 20px; margin: 4px 0 8px 0;
+        backdrop-filter: blur(8px); box-shadow: var(--shadow);
+    }
+    .pe-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom: 6px; }
+    .pe-phase-pill {
+        font-weight: 800; font-size: 1.05rem; color: #0f172a;
+        background: var(--accent); border-radius: 10px; padding: 4px 12px;
+    }
+    .pe-phase-pill.bear { background: var(--neg); color: #fff; }
+    .pe-phase-pill.neut { background: rgba(148,163,184,0.25); color: var(--txt-1); }
+    .pe-refined-tag {
+        font-size: 0.78rem; font-weight: 700; color: var(--warn-soft);
+        border: 1px dashed rgba(234,179,8,0.55); border-radius: 8px; padding: 2px 8px;
+    }
+    .pe-summary { color: var(--txt-2); font-size: 0.95rem; line-height: 1.7; margin: 6px 0 12px 0; }
+    .pe-item {
+        display: flex; gap: 10px; align-items: flex-start; padding: 7px 0;
+        border-top: 1px solid var(--line); font-size: 0.93rem; line-height: 1.6;
+    }
+    .pe-item:first-of-type { border-top: none; }
+    .pe-ico { flex: 0 0 auto; font-size: 1rem; margin-top: 1px; }
+    .pe-pos .pe-ico { color: var(--pos-soft); }
+    .pe-neg .pe-ico { color: #fca5a5; }
+    .pe-neu .pe-ico { color: var(--txt-3); }
+    .pe-label { color: var(--txt-1); font-weight: 700; }
+    .pe-val { color: var(--accent); font-weight: 800; }
+
+    /* --- כרטיס משמעות CIS --- */
+    .cis-meaning {
+        display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+        background: var(--glass); border: 1px solid var(--glass-border);
+        border-radius: var(--radius); padding: 16px 20px; margin: 6px 0;
+        backdrop-filter: blur(8px);
+    }
+    .cm-num { font-size: 2.6rem; font-weight: 900; line-height: 1; }
+    .cm-body { flex: 1 1 240px; }
+    .cm-band { font-weight: 800; font-size: 1.05rem; }
+    .cm-meaning { color: var(--txt-2); font-size: 0.92rem; line-height: 1.65; margin-top: 3px; }
+    .cm-scale { display:flex; height: 8px; border-radius: 6px; overflow:hidden; margin-top:10px; width:100%; }
+    .cm-seg { flex:1; }
+
+    /* --- תוכנית סווינג / תרחישים --- */
+    .swing-sep {
+        display:flex; align-items:center; gap:10px; margin: 18px 0 8px 0;
+        font-weight: 800; font-size: 1rem; color: var(--txt-1);
+    }
+    .swing-sep .sep-tag {
+        font-size: 0.72rem; font-weight: 700; padding: 2px 9px; border-radius: 8px;
+        border: 1px solid var(--line-strong); color: var(--txt-2);
+    }
+    .swing-sep .tag-short { color: var(--accent); border-color: var(--accent-soft); }
+    .swing-sep .tag-long  { color: var(--pos-soft); border-color: rgba(34,197,94,0.4); }
+    .scenario-grid { display:grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
+    @media (max-width: 720px) { .scenario-grid { grid-template-columns: 1fr; } }
+    .scenario-card {
+        border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px;
+        background: rgba(255,255,255,0.02);
+    }
+    .scenario-card.bull { border-color: rgba(34,197,94,0.35); background: rgba(34,197,94,0.05); }
+    .scenario-card.bear { border-color: rgba(239,68,68,0.35); background: rgba(239,68,68,0.06); }
+    .sc-title { font-weight: 800; font-size: 0.98rem; margin-bottom: 6px; }
+    .sc-title.bull { color: var(--pos-soft); }
+    .sc-title.bear { color: #fca5a5; }
+    .sc-body { color: var(--txt-2); font-size: 0.9rem; line-height: 1.65; }
+    .sc-body b { color: var(--txt-1); }
+
+    /* --- צ'יפ הדגשה לכרטיסי סריקה (Phase C / Spring / Shakeout / איסוף חזק) --- */
+    .phase-hot-badge {
+        display: inline-block; font-size: 0.74rem; font-weight: 800;
+        padding: 3px 9px; border-radius: 8px; margin-right: 6px;
+        letter-spacing: 0.2px; vertical-align: middle;
+    }
+    .hot-spring { background: rgba(56,189,248,0.16); color: var(--accent); border: 1px solid var(--accent-soft); }
+    .hot-accum  { background: rgba(34,197,94,0.14);  color: var(--pos-soft); border: 1px solid rgba(34,197,94,0.4); }
+    .hot-shake  { background: rgba(234,179,8,0.14);   color: var(--warn-soft); border: 1px solid rgba(234,179,8,0.45); }
+
+    /* --- Macro Technical Radar --- */
+    .macro-radar {
+        background: var(--glass); border: 1px solid var(--glass-border);
+        border-radius: var(--radius); padding: 14px 18px; margin: 8px 0 16px 0;
+        backdrop-filter: blur(8px); box-shadow: var(--shadow);
+    }
+    .mr-head { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:8px; }
+    .mr-title { font-weight: 800; font-size: 1rem; color: var(--txt-1); }
+    .mr-regime { font-weight: 800; font-size: 0.95rem; padding: 4px 12px; border-radius: 10px; }
+    .mr-grid { display:flex; flex-wrap:wrap; gap: 10px; }
+    .mr-cell {
+        flex: 1 1 120px; border: 1px solid var(--line); border-radius: 12px;
+        padding: 9px 12px; background: rgba(255,255,255,0.02);
+    }
+    .mr-cell-name { font-size: 0.78rem; color: var(--txt-3); font-weight: 700; }
+    .mr-cell-val { font-size: 1.0rem; font-weight: 800; margin-top: 2px; }
+    .mr-note { color: var(--txt-2); font-size: 0.86rem; line-height: 1.6; margin-top: 8px; }
     </style>
 
     <script>
@@ -1036,15 +1169,809 @@ def _compute_wyckoff(ticker: str):
     current_phase = str(phases.iloc[-1])
     current_cis = float(cis.iloc[-1])
     allowed = check_phase_entry_allowed(current_phase, "Balanced")
+
+    # === V20.2: שכבת אימות + ראיות + טריות נתונים (אפליקטיבי, מעל המנוע המוגן) ===
+    refined_phase, was_refined, refine_note = refine_wyckoff_phase(df, factors, current_phase)
+    evidence = build_phase_evidence(df, factors, refined_phase)
+    freshness = assess_data_freshness(df)
+
     return {
         "df": df,
         "factors": factors,
         "cis": cis,
-        "current_phase": current_phase,
+        "current_phase": current_phase,        # פלט המנוע המקורי (לא שונה)
+        "display_phase": refined_phase,         # פלט מוצג לאחר אימות אפליקטיבי
+        "phase_refined": was_refined,
+        "phase_refine_note": refine_note,
+        "phase_evidence": evidence,
+        "freshness": freshness,
         "current_cis": current_cis,
         "allowed": allowed,
         "num_bars": len(df)
     }
+
+
+# ============================================================
+# V20.2 — שכבת אימות פאזות, מנוע ראיות, טריות נתונים, פירוש CIS,
+# תוכנית סווינג ו-Macro Radar. הכל ברמת האפליקציה בלבד.
+# המנוע (FactorEngine) ושאר פונקציות הליבה המוגנות אינם נוגעים בכלל.
+# ============================================================
+
+# --- מילון פאזות עברי קצר (לתצוגה אנושית) ---
+_PHASE_HE = {
+    "Phase A": "שלב A — בלימת ירידות (Selling Climax)",
+    "Phase B": "שלב B — איסוף שקט / בניית כוח",
+    "Phase C": "שלב C — ניעור (Spring) ובדיקת תחתית",
+    "Phase D": "שלב D — הכנה לפריצה (SOS/LPS)",
+    "Phase E": "שלב E — מגמת עלייה (Markup)",
+    "Re-accumulation": "איסוף חוזר (LPS/BUEC)",
+    "Markdown": "מגמת ירידה (Markdown)",
+    "Distribution": "הפצה מוסדית (Distribution)",
+    "Selling Climax": "שיא מכירות (Phase A)",
+    "Failed Sweep": "ניעור שנכשל — אזהרה",
+    "TRANSITION": "מצב מעבר / חוסר ודאות",
+    "לא בתהליך": "לא בתהליך איסוף מובהק",
+}
+
+
+def _phase_family(phase: str) -> str:
+    """מסווג פאזה למשפחה: bullish_adv / bullish_early / bearish / transition / none."""
+    p = phase or ""
+    if any(k in p for k in ("Distribution", "Markdown", "Heavy Supply", "Failed Sweep")):
+        return "bearish"
+    if any(k in p for k in ("Phase E", "Markup", "Phase D", "SOS", "LPS", "Re-accumulation", "Breakout")):
+        return "bullish_adv"
+    if any(k in p for k in ("Phase C", "Spring", "Phase B", "Accumulation", "Phase A", "Selling Climax")):
+        return "bullish_early"
+    if any(k in p for k in ("TRANSITION", "UNCERTAIN", "לא בתהליך")):
+        return "transition"
+    return "none"
+
+
+def _sma(series: pd.Series, n: int):
+    try:
+        return float(series.rolling(n).mean().iloc[-1])
+    except Exception:
+        return float("nan")
+
+
+def refine_wyckoff_phase(df: pd.DataFrame, factors: pd.DataFrame, engine_phase: str):
+    """
+    שכבת אימות (Confirmation Overlay) מעל פלט מנוע הליבה.
+    *אינה* משנה את FactorEngine — רק קוראת את אותם נתונים גולמיים ומשדרגת תווית
+    כשהמנוע נפל ל-"TRANSITION / UNCERTAIN" למרות מבנה מחיר/נפח חד-משמעי.
+
+    הרקע (תיקון "בעיית WULF"): המנוע מסווג Phase E רק אם גם OBV וגם RS חיוביים,
+    ו-Phase D רק אם OBV חיובי. מניה שפרצה בעוצמה אך אחד הסינונים המשניים בדיוק
+    "פספס" (למשל RS שלילי קל) נזרקת ל-TRANSITION ומפספסת פאזה מתקדמת אמיתית.
+    כאן אנו משדרגים *רק* כשמבנה המחיר חזק וברור, ומסמנים שזה אומת אפליקטיבית.
+
+    מחזיר: (refined_phase, was_refined, note)
+    שמרני: לעולם לא מוריד דרגה מתווית ודאית של המנוע, רק משדרג TRANSITION/לא-בתהליך.
+    """
+    try:
+        fam = _phase_family(engine_phase)
+        # אם המנוע כבר ודאי (לא מעבר) — מכבדים אותו לחלוטין
+        if fam != "transition":
+            return engine_phase, False, ""
+
+        if df is None or len(df) < 60:
+            return engine_phase, False, ""
+
+        close = df["Close"]
+        c = float(close.iloc[-1])
+        o = float(df["Open"].iloc[-1])
+        v = float(df["Volume"].iloc[-1])
+        v_ma = float(df["Volume"].rolling(20).mean().iloc[-1]) if len(df) >= 20 else v
+        s20, s50, s200 = _sma(close, 20), _sma(close, 50), _sma(close, 200)
+        if any(pd.isna(x) for x in (s20, s50)):
+            return engine_phase, False, ""
+        if pd.isna(s200):
+            s200 = s50
+        high60 = float(df["High"].rolling(60).max().iloc[-1])
+        vol_exp = (v > v_ma * 1.5) if v_ma else False
+
+        # OBV slope (10) ו-RS — בדיוק הסינונים המשניים שהמנוע מקפיד עליהם
+        obv = (np.sign(close.diff()) * df["Volume"]).cumsum()
+        obv_slope = float(obv.diff(10).iloc[-1]) if len(obv) >= 10 else 0.0
+        rs = 0.0
+        if "spy_close" in df.columns:
+            try:
+                rs = float((close.pct_change(20).iloc[-1] - df["spy_close"].pct_change(20).iloc[-1]))
+            except Exception:
+                rs = 0.0
+
+        near_high = c >= high60 * 0.97
+        full_stack = c > s20 and s20 > s50 and s50 > s200
+
+        # (1) Markup ברור: סטאק ממוצעים מלא + צמוד לשיא 60 יום
+        if full_stack and near_high:
+            why = []
+            if obv_slope <= 0:
+                why.append("זרימת ההון (OBV) שטוחה/שלילית קלות")
+            if rs <= 0:
+                why.append("עוצמה יחסית מול השוק עדיין לא חיובית")
+            reason = " ו".join(why) if why else "אישור משני חלקי בלבד"
+            note = (f"מבנה המחיר חד-משמעית במגמת עלייה (סגירה מעל כל הממוצעים, צמוד לשיא 60 יום), "
+                    f"אך המנוע סיווג 'מעבר' כי {reason}. שכבת האימות משדרגת ל-Phase E כאזהרה שהמהלך כבר התקדם.")
+            return "Phase E (Markup) — אומת אפליקטיבית", True, note
+
+        # (2) Breakout/SOS ברור: מעל SMA50, נר ירוק, נפח מתרחב, קרוב לשיא
+        if c > s50 and c > o and vol_exp and c >= high60 * 0.92:
+            note = ("פריצה בעוצמה: סגירה ירוקה מעל ממוצע 50, התרחבות נפח משמעותית וקרבה לשיא 60 יום. "
+                    "המנוע נשאר ב'מעבר' (לרוב בגלל OBV), אך מבנה הפריצה ברור — שודרג ל-Phase D (SOS).")
+            return "Phase D (SOS / Breakout) — אומת אפליקטיבית", True, note
+
+        # (3) Spring/Shakeout ברור שלא תוייג: שפל חדש שנבלע + סגירה ירוקה בנפח גבוה
+        low60 = float(df["Low"].rolling(60).min().shift(1).iloc[-1])
+        is_new_low = float(df["Low"].iloc[-1]) < low60
+        if is_new_low and c > o and vol_exp and obv_slope >= 0:
+            note = ("ניעור נזילות (Spring): שפל חדש מתחת לטווח שנבלע מיד עם סגירה ירוקה ונפח גבוה, "
+                    "וה-OBV מחזיק. תבנית Phase C קלאסית ששכבת האימות מדגישה.")
+            return "Phase C (Spring / Liquidity Sweep) — אומת אפליקטיבית", True, note
+
+        return engine_phase, False, ""
+    except Exception:
+        return engine_phase, False, ""
+
+
+def build_phase_evidence(df: pd.DataFrame, factors: pd.DataFrame, phase: str) -> list:
+    """
+    מנוע ראיות: מסביר *למה* המערכת חושבת שזו הפאזה — לפי נפח, מחיר, ספיגה, OBV, RS,
+    שבירת מבנה ו-Effort vs Result. קורא את עמודות הפקטורים האמיתיות של המנוע.
+    מחזיר רשימת dict: {tone: pos/neg/neu, label, value, text}.
+    """
+    out = []
+    try:
+        if df is None or df.empty:
+            return out
+        close = df["Close"]
+        c = float(close.iloc[-1])
+        o = float(df["Open"].iloc[-1])
+        v = float(df["Volume"].iloc[-1])
+        v_ma = float(df["Volume"].rolling(20).mean().iloc[-1]) if len(df) >= 20 else (v or 1.0)
+        vol_ratio = (v / v_ma) if v_ma else 1.0
+        s20, s50, s200 = _sma(close, 20), _sma(close, 50), _sma(close, 200)
+        if pd.isna(s200):
+            s200 = s50
+        high60 = float(df["High"].rolling(60).max().iloc[-1]) if len(df) >= 60 else c
+        low60 = float(df["Low"].rolling(60).min().iloc[-1]) if len(df) >= 60 else c
+        rng60 = max(1e-9, high60 - low60)
+        pos_in_range = (c - low60) / rng60 * 100.0
+
+        def f(col, default=0.0):
+            try:
+                if factors is not None and col in factors.columns:
+                    val = factors[col].iloc[-1]
+                    return float(val) if pd.notna(val) else default
+            except Exception:
+                pass
+            return default
+
+        absorption = f("f04_absorption")
+        obv_vel = f("f07_obv_velocity")
+        liq_sweep = f("f20_liquidity_sweep")
+        struct_break = f("f35_struct_break")
+        effort = f("f_effort_vs_result", 1.0)
+        stopping = f("f_stopping_volume")
+        rs = f("f_rs_spy")
+
+        # --- מבנה מחיר ---
+        if c > s20 and s20 > s50 and s50 > s200:
+            out.append({"tone": "pos", "label": "מבנה מחיר", "value": "סטאק שורי מלא",
+                        "text": "המחיר מעל ממוצעי 20/50/200 בסדר עולה — תמיכה מבנית מלאה למגמת עלייה."})
+        elif c < s20 and s20 < s50:
+            out.append({"tone": "neg", "label": "מבנה מחיר", "value": "מבנה חלש",
+                        "text": "המחיר מתחת לממוצעי 20 ו-50 — היצע כלוא מעל מכביד על כל ניסיון עלייה."})
+        else:
+            out.append({"tone": "neu", "label": "מבנה מחיר", "value": "דשדוש",
+                        "text": "הממוצעים שזורים — אין כיוון מבני מובהק, מצב טיפוסי לאיסוף/הפצה."})
+
+        # --- מיקום בטווח 60 יום ---
+        if pos_in_range >= 80:
+            out.append({"tone": "pos", "label": "מיקום בטווח", "value": f"{pos_in_range:.0f}% מהטווח",
+                        "text": "המחיר בקצה העליון של טווח 60 הימים — קרבה לפריצה / כבר באזור עליון."})
+        elif pos_in_range <= 20:
+            out.append({"tone": "neu", "label": "מיקום בטווח", "value": f"{pos_in_range:.0f}% מהטווח",
+                        "text": "המחיר בתחתית טווח 60 הימים — כאן מתרחשים Spring וניעורים, או המשך חולשה."})
+        else:
+            out.append({"tone": "neu", "label": "מיקום בטווח", "value": f"{pos_in_range:.0f}% מהטווח",
+                        "text": "המחיר באמצע טווח 60 הימים — אזור החלטה."})
+
+        # --- נפח ---
+        if vol_ratio >= 1.5:
+            tone = "pos" if c >= o else "neg"
+            direction = "קונים אגרסיביים" if c >= o else "לחץ מכירה"
+            out.append({"tone": tone, "label": "נפח", "value": f"x{vol_ratio:.1f} מהממוצע",
+                        "text": f"נפח גבוה משמעותית מהרגיל ({direction}) — נוכחות של כסף גדול (מוסדי) בנר זה."})
+        elif vol_ratio <= 0.7:
+            out.append({"tone": "neu", "label": "נפח", "value": f"x{vol_ratio:.1f} מהממוצע",
+                        "text": "נפח דליל — אין דחיפה מוסדית פעילה כרגע לאף כיוון."})
+        else:
+            out.append({"tone": "neu", "label": "נפח", "value": f"x{vol_ratio:.1f} מהממוצע",
+                        "text": "נפח ממוצע — ללא אנומליה."})
+
+        # --- ספיגה (Absorption) ---
+        if absorption >= 1.2:
+            out.append({"tone": "pos", "label": "ספיגה (Absorption)", "value": f"{absorption:.2f}",
+                        "text": "מאמץ מכירה גבוה נספג בלי שהמחיר נשבר — מישהו גדול קונה את ההיצע בשקט."})
+        elif absorption > 0:
+            out.append({"tone": "neu", "label": "ספיגה (Absorption)", "value": f"{absorption:.2f}",
+                        "text": "ספיגת היצע מתונה — אין עדות חזקה לקנייה מוסדית סמויה."})
+
+        # --- OBV (זרימת הון) ---
+        if obv_vel > 0.02:
+            out.append({"tone": "pos", "label": "זרימת הון (OBV)", "value": f"{obv_vel:+.2f}",
+                        "text": "ה-OBV עולה — הון נטו זורם פנימה ב-10 הימים האחרונים, אישור לכניסת כסף."})
+        elif obv_vel < -0.02:
+            out.append({"tone": "neg", "label": "זרימת הון (OBV)", "value": f"{obv_vel:+.2f}",
+                        "text": "ה-OBV יורד — הון נטו זורם החוצה. דגל אזהרה גם אם המחיר מחזיק."})
+        else:
+            out.append({"tone": "neu", "label": "זרימת הון (OBV)", "value": f"{obv_vel:+.2f}",
+                        "text": "זרימת הון שטוחה — אין אישור OBV חזק לכיוון."})
+
+        # --- ניעור נזילות / שבירת מבנה ---
+        if liq_sweep >= 1:
+            out.append({"tone": "pos", "label": "ניעור נזילות", "value": "זוהה",
+                        "text": "המחיר חדר אל מתחת לשפל וחזר מעליו — קצירת נזילות קלאסית (Spring) לפני מהלך."})
+        if struct_break > 0:
+            out.append({"tone": "pos", "label": "שבירת מבנה", "value": "כלפי מעלה",
+                        "text": "סגירה מעל שיא 20 הימים — Sign of Strength מבני."})
+        elif struct_break < 0:
+            out.append({"tone": "neg", "label": "שבירת מבנה", "value": "כלפי מטה",
+                        "text": "סגירה מתחת לשפל 20 הימים — שבירה שלילית של המבנה."})
+
+        # --- Effort vs Result ---
+        if effort > 2.5 and c < o:
+            out.append({"tone": "neg", "label": "מאמץ מול תוצאה", "value": f"{effort:.1f}",
+                        "text": "נפח גבוה ללא התקדמות מחיר (אף ירידה) — מוכר עקשן מכביד מלמעלה (Supply Overhang)."})
+
+        # --- עוצמה יחסית מול השוק ---
+        if rs > 0.02:
+            out.append({"tone": "pos", "label": "עוצמה יחסית (RS)", "value": f"{rs:+.1%}",
+                        "text": "חזקה מ-S&P 500 ב-20 יום — מובילת שוק, מוסדיים מעדיפים אותה."})
+        elif rs < -0.02:
+            out.append({"tone": "neg", "label": "עוצמה יחסית (RS)", "value": f"{rs:+.1%}",
+                        "text": "חלשה מהשוק ב-20 יום — בתיקון שוק מניות כאלה נופלות ראשונות."})
+
+        # --- בלימת מחזורים (Stopping Volume) ---
+        if stopping >= 1:
+            out.append({"tone": "pos", "label": "בלימת מחזורים", "value": "זוהה",
+                        "text": "נר ירידה בנפח חריג שנבלם בחצי העליון — בלימת נפילה (Phase A)."})
+
+    except Exception:
+        pass
+    return out
+
+
+def assess_data_freshness(df: pd.DataFrame, fund_data: dict = None) -> dict:
+    """
+    בודק טריות נתוני מחיר (מודע לסופ"ש) + איכות נתונים פונדמנטליים.
+    מחזיר dict עם סטטוס מחיר/פונדמנטלי, גיל בימי מסחר, ושדות חסרים.
+    """
+    res = {
+        "price_status": "unknown", "price_label": "—", "price_last": "—",
+        "missing_sessions": 0, "fund_status": "ok", "fund_label": "",
+        "missing_fields": [], "earnings_flag": "",
+    }
+    try:
+        if df is not None and not df.empty:
+            last_ts = pd.to_datetime(df.index[-1])
+            last_date = last_ts.date()
+            today = datetime.now().date()
+            res["price_last"] = last_ts.strftime("%d.%m.%Y")
+            try:
+                bdays = int(np.busday_count(last_date, today))
+                is_bday_last = bool(np.is_busday(last_date))
+                missing = bdays - (1 if is_bday_last else 0)
+            except Exception:
+                missing = (today - last_date).days
+            missing = max(0, missing)
+            res["missing_sessions"] = missing
+            age_cal = (today - last_date).days
+            if missing <= 0:
+                res["price_status"] = "fresh"
+                res["price_label"] = "נתוני מחיר עדכניים"
+            elif missing == 1 and age_cal <= 4:
+                res["price_status"] = "warn"
+                res["price_label"] = "ייתכן שטרם נכלל יום המסחר האחרון"
+            else:
+                res["price_status"] = "stale"
+                res["price_label"] = f"⚠️ נתוני מחיר מיושנים ({missing} ימי מסחר חסרים)"
+        else:
+            res["price_status"] = "stale"
+            res["price_label"] = "⚠️ אין נתוני מחיר"
+    except Exception:
+        pass
+
+    # --- איכות פונדמנטלית ---
+    try:
+        if fund_data:
+            key_fields = {
+                "מכפיל רווח": fund_data.get("pe_forward") if fund_data.get("pe_forward") != "N/A" else fund_data.get("pe_trailing"),
+                "FCF": fund_data.get("fcf_yield"),
+                "צמיחה": fund_data.get("rev_growth"),
+                "שולי תפעול": fund_data.get("op_margin"),
+            }
+            missing = [k for k, val in key_fields.items() if val in (None, "N/A")]
+            res["missing_fields"] = missing
+            if len(missing) >= 3:
+                res["fund_status"] = "stale"
+                res["fund_label"] = f"⚠️ נתונים פונדמנטליים חסרים ({', '.join(missing)})"
+            elif missing:
+                res["fund_status"] = "warn"
+                res["fund_label"] = f"חלק מהנתונים הפונדמנטליים חסרים ({', '.join(missing)})"
+
+            ne = fund_data.get("next_earnings", "")
+            if ne and ne not in ("לא ידוע", "N/A"):
+                try:
+                    ne_date = datetime.strptime(ne, "%Y-%m-%d").date()
+                    delta = (ne_date - datetime.now().date()).days
+                    if delta < 0:
+                        res["earnings_flag"] = "דוח רווחים אמור היה לצאת — ייתכן שהנתונים מקדימים את הדוח האחרון"
+                    elif delta <= 7:
+                        res["earnings_flag"] = f"דוח רווחים בעוד {delta} ימים — סיכון אירוע גבוה, הימנע מכניסה רגע לפני"
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return res
+
+
+@st.cache_data(ttl=86400, max_entries=256, show_spinner=False)
+def get_latest_report_info(ticker: str) -> dict:
+    """מחזיר את הרבעון האחרון שדווח (תאריך + פיגור) מתוך הדוחות הרבעוניים של yfinance."""
+    try:
+        tkr = yf.Ticker(ticker)
+        qf = getattr(tkr, "quarterly_financials", None)
+        if qf is None or getattr(qf, "empty", True):
+            qf = getattr(tkr, "quarterly_income_stmt", None)
+        if qf is None or getattr(qf, "empty", True):
+            return {}
+        cols = list(qf.columns)
+        if not cols:
+            return {}
+        latest = pd.to_datetime(max(cols))
+        q = (latest.month - 1) // 3 + 1
+        lag = (datetime.now().date() - latest.date()).days
+        return {"quarter_label": f"Q{q} {latest.year}", "date": latest.strftime("%d.%m.%Y"), "lag_days": lag}
+    except Exception:
+        return {}
+
+
+def interpret_cis(cis: float, current_phase: str = "") -> dict:
+    """מפענח את משמעות ציון ה-CIS למשתמש ('מה אומר 78') — band, label, meaning, color."""
+    try:
+        cis = float(cis)
+    except Exception:
+        cis = 0.0
+    if cis >= 75:
+        band, color = "שכנוע גבוה (High Conviction)", "#16a34a"
+        meaning = "המערכת מזהה כניסת כסף מוסדי חזקה ועקבית. זהו האזור שבו השילוב הטכני הכי בשל לפעולה."
+    elif cis >= 65:
+        band, color = "איסוף פעיל", "#22c55e"
+        meaning = "יש טביעת אצבע ברורה של כסף חכם שנכנס. סביבת כניסה טובה, בכפוף לתזמון הפאזה."
+    elif cis >= 55:
+        band, color = "התבססות / בנייה", "#eab308"
+        meaning = "ניצנים של עניין מוסדי, אך עוד לא תמונה חד-משמעית. כדאי לעקוב ולחכות לאישור."
+    elif cis >= 40:
+        band, color = "ניטרלי / המתנה", "#f59e0b"
+        meaning = "אין עדיפות ברורה לקונים או מוכרים. המערכת לא רואה כאן יתרון מובהק כרגע."
+    else:
+        band, color = "חולשה / להימנע", "#ef4444"
+        meaning = "אין עניין מוסדי, או שיש יציאת הון. ציון נמוך = להתרחק מלונג עד לשינוי."
+
+    note = ""
+    if cis >= 65 and _phase_family(current_phase) == "bearish":
+        note = "שים לב: הציון גבוה אך הפאזה הטכנית דובית — ייתכן איסוף מוקדם מדי. דרוש אישור פאזה."
+    return {"band": band, "color": color, "meaning": meaning, "note": note, "score": round(cis, 1)}
+
+
+# משקלים מתוך FactorEngine.composite_cis (משוקפים נאמנה לצורך הסבר; לא משנים את המנוע)
+_CIS_WEIGHTS = {
+    "f14_inst_intent": (6, "כוונה מוסדית", "מדד מורכב לנוכחות מוסדית (ספיגה+OBV+ניעור)"),
+    "f20_liquidity_sweep": (5, "ניעור נזילות", "חדירה מתחת לשפל וחזרה מעליו (Spring)"),
+    "f04_absorption": (4, "ספיגת היצע", "מאמץ מכירה שנספג בלי שבירת מחיר"),
+    "f07_obv_velocity": (4, "מהירות OBV", "קצב זרימת הון נטו פנימה/החוצה"),
+    "f_effort_vs_result": (4, "מאמץ מול תוצאה", "האם הנפח מתורגם לתנועת מחיר"),
+    "f_stopping_volume": (4, "בלימת מחזורים", "בלימת נפילה בנפח חריג (Phase A)"),
+    "f_rs_spy": (4, "עוצמה יחסית", "ביצוע מול S&P 500 ב-20 יום"),
+    "f26_accept_reject": (3, "קבלה/דחייה", "סגירות מעל/מתחת אמצע הנר בנפח"),
+    "f35_struct_break": (3, "שבירת מבנה", "סגירה מעל שיא / מתחת שפל 20 יום"),
+    "f_reaccumulation": (3, "איסוף חוזר", "פולבק רגוע מעל ממוצע 50 בנפח נמוך"),
+}
+
+
+def build_cis_factor_breakdown(factors: pd.DataFrame) -> list:
+    """
+    'למה קיבלתי את הציון' — מפרק את ה-CIS לפקטורים לפי המשקלים של המנוע.
+    מחזיר רשימת dict: {label, value, weight, dir(+/-/0), text}, ממוינת לפי משקל.
+    """
+    out = []
+    if factors is None:
+        return out
+    for col, (w, label, desc) in _CIS_WEIGHTS.items():
+        try:
+            if col not in factors.columns:
+                continue
+            raw = factors[col].iloc[-1]
+            val = float(raw) if pd.notna(raw) else 0.0
+        except Exception:
+            continue
+        # כיוון התרומה: ערך חיובי תורם לציון, שלילי גורע (המנוע מנרמל סביב 50)
+        if val > 0.05:
+            direction = "+"
+        elif val < -0.05:
+            direction = "-"
+        else:
+            direction = "0"
+        out.append({"label": label, "value": round(val, 2), "weight": w, "dir": direction, "text": desc})
+    out.sort(key=lambda x: x["weight"], reverse=True)
+    return out
+
+
+def build_swing_trade_plan(rec_data: dict) -> dict:
+    """
+    בונה תוכנית מסחר Swing ישימה מהשדות ש-trading_scout כבר מחזיר
+    (entry_price/stop_loss_price/tp1_price/tp2_price/current_phase).
+    משחזר ATR מתוך (כניסה-סטופ)/2 ובונה: כניסה מדורגת, סטופ, 3 יעדים עם פעולות
+    שחרור חלקי, R:R, טווח זמן, ותרחישי Shakeout/Breakout תלויי-פאזה.
+    מחזיר {} אם המצב אינו מתאים ללונג.
+    """
+    try:
+        rec = rec_data.get("recommendation", "")
+        if rec in ("SELL", "STRONG SELL", "ERROR"):
+            return {}
+        entry = float(rec_data.get("entry_price", 0) or 0)
+        stop = float(rec_data.get("stop_loss_price", 0) or 0)
+        if entry <= 0 or stop <= 0 or stop >= entry:
+            return {}
+        atr = max(1e-6, (entry - stop) / 2.0)  # שוחזר: הסטופ במקור = כניסה - 2*ATR
+        phase = rec_data.get("current_phase", "")
+        fam = _phase_family(phase)
+
+        entry_pullback = round(entry - atr * 0.6, 2)
+        tp1 = float(rec_data.get("tp1_price", round(entry + atr * 3.5, 2)) or round(entry + atr * 3.5, 2))
+        tp2 = float(rec_data.get("tp2_price", round(entry + atr * 7.0, 2)) or round(entry + atr * 7.0, 2))
+        tp3 = round(entry + atr * 10.5, 2)
+
+        def pct(p):
+            return round((p - entry) / entry * 100, 1)
+
+        risk = entry - stop
+        rr1 = round((tp1 - entry) / risk, 1) if risk else 0
+        rr2 = round((tp2 - entry) / risk, 1) if risk else 0
+
+        # טווח זמן Swing לפי פאזה
+        if fam == "bullish_adv":
+            timeframe = "2–6 שבועות (מהלך כבר התחיל)"
+        elif "Phase C" in phase or "Spring" in phase:
+            timeframe = "3–8 שבועות (מ-Spring ועד SOS)"
+        else:
+            timeframe = "4–10 שבועות (התבססות → פריצה)"
+
+        # תרחיש Shakeout
+        if "Phase E" in phase or "Markup" in phase:
+            shakeout = (f"ירידה חדה אל אזור <b>${entry_pullback}</b> בתוך מגמה היא לרוב בדיקת תמיכה בריאה. "
+                        f"כל עוד הסגירה היומית מעל הסטופ <b>${round(stop,2)}</b> — אין הפרת תזה; שקול תוספת בפולבק.")
+        else:
+            shakeout = (f"ניעור (Spring) מתחת ל-<b>${round(stop,2)}</b> בנפח גבוה שחוזר מעל הכניסה באותו יום = "
+                        f"לרוב אות חיובי, לא יציאה. הפרת תזה אמיתית = <u>סגירה יומית</u> מתחת ל-<b>${round(stop,2)}</b>. "
+                        f"כניסה חוזרת = החזרה מעל <b>${round(entry,2)}</b> בנפח.")
+        # תרחיש Breakout
+        breakout = (f"פריצת התנגדות בנפח מתרחב מאשרת את המהלך. פעולה: החזק/הוסף, והעלה סטופ אל מתחת לאזור הפריצה. "
+                    f"יעד ראשון <b>${round(tp1,2)}</b> (+{pct(tp1)}%), ולאחריו <b>${round(tp2,2)}</b> (+{pct(tp2)}%).")
+
+        return {
+            "valid": True,
+            "phase": phase,
+            "entry": round(entry, 2),
+            "entry_pullback": entry_pullback,
+            "stop": round(stop, 2),
+            "stop_pct": pct(stop),
+            "tp1": round(tp1, 2), "tp1_pct": pct(tp1), "tp1_action": "שחרר ~⅓, העלה סטופ לנקודת הכניסה (עסקה ללא סיכון).",
+            "tp2": round(tp2, 2), "tp2_pct": pct(tp2), "tp2_action": "שחרר ~⅓ נוסף, עבור ל-Trailing Stop.",
+            "tp3": round(tp3, 2), "tp3_pct": pct(tp3), "tp3_action": "יתרה רצה עם סטופ נגרר עד היפוך/תשישות.",
+            "rr1": rr1, "rr2": rr2,
+            "timeframe": timeframe,
+            "shakeout": shakeout,
+            "breakout": breakout,
+        }
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def compute_macro_radar() -> dict:
+    """
+    Macro Technical Radar קל (שכבה תומכת): מצב טכני של SPY / QQQ / IWM מול ממוצעים +
+    מומנטום 20 יום, ו-VIX (מצורף לכל df ע"י get_data). מסיק משטר Risk-On/Neutral/Risk-Off.
+    """
+    out = {"cells": [], "regime": "—", "color": "#94a3b8", "note": "", "vix": None}
+    try:
+        score = 0
+        n = 0
+        names = {"SPY": "S&P 500", "QQQ": "נאסד\"ק", "IWM": "Small Caps"}
+        vix_val = None
+        for sym, he in names.items():
+            df = get_cached_data(sym, period="1y")
+            if df is None or df.empty or len(df) < 60:
+                continue
+            c = float(df["Close"].iloc[-1])
+            s50 = _sma(df["Close"], 50)
+            s200 = _sma(df["Close"], 200)
+            if pd.isna(s200):
+                s200 = s50
+            mom = float(df["Close"].pct_change(20).iloc[-1]) * 100 if len(df) >= 21 else 0.0
+            if vix_val is None and "vix_close" in df.columns:
+                try:
+                    vv = df["vix_close"].iloc[-1]
+                    vix_val = float(vv) if pd.notna(vv) else None
+                except Exception:
+                    vix_val = None
+            cell_score = 0
+            if c > s50:
+                cell_score += 1
+            if c > s200:
+                cell_score += 1
+            if mom > 0:
+                cell_score += 1
+            n += 1
+            score += cell_score
+            if cell_score >= 2 and c > s50:
+                state, scolor = "חיובי", "#22c55e"
+            elif cell_score <= 1:
+                state, scolor = "חלש", "#ef4444"
+            else:
+                state, scolor = "מעורב", "#eab308"
+            out["cells"].append({"name": he, "state": state, "mom": round(mom, 1), "color": scolor})
+
+        if vix_val is not None:
+            out["vix"] = round(vix_val, 1)
+
+        if n == 0:
+            return out
+        ratio = score / (n * 3.0)
+        vix_pen = 0.0
+        if vix_val is not None:
+            if vix_val >= 25:
+                vix_pen = -0.15
+            elif vix_val <= 15:
+                vix_pen = 0.05
+        ratio = max(0.0, min(1.0, ratio + vix_pen))
+        if ratio >= 0.66:
+            out["regime"], out["color"] = "Risk-On", "#22c55e"
+            out["note"] = "השוק הרחב במגמה חיובית — רוח גבית למניות חזקות ולפריצות וויקוף."
+        elif ratio <= 0.4:
+            out["regime"], out["color"] = "Risk-Off", "#ef4444"
+            out["note"] = "השוק הרחב חלש — סלקטיביות גבוהה; פריצות נוטות להיכשל בסביבה כזו."
+        else:
+            out["regime"], out["color"] = "Neutral", "#eab308"
+            out["note"] = "השוק הרחב מעורב — עדיף להתמקד במובילי סקטור עם RS חיובי בלבד."
+        if vix_val is not None:
+            out["note"] += f" (VIX {out['vix']})"
+    except Exception:
+        pass
+    return out
+
+
+# ============================================================
+# V20.2 — רכיבי תצוגה (Render helpers)
+# ============================================================
+
+def _phase_hot_badge(phase: str, cis: float = 0.0) -> str:
+    """מחזיר צ'יפ HTML להדגשת מניה בפאזת C / Spring / Shakeout / איסוף חזק (אחרת '')."""
+    p = phase or ""
+    if "Spring" in p or "Phase C" in p:
+        if "Strong" in p:
+            return "<span class='phase-hot-badge hot-spring'>🎯 Spring חזק</span>"
+        return "<span class='phase-hot-badge hot-spring'>🎯 Spring / Phase C</span>"
+    if "Failed Sweep" in p or "Shakeout" in p:
+        return "<span class='phase-hot-badge hot-shake'>⚠️ Shakeout</span>"
+    try:
+        if cis and float(cis) >= 75 and _phase_family(p) in ("bullish_adv", "bullish_early"):
+            return "<span class='phase-hot-badge hot-accum'>🔥 איסוף חזק</span>"
+    except Exception:
+        pass
+    return ""
+
+
+def render_data_status(ticker: str, df: pd.DataFrame = None, fund_data: dict = None,
+                       freshness: dict = None) -> None:
+    """רצועת סטטוס נתונים אחידה: טריות מחיר + רבעון אחרון שדווח + אזהרות חסר/אירוע."""
+    if freshness is None:
+        freshness = assess_data_freshness(df, fund_data)
+    elif fund_data and not freshness.get("fund_label") and not freshness.get("earnings_flag"):
+        # freshness חושב ב-_compute_wyckoff ללא נתונים פונדמנטליים — משלימים את חלק הפונדמנטל/דוחות
+        _f2 = assess_data_freshness(df, fund_data)
+        freshness = {
+            **freshness,
+            "fund_status": _f2.get("fund_status", freshness.get("fund_status", "ok")),
+            "fund_label": _f2.get("fund_label", ""),
+            "missing_fields": _f2.get("missing_fields", []),
+            "earnings_flag": _f2.get("earnings_flag", ""),
+        }
+    chips = []
+    # מחיר
+    pstatus = freshness.get("price_status", "unknown")
+    pcls = {"fresh": "ds-fresh", "warn": "ds-warn", "stale": "ds-stale"}.get(pstatus, "")
+    pico = {"fresh": "🟢", "warn": "🟡", "stale": "🔴"}.get(pstatus, "⚪")
+    chips.append(f"<span class='ds-chip {pcls}'>{pico} {freshness.get('price_label','—')} · "
+                 f"<b>{freshness.get('price_last','—')}</b></span>")
+    # רבעון אחרון שדווח
+    rep = get_latest_report_info(ticker) if ticker else {}
+    if rep:
+        lag = rep.get("lag_days", 0)
+        lag_txt = f" (לפני {lag} ימים)" if isinstance(lag, int) else ""
+        chips.append(f"<span class='ds-chip'>📑 רבעון אחרון שדווח: <b>{rep['quarter_label']}</b>{lag_txt}</span>")
+    # פונדמנטלי חסר
+    if freshness.get("fund_status") in ("warn", "stale") and freshness.get("fund_label"):
+        fcls = "ds-stale" if freshness["fund_status"] == "stale" else "ds-warn"
+        chips.append(f"<span class='ds-chip {fcls}'>{freshness['fund_label']}</span>")
+    # אירוע רווחים
+    if freshness.get("earnings_flag"):
+        chips.append(f"<span class='ds-chip ds-warn'>📅 {freshness['earnings_flag']}</span>")
+    st.markdown(f"<div class='data-status'>{''.join(chips)}</div>", unsafe_allow_html=True)
+
+
+def render_phase_evidence(intel: dict, ticker: str = "") -> None:
+    """מציג בלוק 'למה הפאזה הזו' עם הראיות (נפח/מחיר/ספיגה/OBV/RS)."""
+    phase = intel.get("display_phase", intel.get("current_phase", "—"))
+    evidence = intel.get("phase_evidence", []) or []
+    fam = _phase_family(phase)
+    pill_cls = "neut"
+    if fam == "bearish":
+        pill_cls = "bear"
+    elif fam in ("bullish_adv", "bullish_early"):
+        pill_cls = ""
+    refined = intel.get("phase_refined", False)
+    note = intel.get("phase_refine_note", "")
+
+    parts = ["<div class='phase-evidence'>", "<div class='pe-head'>",
+             f"<span class='pe-phase-pill {pill_cls}'>{phase}</span>"]
+    if refined:
+        parts.append("<span class='pe-refined-tag'>אומת ע\"י שכבת אימות</span>")
+    parts.append("</div>")
+    if refined and note:
+        parts.append(f"<div class='pe-summary'>🔎 {note}</div>")
+    if not evidence:
+        parts.append("<div class='pe-summary'>אין מספיק נתונים גולמיים לפירוט ראיות.</div>")
+    for ev in evidence:
+        tone = ev.get("tone", "neu")
+        ico = {"pos": "▲", "neg": "▼", "neu": "■"}.get(tone, "■")
+        parts.append(
+            f"<div class='pe-item pe-{tone}'>"
+            f"<span class='pe-ico'>{ico}</span>"
+            f"<span><span class='pe-label'>{ev.get('label','')}:</span> "
+            f"<span class='pe-val'>{ev.get('value','')}</span> — {ev.get('text','')}</span>"
+            f"</div>"
+        )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def render_cis_meaning(cis: float, factors: pd.DataFrame = None, current_phase: str = "") -> None:
+    """כרטיס משמעות CIS ('מה אומר הציון') + expander 'למה קיבלתי את הציון'."""
+    info = interpret_cis(cis, current_phase)
+    color = info["color"]
+    seg_colors = ["#ef4444", "#f59e0b", "#eab308", "#22c55e", "#16a34a"]
+    scale = "".join(f"<span class='cm-seg' style='background:{sc};'></span>" for sc in seg_colors)
+    note_html = f"<div style='color:#facc15; font-size:0.85rem; margin-top:6px;'>⚠️ {info['note']}</div>" if info["note"] else ""
+    st.markdown(
+        f"<div class='cis-meaning'>"
+        f"<div class='cm-num' style='color:{color};'>{info['score']:.0f}</div>"
+        f"<div class='cm-body'>"
+        f"<div class='cm-band' style='color:{color};'>{info['band']}</div>"
+        f"<div class='cm-meaning'>{info['meaning']} <span style='color:#64748b;'>(0–100, מודד עוצמת כניסת כסף מוסדי)</span></div>"
+        f"<div class='cm-scale'>{scale}</div>"
+        f"{note_html}"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+    breakdown = build_cis_factor_breakdown(factors)
+    if breakdown:
+        with st.expander("❓ למה קיבלתי את הציון הזה? (פירוט הפקטורים)", expanded=False):
+            st.caption("הציון משוקלל מ-10 פקטורים. כל פקטור תורם לפי משקלו; '▲' תורם לציון, '▼' גורע, '■' ניטרלי.")
+            for b in breakdown:
+                ico = {"+": "▲", "-": "▼", "0": "■"}[b["dir"]]
+                dcolor = {"+": "#22c55e", "-": "#ef4444", "0": "#64748b"}[b["dir"]]
+                st.markdown(
+                    f"<div style='display:flex; gap:10px; padding:5px 0; border-bottom:1px solid rgba(148,163,184,0.1);'>"
+                    f"<span style='color:{dcolor}; font-weight:800;'>{ico}</span>"
+                    f"<span style='flex:1;'><b>{b['label']}</b> "
+                    f"<span style='color:#64748b;'>(משקל {b['weight']})</span> — {b['text']}</span>"
+                    f"<span style='color:{dcolor}; font-weight:700;'>{b['value']:+.2f}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+
+def render_macro_radar(compact: bool = False) -> None:
+    """מציג את ה-Macro Technical Radar (שכבה תומכת)."""
+    radar = compute_macro_radar()
+    if not radar.get("cells"):
+        return
+    cells_html = "".join(
+        f"<div class='mr-cell'><div class='mr-cell-name'>{c['name']}</div>"
+        f"<div class='mr-cell-val' style='color:{c['color']};'>{c['state']} "
+        f"<span style='font-size:0.78rem; color:#64748b;'>({c['mom']:+.1f}%)</span></div></div>"
+        for c in radar["cells"]
+    )
+    st.markdown(
+        f"<div class='macro-radar'>"
+        f"<div class='mr-head'>"
+        f"<span class='mr-title'>🛰️ Macro Technical Radar</span>"
+        f"<span class='mr-regime' style='background:{radar['color']}20; color:{radar['color']};'>{radar['regime']}</span>"
+        f"</div>"
+        f"<div class='mr-grid'>{cells_html}</div>"
+        f"<div class='mr-note'>💡 {radar['note']}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_swing_plan(plan: dict, rec_data: dict) -> None:
+    """מציג תוכנית Swing ישימה + תרחישי Shakeout/Breakout, בהפרדה וויקוף/פונדמנטלי."""
+    if not plan or not plan.get("valid"):
+        st.info("אין תוכנית כניסה ללונג במצב הנוכחי (הסתברות צבירה נמוכה / פאזת הפצה).")
+        return
+
+    st.markdown(
+        "<div class='swing-sep'>🎯 תוכנית מסחר — Swing "
+        "<span class='sep-tag tag-short'>וויקוף · טווח קצר-בינוני</span></div>",
+        unsafe_allow_html=True,
+    )
+    st.caption(f"טווח זמן אופטימלי: {plan['timeframe']} · פאזה: {plan['phase']}")
+    st.markdown(
+        f"""<div class='plan-stage'><span class='plan-stage-label'>📍 כניסה (חצי עכשיו)</span>
+        <span class='plan-stage-val' style='color:#38bdf8'>${plan['entry']}</span>
+        <span class='plan-stage-note'>חצי שני בפולבק קל לאזור ${plan['entry_pullback']} — כניסה מדורגת מקטינה סיכון תזמון.</span></div>
+        <div class='plan-stage'><span class='plan-stage-label'>🛑 סטופ הגנה</span>
+        <span class='plan-stage-val' style='color:#f87171'>${plan['stop']} ({plan['stop_pct']}%)</span>
+        <span class='plan-stage-note'>אחרי יעד 1 — העלה את הסטופ לנקודת הכניסה = עסקה ללא סיכון.</span></div>
+        <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 1 (R:R 1:{plan['rr1']})</span>
+        <span class='plan-stage-val' style='color:#34d399'>${plan['tp1']} (+{plan['tp1_pct']}%)</span>
+        <span class='plan-stage-note'>{plan['tp1_action']}</span></div>
+        <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 2 (R:R 1:{plan['rr2']})</span>
+        <span class='plan-stage-val' style='color:#34d399'>${plan['tp2']} (+{plan['tp2_pct']}%)</span>
+        <span class='plan-stage-note'>{plan['tp2_action']}</span></div>
+        <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 3 (Runner)</span>
+        <span class='plan-stage-val' style='color:#34d399'>${plan['tp3']} (+{plan['tp3_pct']}%)</span>
+        <span class='plan-stage-note'>{plan['tp3_action']}</span></div>""",
+        unsafe_allow_html=True,
+    )
+
+    # תרחישים
+    st.markdown("<div class='swing-sep'>🗺️ תרחישים — מה אם?</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='scenario-grid'>"
+        f"<div class='scenario-card bear'><div class='sc-title bear'>🌀 אם Shakeout / ניעור</div>"
+        f"<div class='sc-body'>{plan['shakeout']}</div></div>"
+        f"<div class='scenario-card bull'><div class='sc-title bull'>🚀 אם Breakout / פריצה</div>"
+        f"<div class='sc-body'>{plan['breakout']}</div></div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # הפרדת פונדמנטלי (טווח ארוך)
+    fund = rec_data.get("fundamental", {}) or {}
+    if fund:
+        valuation = fund.get("valuation", "-")
+        vcolor = fund.get("valuation_color", "#94a3b8")
+        st.markdown(
+            "<div class='swing-sep'>🏢 שכבה פונדמנטלית "
+            "<span class='sep-tag tag-long'>טווח ארוך · נפרד מהתזמון</span></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f"<div class='sc-body' style='padding:4px 2px;'>"
+            f"התמחור (<b style='color:{vcolor};'>{valuation}</b>), ה-FCF (<b>{fund.get('fcf_yield','N/A')}</b>) "
+            f"והצמיחה (<b>{fund.get('rev_growth','N/A')}</b>) קובעים את כדאיות <u>ההחזקה לטווח ארוך</u> — "
+            f"לא את נקודת הכניסה. תוכנית הסווינג למעלה מבוססת וויקוף (תזמון); הפונדמנטל הוא שיקול ההחזקה/הגדלה."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
 
 def init_session_state() -> None:
     if "model_archive" not in st.session_state:
@@ -1295,12 +2222,14 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
     וסיכון לאי-עקביות בין שני מסכי הסריקה.
     """
     price_html = render_price_inline(p["ticker"])
+    hot_html = _phase_hot_badge(p.get("phase", ""), p.get("cis", 0))
     st.markdown(
         f"""<div class='pick-card' style='border-right:5px solid {p['color']}; border-top:none; margin-bottom:8px;'>
             <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
                 <span class='pick-rank'>#{idx+1}</span>
                 <span class='pick-ticker' style='font-size:1.5rem;'>{p['ticker']}</span>
                 <span>{price_html}</span>
+                {hot_html}
             </div>
             <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
             <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
@@ -1356,6 +2285,7 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         price_html = render_price_inline(p["ticker"])
     except Exception:
         price_html = ""
+    hot_html = _phase_hot_badge(p.get("phase", ""), p.get("cis", 0))
 
     # --- stage: container אמיתי המכיל את הכרטיס + שני תת-containers (חץ כל אחד) ---
     stage = st.container()
@@ -1371,6 +2301,7 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
                         <span class='pick-rank'>#{cur+1}</span>
                         <span class='pick-ticker' style='font-size:1.6rem;'>{p['ticker']}</span>
                         <span>{price_html}</span>
+                        {hot_html}
                     </div>
                     <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
                     <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
@@ -1434,12 +2365,14 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
             sp_price_html = render_price_inline(sp["ticker"])
         except Exception:
             sp_price_html = ""
+        sp_hot = _phase_hot_badge(sp.get("phase", ""), sp.get("cis", 0))
         parts.append(
             f"<div class='swipe-card' style='border-right:5px solid {sp['color']};'>"
             f"<div class='swipe-card-top'>"
             f"<span class='pick-rank'>#{i+1}</span>"
             f"<span class='pick-ticker'>{sp['ticker']}</span>"
             f"<span class='swipe-price'>{sp_price_html}</span>"
+            f"{sp_hot}"
             f"</div>"
             f"<div class='pick-headline' style='color:{sp['color']};'>{sp.get('headline','')}</div>"
             f"<div class='pick-meta'>תמחור: <b style='color:{sp['valuation_color']}'>{sp['valuation']}</b> · CIS {sp['cis']:.0f}"
@@ -1518,6 +2451,8 @@ def _render_top_picks() -> None:
     elif not picks:
         st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק) ביקום הסריקה. נסה רוחב חיפוש גדול יותר, או שהשוק במצב המתנה.")
     else:
+        # V20.2: שכבת מאקרו תומכת מעל תוצאות הסריקה (Risk-On/Off רחב)
+        render_macro_radar(compact=True)
         # תצוגת כרטיסיות עם דפדוף (Carousel) - כרטיס אחד בכל פעם עם חצים
         _render_card_carousel(picks, key_prefix="home_pick", index_key="home_card_index", dest_page="🏠 בית")
 
@@ -1812,8 +2747,17 @@ def screen_home() -> None:
 
         render_price_header(ticker)
 
+        # === V20.2: רצועת סטטוס נתונים (טריות מחיר + רבעון אחרון + אזהרות) ===
+        _home_fdata = get_fundamental_data(ticker) or {}
+        render_data_status(ticker, result["df"], _home_fdata, result.get("freshness"))
+
         # === השורה התחתונה (Verdict Banner) - ראשון ובולט, לפני כל פירוט טכני ===
         _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"])
+
+        # === V20.2: מה אומר הציון + למה הפאזה הזו (בולט, לא קבור ב-expander) ===
+        st.markdown("<div class='section-label'>🧭 מה אומר הציון, ולמה הפאזה הזו</div>", unsafe_allow_html=True)
+        render_cis_meaning(result["current_cis"], result["factors"], result["display_phase"])
+        render_phase_evidence(result, ticker)
 
         # === מכאן ואילך: עומק טכני (Deep Dive) - וואיקוף מפורט ===
         st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin:26px 0 18px 0;'>", unsafe_allow_html=True)
@@ -1842,7 +2786,7 @@ def screen_home() -> None:
 
             with right:
                 st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
-                cp = result["current_phase"]
+                cp = result["display_phase"]
                 is_transition = any(x in cp for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"])
                 if is_transition:
                     st.info("ℹ️ לא נמצא שלב Wyckoff מובהק כרגע (מעבר/חוסר ודאות).")
@@ -1993,6 +2937,9 @@ def screen_institutional_map() -> None:
     st.markdown("### 🗺️ Institutional Map - מפת כסף חכם סקטוריאלית")
     st.markdown("מסך זה ממפה את הסקטורים המרכזיים בשוק ומציג את ממוצע ה-**Institutional Accumulation Probability** (הסתברות לצבירה מוסדית) שלהם. הנתונים מתעדכנים על בסיס מניות מובילות בכל סקטור ומוצגים מהגבוה לנמוך.")
 
+    # --- V20.2: Macro Technical Radar (שכבת רקע מאקרו תומכת) ---
+    render_macro_radar()
+
     # --- מנוע סריקת שוק רחב (Early Pruning) ---
     _render_market_scanner()
 
@@ -2115,8 +3062,9 @@ def screen_institutional_map() -> None:
                 for r in results:
                     rcol1, rcol2 = st.columns([3, 1])
                     with rcol1:
+                        r_hot = _phase_hot_badge(r.get("phase", ""), r.get("cis", 0))
                         st.markdown(
-                            f"**{r['ticker']}** &nbsp; {render_price_inline(r['ticker'])}<br>"
+                            f"**{r['ticker']}** &nbsp; {render_price_inline(r['ticker'])} {r_hot}<br>"
                             f"<span style='color:{r['color']}'>{r['headline']}</span> · "
                             f"תמחור: <b style='color:{r['valuation_color']}'>{r['valuation']}</b> · CIS {r['cis']:.0f} · ציון {r['composite']:.0f}",
                             unsafe_allow_html=True,
@@ -2386,6 +3334,14 @@ def screen_trading_scout() -> None:
 
                 render_price_header(tkr)
 
+                # === V20.2: intel אפליקטיבי (פאזה מאומתת + ראיות + טריות + פירוש CIS) ===
+                _intel = _compute_wyckoff(tkr)
+                _fund0 = rec_data.get("fundamental", {}) or {}
+                if _intel:
+                    render_data_status(tkr, _intel["df"], _fund0, _intel.get("freshness"))
+                else:
+                    render_data_status(tkr, None, _fund0)
+
                 # === שלב 1: השורה התחתונה האחידה (Verdict Banner) - ראשון ובולט ===
                 _verdict = rec_data.get("verdict")
                 _fund = rec_data.get("fundamental", {}) or {}
@@ -2398,6 +3354,11 @@ def screen_trading_scout() -> None:
                         valuation_color=_fund.get('valuation_color', '#94a3b8'),
                         extra_chips=[f"המלצה <b>{rec_data.get('recommendation','-')}</b>"],
                     )
+
+                # === V20.2: מה אומר הציון + למה הפאזה הזו (בולט) ===
+                if _intel:
+                    render_cis_meaning(_intel["current_cis"], _intel["factors"], _intel["display_phase"])
+                    render_phase_evidence(_intel, tkr)
 
                 # === שלב 2: הסבר קצר ואנושי - למה דווקא המניה הזו, עכשיו (Q16: bullets + הסבר נוסף) ===
                 if _fund:
@@ -2535,57 +3496,32 @@ def screen_trading_scout() -> None:
                     st.markdown("<div style='height:34px;'></div>", unsafe_allow_html=True)
                     st.markdown("<hr style='border-color: rgba(148,163,184,0.18); margin-bottom:28px;'>", unsafe_allow_html=True)
 
-                    st.markdown("#### 🗺️ תרחישי מפת הדרכים (What-if Analysis)")
-                    st.markdown(f"**✅ אם התבנית מצליחה:** {roadmap_success}")
-                    st.markdown(f"**❌ אם התבנית נכשלת:** {roadmap_fail}")
-
-                    st.markdown("---")
-                    st.markdown("#### 🎯 תוכנית מסחר (Trading Plan)")
+                    # === V20.2: תוכנית מסחר Swing ישימה (מתקנת באג trade_plan חסר) ===
                     st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
-
-                    tp = rec_data.get("trade_plan", {})
                     if rec in ("SELL", "STRONG SELL"):
                         st.warning("🚫 לא קיימת תוכנית כניסה ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה / הנכס בפאזת הפצה.")
-                    elif not tp:
-                        st.info("אין תוכנית מסחר זמינה.")
-                    elif plan_level_key == "basic":
-                        b = tp.get("basic", {})
-                        st.markdown(
-                            f"""<div class='plan-stage'><span class='plan-stage-label'>📍 כניסה</span><span class='plan-stage-val' style='color:#38bdf8'>${b.get('entry','-')}</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>🛑 סטופ הגנה</span><span class='plan-stage-val' style='color:#f87171'>${b.get('stop','-')} ({b.get('stop_pct','-')}%)</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 1</span><span class='plan-stage-val' style='color:#34d399'>${b.get('tp1','-')} (+{b.get('tp1_pct','-')}%)</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 2</span><span class='plan-stage-val' style='color:#34d399'>${b.get('tp2','-')} (+{b.get('tp2_pct','-')}%)</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>⚖️ יחס סיכוי/סיכון</span><span class='plan-stage-val'>{b.get('rr','-')}</span></div>""",
-                            unsafe_allow_html=True
-                        )
                     else:
-                        f = tp.get("full", {})
-                        st.markdown(
-                            f"""<div class='plan-stage'><span class='plan-stage-label'>📍 כניסה (חצי עכשיו)</span><span class='plan-stage-val' style='color:#38bdf8'>${f.get('entry_now','-')}</span>
-                            <span class='plan-stage-note'>חצי שני בפולבק קל לאזור ${f.get('entry_pullback','-')} - כניסה מדורגת מקטינה סיכון תזמון.</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>🛑 סטופ ראשוני</span><span class='plan-stage-val' style='color:#f87171'>${f.get('stop_initial','-')}</span>
-                            <span class='plan-stage-note'>אחרי יעד 1 - העלה את הסטופ לנקודת הכניסה (${f.get('stop_after_tp1','-')}) = עסקה ללא סיכון.</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 1 (+{f.get('tp1_pct','-')}%)</span><span class='plan-stage-val' style='color:#34d399'>${f.get('tp1','-')}</span>
-                            <span class='plan-stage-note'>{f.get('tp1_action','')}</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 2 (+{f.get('tp2_pct','-')}%)</span><span class='plan-stage-val' style='color:#34d399'>${f.get('tp2','-')}</span>
-                            <span class='plan-stage-note'>{f.get('tp2_action','')}</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>🎯 יעד 3 (+{f.get('tp3_pct','-')}%)</span><span class='plan-stage-val' style='color:#34d399'>${f.get('tp3','-')}</span>
-                            <span class='plan-stage-note'>{f.get('tp3_action','')}</span></div>
-                            <div class='plan-stage' style='border-color:rgba(239,68,68,0.3);'><span class='plan-stage-label'>⛔ נקודת הפרת תזה</span><span class='plan-stage-val' style='color:#f87171'>${f.get('invalidation','-')}</span>
-                            <span class='plan-stage-note'>{f.get('invalidation_note','')}</span></div>
-                            <div class='plan-stage'><span class='plan-stage-label'>⚖️ יחס סיכוי/סיכון</span><span class='plan-stage-val'>{f.get('rr','-')}</span>
-                            <span class='plan-stage-note'>טווח זמן אופטימלי: {f.get('timeframe','-')}</span></div>""",
-                            unsafe_allow_html=True
-                        )
-                        if plan_level_key == "sizing":
-                            s = tp.get("sizing", {})
+                        _swing = build_swing_trade_plan(rec_data)
+                        render_swing_plan(_swing, rec_data)
+
+                        # גודל פוזיציה (כשנבחרה רמת פירוט מתאימה) - מבוסס סיכון 1% לעסקה
+                        if _swing and _swing.get("valid") and plan_level_key == "sizing":
+                            stop_dist = abs(_swing["stop_pct"]) or 1.0
+                            pos_pct = round(min(25.0, 1.0 / (stop_dist / 100.0)), 1)  # 1% סיכון תיק
                             st.markdown(
-                                f"""<div class='plan-stage' style='border-color:rgba(56,189,248,0.35);'>
-                                <span class='plan-stage-label'>💼 גודל פוזיציה מומלץ</span>
-                                <span class='plan-stage-val' style='color:#38bdf8'>{s.get('position_pct','-')}% מהתיק</span>
-                                <span class='plan-stage-note'>{s.get('risk_note','')} (הפסד מקסימלי בסטופ: ~{s.get('max_loss_at_stop_pct','-')}% על הפוזיציה)</span></div>""",
-                                unsafe_allow_html=True
+                                f"<div class='plan-stage' style='border-color:rgba(56,189,248,0.35);'>"
+                                f"<span class='plan-stage-label'>💼 גודל פוזיציה מומלץ</span>"
+                                f"<span class='plan-stage-val' style='color:#38bdf8'>~{pos_pct}% מהתיק</span>"
+                                f"<span class='plan-stage-note'>מחושב כך שהפסד בסטופ ({stop_dist:.1f}% מרחק) ≈ 1% מהתיק. "
+                                f"זהו תקרת חשיפה — אפשר להקטין לפי שיקול דעת.</span></div>",
+                                unsafe_allow_html=True,
                             )
+
+                        # מפת דרכים (השלמה תמציתית למודל הוויקוף)
+                        with st.expander("🗺️ מפת דרכים מורחבת (מודל הוויקוף)", expanded=False):
+                            st.markdown(f"**היינו ב:** {roadmap_prev} → **אנחנו ב:** {rec_data['current_phase']} → **היעד הסביר:** {roadmap_next}")
+                            st.markdown(f"**✅ אם התבנית מצליחה:** {roadmap_success}")
+                            st.markdown(f"**❌ אם התבנית נכשלת:** {roadmap_fail}")
 
                     st.markdown("---")
                     st.markdown("#### ⏮️ היסטוריית תבניות (Replay Engine)")
@@ -2912,3 +3848,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+# V20.2 – תוקנו: דיוק פאזות, הסברים, תוכנית מסחר, נתונים.
