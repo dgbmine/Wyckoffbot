@@ -1,8 +1,23 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V20.3 (Wyckoff Deep Analysis)
+INSTITUTIONAL SCOUT PRO V20.4 (Phase Coherence Gate)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V20.4 — שער עקביות פאזה (Phase Coherence Gate) — תיקון משוב WULF #2:
+        כשהמנוע נותן תווית פאזה *בטוחה* אך *סותרת את המבנה* — המערכת לא כופה
+        אותה, אלא אומרת "אין פאזה מאושרת, ממתינים לאישור" וממליצה לסרוק שוב
+        ביום המסחר הבא. הכל בשכבת האפליקציה; הליבה לא נגעה.
+  • assess_phase_coherence: תווית תלוית-טווח (Re-accumulation/LPS/BUEC/Phase B)
+    שנכפית כשאין טווח מסחר אמיתי (מהלך פרבולי >55% רוחב, או <=2 חציות אמצע) —
+    מסומנת כלא-עקבית. LPS/BUEC הם 'נקודת תמיכה אחרונה' *בתוך* טווח — בלי טווח אין LPS.
+  • *מכויל שלא לכפות יתר על המידה*: תוויות מגמה (Markup/Markdown) ותוויות היפוך
+    (Spring/Phase C/A) אינן נבדקות; מקרי-גבול (רוחב 45-55%) עוברים. נבדק על מספר
+    תרחישים — תופס את WULF (גם כשאזהרת ההפצה לא נדלקת) ולא פוסל איסוף-חוזר אמיתי בטווח.
+  • _RESCAN_HINT: בכל מצב "אין פאזה מאושרת" (מעבר/הפצה/אי-עקביות) נוספת המלצה
+    מפורשת לסרוק שוב ביום המסחר הבא במקום לכפות פאזה.
+  • הפאזה לתצוגה (display_phase) מוזרמת גם לבאנר ההכרעה ולנקודות הניתוח — כך
+    שהצ'יפ "Wyckoff: ..." והנקודה "📍 פאזה נוכחית" משקפים "אין פאזה מאושרת", לא תווית כפויה.
 
 V20.3 — שכבת ניתוח Wyckoff מעמיק (מבוססת מחקר על המתודולוגיה הקנונית:
         Wyckoff Analytics / StockCharts ChartSchool / Tom Williams VSA).
@@ -1566,6 +1581,61 @@ def wyckoff_cause_effect_targets(df: pd.DataFrame, tr: dict) -> dict:
     return res
 
 
+# הודעת ברירת-מחדל כשאין פאזה מאושרת — מנחה לסרוק שוב במקום לכפות פאזה
+_RESCAN_HINT = ("📅 מומלץ לסרוק שוב ביום המסחר הבא: אם ייווצר מבנה ברור (טווח/פריצה/ניעור) — "
+                "הפאזה תאומת. אין צורך לכפות פאזה כשהמבנה לא תומך בה.")
+
+
+def _obv_slope(df: pd.DataFrame, n: int = 10):
+    """שיפוע OBV מנורמל (כיוון זרימת ההון): חיובי=הון נכנס, שלילי=הון יוצא. None אם אין די נתונים."""
+    try:
+        if df is None or len(df) < n + 2:
+            return None
+        obv = (np.sign(df["Close"].diff()) * df["Volume"]).cumsum()
+        denom = obv.abs().rolling(n).mean().replace(0, np.nan)
+        val = float((obv.diff(n) / denom).iloc[-1])
+        return val if pd.notna(val) else None
+    except Exception:
+        return None
+
+
+def assess_phase_coherence(df: pd.DataFrame, engine_phase: str, tr: dict):
+    """
+    בודק עקביות בין תווית הפאזה (מהמנוע) לבין המבנה הבלתי-תלוי. מטרה: לתפוס מקרים
+    כמו WULF — תווית תלוית-טווח ('Re-accumulation/LPS/BUEC') שנכפית כשאין בכלל טווח
+    מסחר (מהלך פרבולי/מגמתי). מחזיר (is_coherent, reason, watch_for).
+
+    *שמרני בכוונה* — מתוכנן שלא לפסול פאזות תקינות, כדי שהמערכת לא תאמר 'אין פאזה'
+    יותר מדי. התנאים:
+      1. רק תוויות שמהותית *מחייבות טווח* נבדקות (LPS/BUEC הם אירועים בתוך טווח).
+         תוויות מגמה (Phase E/Markup/Markdown) ותוויות היפוך (Spring/Phase C/A) — לא.
+      2. הסתירה חייבת להיות *חד-משמעית*: לא רק is_range=False, אלא טווח פרבולי
+         בעליל (>55%) או כמעט ללא תנודה (<=2 חציות אמצע) — לא מקרי-גבול.
+    """
+    try:
+        p = engine_phase or ""
+        range_dependent = any(k in p for k in ("Re-accumulation", "LPS", "BUEC", "Phase B"))
+        if not range_dependent or tr is None or not tr.get("valid"):
+            return True, "", ""
+        clearly_no_range = (not tr.get("is_range")) and (
+            tr.get("width_pct", 0.0) > 55.0 or tr.get("crossings", 99) <= 2
+        )
+        if not clearly_no_range:
+            return True, "", ""
+        extra = ""
+        obv = _obv_slope(df)
+        if obv is not None and obv < 0:
+            extra = " בנוסף, זרימת ההון (OBV) שלילית — הון נטו יוצא, מה שמחזק שאין כאן איסוף מוסדי."
+        reason = (f"התווית '{p}' מחייבת טווח מסחר — LPS/BUEC הם 'נקודת התמיכה האחרונה' *בתוך* טווח. "
+                  f"אך המבנה כאן הוא מהלך מגמתי/פרבולי ללא טווח מובהק (רוחב {tr.get('width_pct')}%, "
+                  f"חציות-אמצע: {tr.get('crossings')}).{extra}")
+        watch = ("מה לחפש: היווצרות טווח מסחר אמיתי (תמיכה/התנגדות שנבחנות מספר פעמים) עם נפח דועך "
+                 "בתיקונים. סגירה מעל ההתנגדות בנפח = חידוש עלייה; סגירה מתחת לתמיכה בנפח = חולשה.")
+        return False, reason, watch
+    except Exception:
+        return True, "", ""
+
+
 def refine_wyckoff_phase(df: pd.DataFrame, factors: pd.DataFrame, engine_phase: str):
     """
     שכבת אימות (Confirmation Overlay) מעל פלט מנוע הליבה. *אינה* משנה את FactorEngine —
@@ -1601,18 +1671,25 @@ def refine_wyckoff_phase(df: pd.DataFrame, factors: pd.DataFrame, engine_phase: 
                     f"כ-{risk['dist_pct']:.0f}% מהשיא, ו-{why}. זו חתימת נפח של תיקון/הפצה — איסוף "
                     f"חוזר אמיתי (LPS/BUEC) דורש נפח *דועך*, לא מתרחב. לכן אין כרגע פאזה חדשה מאושרת. "
                     f"ממתינים לאישור: שפל גבוה-יותר בנפח נמוך ואז סגירה מעל ${risk['resistance']} בנפח "
-                    f"(חידוש עלייה) — או סגירה יומית מתחת ${risk['support']} בנפח (מעבר מאושר להפצה)."
+                    f"(חידוש עלייה) — או סגירה יומית מתחת ${risk['support']} בנפח (מעבר מאושר להפצה). {_RESCAN_HINT}"
                 )
                 return "⚠️ מצב מעבר — סיכון הפצה / תיקון בנפח גבוה (Distribution Risk)", True, note, "caution"
 
-        # ---------- (2) המנוע ודאי (לא מעבר) → מכבדים לחלוטין ----------
+        # ---------- (2) המנוע ודאי (לא מעבר) → בדיקת עקביות מבנית לפני אישור ----------
+        # תופס מקרים כמו WULF: תווית תלוית-טווח (Re-accumulation/LPS/BUEC) שנכפית כשאין טווח.
         if fam != "transition":
+            tr_ctx = detect_trading_range(df)
+            coherent, c_reason, c_watch = assess_phase_coherence(df, engine_phase, tr_ctx)
+            if not coherent:
+                note = (f"המנוע סיווג '{engine_phase}', אך הסיווג אינו עקבי עם המבנה. {c_reason} "
+                        f"לכן המערכת *אינה כופה* פאזת איסוף. {c_watch} {_RESCAN_HINT}")
+                return "מצב מעבר — אין פאזה מאושרת (ממתינים לאישור)", True, note, "transition"
             return engine_phase, False, "", "confirmed"
 
         # אין מספיק נתונים → לא כופים פאזה, מסבירים שממתינים
         if df is None or len(df) < 60:
             ctx = describe_phase_transition(df, engine_phase)
-            note = f"יצאנו מ: {ctx['exited']}. ממתינים לאישור כניסה ל: {ctx['awaiting']}. מה לחפש: {ctx['watch']}"
+            note = f"יצאנו מ: {ctx['exited']}. ממתינים לאישור כניסה ל: {ctx['awaiting']}. מה לחפש: {ctx['watch']} {_RESCAN_HINT}"
             return "מצב מעבר — אין פאזה מאושרת (ממתינים לאישור)", True, note, "transition"
 
         close = df["Close"]
@@ -2987,20 +3064,26 @@ def _render_top_picks() -> None:
     st.markdown("<hr style='border-color:rgba(255,255,255,0.08); margin:22px 0;'>", unsafe_allow_html=True)
 
 
-def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phase: str) -> None:
+def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phase: str,
+                                     display_phase: str = None) -> None:
     """
     השורה התחתונה האחידה במסך הבית: סינתזת Wyckoff + פונדמנטלי (ניתוח ערך).
     הבאנר חייב להופיע *תמיד* - גם אם שאיבת הנתונים הפונדמנטליים נכשלה (synthesize_verdict
     יודע להתמודד עם fund_data חסר ולהציג הודעה ניטרלית ברורה, ולא לדלג על הרכיב כליל).
+
+    display_phase = הפאזה לתצוגה אחרי שכבת האימות (V20.4). כשהמנוע נתן תווית שאינה
+    עקבית עם המבנה (כמו WULF), display_phase = 'אין פאזה מאושרת' — וזה מה שמוצג בצ'יפ
+    ובנקודות, כדי לא להציג פאזה כפויה. לוגיקת ה-verdict עצמה נשארת על הפאזה הגולמית.
     """
     fdata = get_fundamental_data(ticker) or {}
+    disp = display_phase or current_phase
 
     verdict = synthesize_verdict(fdata, cis_score, current_phase, ticker)
     valuation = fdata.get("valuation", "-") if fdata else None
     pe_disp = (fdata.get('pe_forward') if fdata.get('pe_forward') != 'N/A' else fdata.get('pe_trailing', 'N/A')) if fdata else "N/A"
 
     render_verdict_banner(
-        verdict, ticker=ticker, cis_score=cis_score, current_phase=current_phase,
+        verdict, ticker=ticker, cis_score=cis_score, current_phase=disp,
         valuation=valuation, valuation_color=fdata.get("valuation_color", "#94a3b8"),
         extra_chips=([
             f"מכפיל רווח <b>{pe_disp}</b>",
@@ -3010,7 +3093,7 @@ def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phas
     )
 
     if fdata:
-        bullets = build_fundamental_bullets(fdata, ticker, current_phase=current_phase)
+        bullets = build_fundamental_bullets(fdata, ticker, current_phase=disp)
         st.markdown("<div class='narrative-box'><span class='narrative-title'>🦅 ניתוח ערך - הנקודות המרכזיות</span>"
                     + "".join(f"<div style='margin:6px 0; line-height:1.6;'>• {b}</div>" for b in bullets)
                     + "</div>", unsafe_allow_html=True)
@@ -3270,7 +3353,8 @@ def screen_home() -> None:
         render_data_status(ticker, result["df"], _home_fdata, result.get("freshness"))
 
         # === השורה התחתונה (Verdict Banner) - ראשון ובולט, לפני כל פירוט טכני ===
-        _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"])
+        _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"],
+                                         display_phase=result["display_phase"])
 
         # === V20.2: מה אומר הציון + למה הפאזה הזו (בולט, לא קבור ב-expander) ===
         st.markdown("<div class='section-label'>🧭 מה אומר הציון, ולמה הפאזה הזו</div>", unsafe_allow_html=True)
@@ -4400,3 +4484,4 @@ if __name__ == "__main__":
 
 # V20.2 – תוקנו: דיוק פאזות, הסברים, תוכנית מסחר, נתונים.
 # V20.3 – נוסף: ניתוח Wyckoff מעמיק (Trading Range, אירועים, VSA, יעדי Cause & Effect) — שכבת אפליקציה בלבד.
+# V20.4 – נוסף: שער עקביות פאזה — לא כופה תווית שסותרת את המבנה; אומר "אין פאזה מאושרת, סרוק שוב מחר".
