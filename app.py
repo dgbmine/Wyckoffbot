@@ -1,8 +1,32 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V20.2 (Feedback-Driven Update)
+INSTITUTIONAL SCOUT PRO V20.3 (Wyckoff Deep Analysis)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V20.3 — שכבת ניתוח Wyckoff מעמיק (מבוססת מחקר על המתודולוגיה הקנונית:
+        Wyckoff Analytics / StockCharts ChartSchool / Tom Williams VSA).
+        כל התוספות בשכבת האפליקציה — FactorEngine והליבה המוגנת לא נגעו.
+  1. Trading Range Engine (detect_trading_range): מזהה תמיכה/התנגדות/רוחב/מיקום
+     המחיר בטווח — היסוד שכל אירועי Wyckoff עוגנים אליו.
+  2. זיהוי אירועים מבניים (detect_wyckoff_events): Spring/Shakeout, Upthrust/UTAD,
+     SOS/פריצה, SOW/שבירה — האירועים שמצדיקים את הפאזה (המנוע נתן פאזות בלבד, לא אירועים).
+  3. VSA Bar Classifier (classify_vsa_bars): Selling/Buying Climax, Stopping Volume,
+     No Demand/No Supply, Upthrust, SOS, Effort vs Result — קריאת נר-נר לפי Tom Williams.
+  4. יעדי Cause & Effect (wyckoff_cause_effect_targets): השלכת רוחב הטווח (פרוקסי
+     לספירת P&F אופקית) ליעדי מחיר שמרני/בסיס/מורחב — חלופה מתודולוגית ליעדי ה-ATR.
+  5. שולב כ-expander "🔬 ניתוח Wyckoff מעמיק" במסכי "תבדוק לי" ו-Trading Scout.
+
+V20.2.1 — תיקון מיקוד לסיווג פאזה (משוב WULF):
+  • שכבת האימות (refine_wyckoff_phase) הורחבה לזיהוי "סיכון הפצה / תיקון בנפח גבוה":
+    כשהמנוע מתייג המשך-עלייה (Re-accumulation/Phase D/E) אך הפולבק עמוק (≥10% מהשיא)
+    ובנפח מכירות מתרחב — המערכת *לא כופה* תווית שורית אלא מסמנת "אין פאזה מאושרת,
+    ממתינים לאישור" עם ראיות. שורש הבעיה: ענף ה-Re-accumulation בליבה בודק רק נפח נר-בודד
+    וללא תקרת עומק לפולבק (הליבה לא שונתה — התיקון בשכבת האפליקציה בלבד).
+  • עיקרון חדש: כשאין פאזה מובהקת, המערכת אומרת זאת מפורשות ("יצאנו מ-X / ממתינים ל-Y").
+  • סגירת פער הצגה: מסלול הסריקה (קרוסלה/Swipe/סקטור) הציג עד כה את תווית המנוע הגולמית
+    ולא עבר דרך שכבת האימות — לכן WULF הופיע כ-"Re-accumulation". נוסף pick_phase_caution
+    שמחיל את אותו זיהוי "סיכון הפצה" גם על כרטיסי הסריקה (תווית + צ'יפ אזהרה במקום "🔥 איסוף חזק").
 
 V20.2 — שיפורים מבוססי משוב שטח (סבב ראשון, סוחר וויקוף 1-3 שנות ניסיון):
   1. דיוק זיהוי פאזות: שכבת אימות (Confirmation Overlay) מעל מנוע הליבה
@@ -1125,6 +1149,12 @@ def inject_css() -> None:
     .mr-cell-name { font-size: 0.78rem; color: var(--txt-3); font-weight: 700; }
     .mr-cell-val { font-size: 1.0rem; font-weight: 800; margin-top: 2px; }
     .mr-note { color: var(--txt-2); font-size: 0.86rem; line-height: 1.6; margin-top: 8px; }
+    /* V20.3 — Trading Range position bar */
+    .wyck-tr-bar { position: relative; height: 10px; border-radius: 6px; margin-top: 10px;
+        background: linear-gradient(90deg, #16a34a 0%, #eab308 50%, #dc2626 100%); opacity: 0.85; }
+    .wyck-tr-dot { position: absolute; top: 50%; width: 16px; height: 16px; border-radius: 50%;
+        background: #f8fafc; border: 3px solid #0f172a; transform: translate(-50%, -50%);
+        box-shadow: 0 0 10px rgba(248,250,252,0.6); }
     </style>
 
     <script>
@@ -1171,7 +1201,7 @@ def _compute_wyckoff(ticker: str):
     allowed = check_phase_entry_allowed(current_phase, "Balanced")
 
     # === V20.2: שכבת אימות + ראיות + טריות נתונים (אפליקטיבי, מעל המנוע המוגן) ===
-    refined_phase, was_refined, refine_note = refine_wyckoff_phase(df, factors, current_phase)
+    refined_phase, was_refined, refine_note, phase_status = refine_wyckoff_phase(df, factors, current_phase)
     evidence = build_phase_evidence(df, factors, refined_phase)
     freshness = assess_data_freshness(df)
 
@@ -1183,6 +1213,7 @@ def _compute_wyckoff(ticker: str):
         "display_phase": refined_phase,         # פלט מוצג לאחר אימות אפליקטיבי
         "phase_refined": was_refined,
         "phase_refine_note": refine_note,
+        "phase_status": phase_status,           # confirmed / transition / caution
         "phase_evidence": evidence,
         "freshness": freshness,
         "current_cis": current_cis,
@@ -1235,28 +1266,354 @@ def _sma(series: pd.Series, n: int):
         return float("nan")
 
 
+def detect_distribution_risk(df: pd.DataFrame) -> dict:
+    """
+    מזהה 'תיקון/הפצה בנפח גבוה' שמתחזה לאיסוף חוזר: פולבק עמוק מהשיא המלווה בנפח
+    מכירות גובר — חתימה הפוכה מ-LPS/BUEC רגוע (שדורש נפח *דועך*).
+    מחזיר: {risk, dist_pct, reasons[], support, resistance, signals}
+    """
+    res = {"risk": False, "dist_pct": 0.0, "reasons": [], "support": None, "resistance": None, "signals": 0}
+    try:
+        if df is None or len(df) < 60:
+            return res
+        close, openp, vol = df["Close"], df["Open"], df["Volume"]
+        c = float(close.iloc[-1])
+        v_ma = float(vol.rolling(20).mean().iloc[-1]) or 1.0
+        s20, s50 = _sma(close, 20), _sma(close, 50)
+        high60 = float(df["High"].rolling(60).max().iloc[-1])
+        low60 = float(df["Low"].rolling(60).min().iloc[-1])
+        res["resistance"] = round(high60, 2)
+        res["support"] = round(s50, 2) if not pd.isna(s50) else round(low60, 2)
+
+        dist = (high60 - c) / high60 if high60 else 0.0
+        res["dist_pct"] = round(dist * 100, 1)
+        deep_pullback = dist >= 0.10  # ירד 10%+ מתחת לשיא 60 יום
+
+        # רגל הפולבק = מנקודת השיא של 60 יום ועד עכשיו
+        recent60 = df.tail(60)
+        try:
+            leg = df.loc[recent60["High"].idxmax():]
+        except Exception:
+            leg = df.tail(10)
+        up_vol = float(leg.loc[leg["Close"] >= leg["Open"], "Volume"].sum())
+        dn_vol = float(leg.loc[leg["Close"] < leg["Open"], "Volume"].sum())
+        supply_dominates = dn_vol > up_vol * 1.15
+
+        last5 = df.tail(5)
+        heavy_supply_bar = bool(((last5["Volume"] > v_ma * 1.4) & (last5["Close"] < last5["Open"])).any())
+        below_s20 = (not pd.isna(s20)) and c < s20
+
+        if supply_dominates:
+            res["reasons"].append("נפח הירידות גובר על נפח העליות לאורך הפולבק (היצע מוסדי)")
+        if heavy_supply_bar:
+            res["reasons"].append("נר ירידה אחרון בנפח חריג (≥x1.4 מהממוצע) — לחץ מכירה אקטיבי")
+        if below_s20:
+            res["reasons"].append("המחיר שבר את ממוצע 20 — אובדן מבנה קצר-טווח")
+        res["signals"] = int(supply_dominates) + int(heavy_supply_bar) + int(below_s20)
+        res["risk"] = bool(deep_pullback and res["signals"] >= 2)
+    except Exception:
+        pass
+    return res
+
+
+def describe_phase_transition(df: pd.DataFrame, engine_phase: str = "") -> dict:
+    """
+    מנסח 'יצאנו מ-X / ממתינים לאישור ל-Y' כשאין פאזה מאושרת — לפי מבנה המחיר,
+    במקום לכפות התאמה לפאזה. מחזיר: {exited, awaiting, watch}.
+    """
+    ctx = {"exited": "", "awaiting": "", "watch": ""}
+    try:
+        if df is None or len(df) < 60:
+            ctx["awaiting"] = "נדרשים יותר נתונים (≥60 ימי מסחר) לזיהוי פאזה מובהקת."
+            return ctx
+        close = df["Close"]
+        c = float(close.iloc[-1])
+        s20, s50, s200 = _sma(close, 20), _sma(close, 50), _sma(close, 200)
+        if pd.isna(s200):
+            s200 = s50
+        high60 = float(df["High"].rolling(60).max().iloc[-1])
+        low60 = float(df["Low"].rolling(60).min().iloc[-1])
+        dist_high = (high60 - c) / high60 if high60 else 0.0
+
+        above_200 = c > s200
+        below_50 = (not pd.isna(s50)) and c < s50
+        near_low = c <= low60 * 1.06
+
+        if above_200 and dist_high >= 0.07 and not below_50:
+            ctx["exited"] = "מגמת עלייה (Phase E / Markup)"
+            ctx["awaiting"] = "אישור איסוף חוזר (Re-accumulation) — או תחילת הפצה"
+            ctx["watch"] = (f"להמשך עלייה: שפל גבוה-יותר בנפח דועך ואז סגירה מעל ${round(high60,2)} בנפח. "
+                            f"לחולשה: סגירה יומית מתחת ${round(s50,2)} בנפח גבוה.")
+        elif below_50 and above_200:
+            ctx["exited"] = "טווח איסוף (Phase B)"
+            ctx["awaiting"] = "ניעור (Phase C / Spring) או פריצה ראשונה (Phase D / SOS)"
+            ctx["watch"] = (f"מחפשים ניעור מתחת ${round(low60,2)} שחוזר מיד מעלה בנפח (Spring), "
+                            f"או סגירה מעל ${round(high60,2)} בנפח כפריצת SOS.")
+        elif near_low and not above_200:
+            ctx["exited"] = "מגמת ירידה (Markdown)"
+            ctx["awaiting"] = "בלימת מכירות (Phase A) ותחילת בנייה מחדש"
+            ctx["watch"] = (f"מחפשים נר בלימה בנפח חריג סביב ${round(low60,2)} שנסגר בחצי העליון, "
+                            f"ולאחריו התייצבות מעל ${round(s20,2)}.")
+        else:
+            ctx["exited"] = "מצב לא מובהק (ממוצעים שזורים)"
+            ctx["awaiting"] = "התגבשות מבנה ברור — מעל/מתחת לממוצעים מרכזיים"
+            ctx["watch"] = (f"אזור החלטה סביב ${round(c,2)}: סגירה מעל ${round(high60,2)} = כוח, "
+                            f"מתחת ${round(low60,2)} = חולשה.")
+    except Exception:
+        pass
+    return ctx
+
+
+# ============================================================
+# V20.3 — שכבת ניתוח וויקוף מעמיק (Wyckoff Deep Analysis).
+# מבוססת מחקר על המתודולוגיה הקנונית: Wyckoff Analytics / StockCharts
+# ChartSchool (אירועי TR, חוק Cause & Effect) ו-Tom Williams VSA
+# (No Demand/No Supply/Stopping Volume/Climax/Upthrust).
+# שכבת אפליקציה בלבד — קוראת OHLCV גולמי, לא נוגעת ב-FactorEngine
+# ובפונקציות הליבה המוגנות. מוסכמות זהות למנוע: vol_ma20=ממוצע נפח 20,
+# spread=High-Low מול spread_ma20, ומיקום הסגירה בתוך הנר.
+# ============================================================
+
+def _bar_metrics(df: pd.DataFrame) -> pd.DataFrame:
+    """מטריקות בסיס לכל נר (מוסכמות זהות ל-FactorEngine): ספרד, ספרד יחסי,
+    נפח יחסי, מיקום סגירה בתוך הנר (0=שפל,1=שיא), וכיוון."""
+    m = pd.DataFrame(index=df.index)
+    rng = (df["High"] - df["Low"]).replace(0, 1e-9)
+    m["spread_ratio"] = rng / rng.rolling(20).mean().replace(0, 1e-9)
+    vma = df["Volume"].rolling(20).mean().replace(0, 1e-9)
+    m["vol_ratio"] = df["Volume"] / vma
+    m["close_pos"] = ((df["Close"] - df["Low"]) / rng).clip(0, 1)
+    m["up_bar"] = df["Close"] > df["Close"].shift(1)
+    return m
+
+
+def detect_trading_range(df: pd.DataFrame, lookback: int = 70) -> dict:
+    """
+    מזהה את טווח המסחר (Trading Range) הנוכחי — היסוד של ניתוח וויקוף: תמיכה/
+    התנגדות, רוחב, מיקום המחיר בטווח, מס' נגיעות. מבחין בין *טווח אמיתי* (המחיר
+    מתנודד — חוצה את האמצע מספר פעמים, רוחב סביר) לבין *מגמה* (תנועה כיוונית ללא
+    קונסולידציה) — כדי לא להשליך 'טווח' מזויף על מניה במגמה חדה (שורש עיוות ה-TR
+    הקודם). מחזיר dict עם is_range. קצוות לפי אחוזונים (עמיד לספייק בודד).
+    """
+    res = {"valid": False, "is_range": False, "support": None, "resistance": None,
+           "midpoint": None, "width_pct": 0.0, "position": 0.5, "location": "—",
+           "bars": 0, "touches_s": 0, "touches_r": 0, "crossings": 0}
+    try:
+        if df is None or len(df) < 40:
+            return res
+        win = df.tail(min(lookback, len(df)))
+        c = float(win["Close"].iloc[-1])
+        res_hi = float(win["High"].quantile(0.92))
+        sup_lo = float(win["Low"].quantile(0.08))
+        if res_hi <= sup_lo:
+            return res
+        tol = (res_hi - sup_lo) * 0.04
+        touches_r = int((win["High"] >= res_hi - tol).sum())
+        touches_s = int((win["Low"] <= sup_lo + tol).sum())
+        width_pct = (res_hi - sup_lo) / sup_lo * 100.0
+        mid = (res_hi + sup_lo) / 2.0
+        pos = (c - sup_lo) / (res_hi - sup_lo)
+        # מבחן 'טווח מול מגמה': כמה פעמים הסגירה חוצה את אמצע הטווח
+        above = win["Close"] > mid
+        crossings = int((above != above.shift(1)).iloc[1:].sum())
+        is_range = (crossings >= 3) and (5.0 <= width_pct <= 45.0)
+        if not is_range:
+            loc = "trending"
+        elif c > res_hi * 1.015:
+            loc = "breakout_up"
+        elif c < sup_lo * 0.985:
+            loc = "breakdown"
+        elif pos >= 0.66:
+            loc = "upper"
+        elif pos <= 0.34:
+            loc = "lower"
+        else:
+            loc = "middle"
+        bars_in = int(((win["Close"] <= res_hi * 1.02) & (win["Close"] >= sup_lo * 0.98)).sum())
+        res.update({"valid": True, "is_range": bool(is_range), "support": round(sup_lo, 2),
+                    "resistance": round(res_hi, 2), "midpoint": round(mid, 2),
+                    "width_pct": round(width_pct, 1), "position": round(float(max(0.0, min(1.0, pos))), 2),
+                    "location": loc, "bars": bars_in, "touches_s": touches_s,
+                    "touches_r": touches_r, "crossings": crossings})
+    except Exception:
+        pass
+    return res
+
+
+def classify_vsa_bars(df: pd.DataFrame, n: int = 15) -> list:
+    """
+    מסווג את n הנרות האחרונים לפי Volume Spread Analysis (Tom Williams):
+    Selling/Buying Climax, Stopping Volume, Spring/Shakeout, Upthrust, SOS,
+    No Demand, No Supply, Effort vs Result. כל תווית מבוססת ספרד יחסי, נפח יחסי
+    ומיקום הסגירה — מוסכמות זהות למנוע. רקע המגמה (מעל/מתחת SMA20) משמש לקונטקסט
+    הקלימקסים. מחזיר את הנרות המסומנים בלבד (מהישן לחדש).
+    """
+    out = []
+    try:
+        if df is None or len(df) < 30:
+            return out
+        m = _bar_metrics(df)
+        closes, vols = df["Close"], df["Volume"]
+        s20 = closes.rolling(20).mean()
+        for i in range(max(2, len(df) - n), len(df)):
+            sr = float(m["spread_ratio"].iloc[i]); vr = float(m["vol_ratio"].iloc[i])
+            cp = float(m["close_pos"].iloc[i]); up = bool(m["up_bar"].iloc[i])
+            v = float(vols.iloc[i]); v_prev2 = float(min(vols.iloc[i - 1], vols.iloc[i - 2]))
+            c = float(closes.iloc[i])
+            hi5 = float(df["High"].iloc[max(0, i - 5):i].max())
+            lo5 = float(df["Low"].iloc[max(0, i - 5):i].min())
+            trend_up = (not pd.isna(s20.iloc[i])) and c > float(s20.iloc[i])
+            label = tone = note = None
+
+            if sr >= 1.6 and vr >= 2.0 and cp >= 0.5 and not trend_up:
+                label, tone, note = "Selling Climax (SC)", "pos", "ספרד רחב + נפח אולטרה + סגירה בחצי העליון אחרי ירידה — ידיים חזקות סופגות היצע."
+            elif sr >= 1.6 and vr >= 2.0 and cp <= 0.5 and trend_up:
+                label, tone, note = "Buying Climax (BC)", "neg", "ספרד רחב + נפח אולטרה + סגירה בחצי התחתון בשיא מגמה — חתימת הפצה לקהל."
+            elif float(df["High"].iloc[i]) > hi5 and cp <= 0.33 and vr >= 1.2:
+                label, tone, note = "Upthrust (UT)", "neg", "חדירה מעל שיא קצר-טווח שנדחתה (סגירה בתחתית) — מלכודת שוורים / היצע."
+            elif float(df["Low"].iloc[i]) < lo5 and c > lo5 and cp >= 0.5 and vr >= 1.2:
+                label, tone, note = "Spring / Shakeout", "pos", "חדירה מתחת לשפל קצר-טווח שנבלעה מיד (סגירה גבוהה) — מלכודת דובים / Phase C."
+            elif (not up) and vr >= 1.8 and cp >= 0.5 and not trend_up:
+                label, tone, note = "Stopping Volume", "pos", "נר ירידה בנפח גבוה שנסגר בחצי העליון — ביקוש נכנס וסופג (לא אות קנייה לבד)."
+            elif up and sr >= 1.3 and vr >= 1.2 and cp >= 0.66:
+                label, tone, note = "Sign of Strength (SOS)", "pos", "נר עלייה רחב בנפח, סגירה בשליש העליון — ביקוש שולט."
+            elif up and sr <= 0.7 and v < v_prev2 and cp <= 0.5:
+                label, tone, note = "No Demand", "neg", "נר עלייה צר בנפח דל (מתחת ל-2 הקודמים) — היעדר עניין מוסדי בעליות."
+            elif (not up) and sr <= 0.7 and v < v_prev2 and cp >= 0.5:
+                label, tone, note = "No Supply", "pos", "נר ירידה צר בנפח דל — לחץ המכירה מתייבש (חיובי ליד תמיכה)."
+            elif vr >= 1.6 and sr <= 0.8:
+                label, tone, note = "Effort vs Result", "neu", "נפח גבוה אך תנועה קטנה — מאמץ ללא תוצאה: ספיגה נגדית (היצע/ביקוש סמוי)."
+
+            if label:
+                out.append({"date": df.index[i].strftime("%d.%m"), "label": label, "tone": tone,
+                            "note": note, "vol_ratio": round(vr, 1), "close_pos": round(cp, 2)})
+    except Exception:
+        pass
+    return out
+
+
+def detect_wyckoff_events(df: pd.DataFrame, tr: dict) -> list:
+    """
+    מזהה אירועי Wyckoff מבניים עוגנים לטווח המסחר (TR): Spring/Shakeout (Phase C),
+    Upthrust/UTAD (Phase C הפצה), SOS/פריצה (Jump the Creek), ו-SOW/שבירה. מחזיר
+    את המופע האחרון מכל סוג, מהחדש לישן, עם תאריך/מחיר/תיאור. דורש TR תקין.
+    """
+    found = []
+    try:
+        if df is None or len(df) < 40 or not tr.get("is_range"):
+            return found
+        sup, rst = tr["support"], tr["resistance"]
+        m = _bar_metrics(df)
+        win_n = min(max(tr.get("bars", 60), 40) + 20, len(df), 100)
+        for i in range(max(2, len(df) - win_n), len(df)):
+            hi = float(df["High"].iloc[i]); lo = float(df["Low"].iloc[i]); c = float(df["Close"].iloc[i])
+            cp = float(m["close_pos"].iloc[i]); vr = float(m["vol_ratio"].iloc[i])
+            if lo < sup and c > sup and cp >= 0.45:
+                found.append((i, "Spring / Shakeout (Phase C)", c,
+                              f"חדירה ל-${round(lo,2)} מתחת לתמיכה ${sup} וחזרה מעל — מלכודת דובים. כניסת לונג קלאסית, סטופ מתחת לשפל הניעור.", "pos"))
+            elif hi > rst and c < rst and cp <= 0.55:
+                found.append((i, "Upthrust / UTAD (Phase C)", c,
+                              f"חדירה ל-${round(hi,2)} מעל התנגדות ${rst} ודחייה חזרה פנימה — מלכודת שוורים. אזהרת הפצה / כניסת שורט.", "neg"))
+            elif c > rst and vr >= 1.3 and cp >= 0.6:
+                found.append((i, "SOS / פריצה (Phase D→E)", c,
+                              f"סגירה מעל ${rst} בנפח (×{round(vr,1)}) — קפיצה מעל ה-Creek, אישור Markup.", "pos"))
+            elif c < sup and vr >= 1.3 and cp <= 0.4:
+                found.append((i, "SOW / שבירה (Phase D→E)", c,
+                              f"סגירה מתחת ${sup} בנפח (×{round(vr,1)}) — שבירת תמיכה, אישור Markdown.", "neg"))
+        found.sort(key=lambda e: e[0], reverse=True)
+        seen, uniq = set(), []
+        for i, name, price, desc, tone in found:
+            key = name.split("/")[0].strip()
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append({"date": df.index[i].strftime("%d.%m.%Y"), "event": name,
+                         "price": round(price, 2), "desc": desc, "tone": tone})
+        return uniq[:5]
+    except Exception:
+        return found
+
+
+def wyckoff_cause_effect_targets(df: pd.DataFrame, tr: dict) -> dict:
+    """
+    יעדי מחיר לפי חוק הסיבה והתוצאה (Cause & Effect): רוחב טווח המסחר הוא ה'סיבה'
+    הצבורה; המהלך שאחרי הפריצה הוא ה'תוצאה'. פרוקסי לספירת P&F האופקית מתוך OHLCV:
+    יעד = רמת הפריצה ± (רוחב הטווח × מכפיל). מחזיר יעדי עלייה (מאיסוף) וירידה (מהפצה),
+    שמרני(×1)/בסיס(×2)/מורחב(×3), עם אחוזי תנועה מהמחיר הנוכחי.
+    """
+    res = {"valid": False}
+    try:
+        if not tr.get("is_range"):   # יעדי Cause & Effect תקפים רק לטווח מסחר אמיתי, לא למגמה
+            return res
+        sup, rst = tr["support"], tr["resistance"]
+        width = rst - sup
+        if width <= 0:
+            return res
+        c = float(df["Close"].iloc[-1])
+
+        def pct(p):
+            return round((p - c) / c * 100, 1)
+
+        up = {k: {"price": round(rst + width * mlt, 2), "pct": pct(rst + width * mlt)}
+              for k, mlt in (("conservative", 1.0), ("base", 2.0), ("extended", 3.0))}
+        # יעדי ירידה נחתכים ל-0 כרצפה (מחיר לא יכול להיות שלילי)
+        down = {k: {"price": max(0.01, round(sup - width * mlt, 2)), "pct": pct(max(0.01, sup - width * mlt))}
+                for k, mlt in (("conservative", 1.0), ("base", 2.0), ("extended", 3.0))}
+        res = {"valid": True, "width": round(width, 2), "width_pct": tr["width_pct"],
+               "breakout_up": rst, "breakdown": sup, "up": up, "down": down}
+    except Exception:
+        pass
+    return res
+
+
 def refine_wyckoff_phase(df: pd.DataFrame, factors: pd.DataFrame, engine_phase: str):
     """
-    שכבת אימות (Confirmation Overlay) מעל פלט מנוע הליבה.
-    *אינה* משנה את FactorEngine — רק קוראת את אותם נתונים גולמיים ומשדרגת תווית
-    כשהמנוע נפל ל-"TRANSITION / UNCERTAIN" למרות מבנה מחיר/נפח חד-משמעי.
+    שכבת אימות (Confirmation Overlay) מעל פלט מנוע הליבה. *אינה* משנה את FactorEngine —
+    רק קוראת את אותם נתונים גולמיים. שלושה מצבים אפשריים בפלט (status):
+      • "confirmed"  — תווית פאזה מאושרת (של המנוע, או שדרוג ודאי ממצב מעבר).
+      • "transition" — אין פאזה מאושרת: מנוסח 'יצאנו מ-X / ממתינים לאישור ל-Y' (לא כופים פאזה).
+      • "caution"    — המנוע נתן תווית המשך-עלייה, אך הראיות מצביעות על תיקון/הפצה בנפח גבוה.
 
-    הרקע (תיקון "בעיית WULF"): המנוע מסווג Phase E רק אם גם OBV וגם RS חיוביים,
-    ו-Phase D רק אם OBV חיובי. מניה שפרצה בעוצמה אך אחד הסינונים המשניים בדיוק
-    "פספס" (למשל RS שלילי קל) נזרקת ל-TRANSITION ומפספסת פאזה מתקדמת אמיתית.
-    כאן אנו משדרגים *רק* כשמבנה המחיר חזק וברור, ומסמנים שזה אומת אפליקטיבית.
+    רקע (תיקון "בעיית WULF" בשני הכיוונים):
+      (א) המנוע מסווג Phase E רק אם OBV וגם RS חיוביים — לכן פריצה אמיתית שאחד הסינונים
+          המשניים בקושי פספס נזרקת ל-TRANSITION. כאן משדרגים כשמבנה המחיר חד-משמעי.
+      (ב) ענף ה-Re-accumulation של המנוע בודק רק נפח של נר בודד (v<v_ma) וללא תקרת עומק
+          לפולבק — לכן ירידה חדה ועמוקה בנפח גבוה (כמו WULF) מתויגת בטעות כ'איסוף חוזר רגוע'.
+          כאן מורידים תווית כזו ל'סיכון הפצה / ממתינים לאישור', במקום לכפות פאזה שורית.
 
-    מחזיר: (refined_phase, was_refined, note)
-    שמרני: לעולם לא מוריד דרגה מתווית ודאית של המנוע, רק משדרג TRANSITION/לא-בתהליך.
+    מחזיר: (display_phase, was_refined, note, status)
+    שמרני: לעולם לא מוריד תווית ודאית *תקינה* של המנוע; פועל רק על מעבר או על המשך-עלייה חשוד.
     """
     try:
         fam = _phase_family(engine_phase)
-        # אם המנוע כבר ודאי (לא מעבר) — מכבדים אותו לחלוטין
-        if fam != "transition":
-            return engine_phase, False, ""
 
+        # ---------- (1) caution: תווית המשך-עלייה שנראית כמו הפצה בנפח גבוה ----------
+        is_continuation = (
+            any(k in engine_phase for k in ("Re-accumulation", "Phase E", "Markup", "Phase D", "LPS", "SOS", "Breakout"))
+            and "Spring" not in engine_phase and "Phase C" not in engine_phase
+        )
+        if is_continuation:
+            risk = detect_distribution_risk(df)
+            if risk["risk"]:
+                why = "; ".join(risk["reasons"][:3])
+                note = (
+                    f"המנוע סיווג '{engine_phase}' (המשך עלייה), אך זהו אינו פולבק רגוע: המחיר ירד "
+                    f"כ-{risk['dist_pct']:.0f}% מהשיא, ו-{why}. זו חתימת נפח של תיקון/הפצה — איסוף "
+                    f"חוזר אמיתי (LPS/BUEC) דורש נפח *דועך*, לא מתרחב. לכן אין כרגע פאזה חדשה מאושרת. "
+                    f"ממתינים לאישור: שפל גבוה-יותר בנפח נמוך ואז סגירה מעל ${risk['resistance']} בנפח "
+                    f"(חידוש עלייה) — או סגירה יומית מתחת ${risk['support']} בנפח (מעבר מאושר להפצה)."
+                )
+                return "⚠️ מצב מעבר — סיכון הפצה / תיקון בנפח גבוה (Distribution Risk)", True, note, "caution"
+
+        # ---------- (2) המנוע ודאי (לא מעבר) → מכבדים לחלוטין ----------
+        if fam != "transition":
+            return engine_phase, False, "", "confirmed"
+
+        # אין מספיק נתונים → לא כופים פאזה, מסבירים שממתינים
         if df is None or len(df) < 60:
-            return engine_phase, False, ""
+            ctx = describe_phase_transition(df, engine_phase)
+            note = f"יצאנו מ: {ctx['exited']}. ממתינים לאישור כניסה ל: {ctx['awaiting']}. מה לחפש: {ctx['watch']}"
+            return "מצב מעבר — אין פאזה מאושרת (ממתינים לאישור)", True, note, "transition"
 
         close = df["Close"]
         c = float(close.iloc[-1])
@@ -1264,55 +1621,58 @@ def refine_wyckoff_phase(df: pd.DataFrame, factors: pd.DataFrame, engine_phase: 
         v = float(df["Volume"].iloc[-1])
         v_ma = float(df["Volume"].rolling(20).mean().iloc[-1]) if len(df) >= 20 else v
         s20, s50, s200 = _sma(close, 20), _sma(close, 50), _sma(close, 200)
-        if any(pd.isna(x) for x in (s20, s50)):
-            return engine_phase, False, ""
-        if pd.isna(s200):
-            s200 = s50
-        high60 = float(df["High"].rolling(60).max().iloc[-1])
-        vol_exp = (v > v_ma * 1.5) if v_ma else False
+        if not any(pd.isna(x) for x in (s20, s50)):
+            if pd.isna(s200):
+                s200 = s50
+            high60 = float(df["High"].rolling(60).max().iloc[-1])
+            vol_exp = (v > v_ma * 1.5) if v_ma else False
 
-        # OBV slope (10) ו-RS — בדיוק הסינונים המשניים שהמנוע מקפיד עליהם
-        obv = (np.sign(close.diff()) * df["Volume"]).cumsum()
-        obv_slope = float(obv.diff(10).iloc[-1]) if len(obv) >= 10 else 0.0
-        rs = 0.0
-        if "spy_close" in df.columns:
-            try:
-                rs = float((close.pct_change(20).iloc[-1] - df["spy_close"].pct_change(20).iloc[-1]))
-            except Exception:
-                rs = 0.0
+            # OBV slope (10) ו-RS — בדיוק הסינונים המשניים שהמנוע מקפיד עליהם
+            obv = (np.sign(close.diff()) * df["Volume"]).cumsum()
+            obv_slope = float(obv.diff(10).iloc[-1]) if len(obv) >= 10 else 0.0
+            rs = 0.0
+            if "spy_close" in df.columns:
+                try:
+                    rs = float((close.pct_change(20).iloc[-1] - df["spy_close"].pct_change(20).iloc[-1]))
+                except Exception:
+                    rs = 0.0
 
-        near_high = c >= high60 * 0.97
-        full_stack = c > s20 and s20 > s50 and s50 > s200
+            near_high = c >= high60 * 0.97
+            full_stack = c > s20 and s20 > s50 and s50 > s200
 
-        # (1) Markup ברור: סטאק ממוצעים מלא + צמוד לשיא 60 יום
-        if full_stack and near_high:
-            why = []
-            if obv_slope <= 0:
-                why.append("זרימת ההון (OBV) שטוחה/שלילית קלות")
-            if rs <= 0:
-                why.append("עוצמה יחסית מול השוק עדיין לא חיובית")
-            reason = " ו".join(why) if why else "אישור משני חלקי בלבד"
-            note = (f"מבנה המחיר חד-משמעית במגמת עלייה (סגירה מעל כל הממוצעים, צמוד לשיא 60 יום), "
-                    f"אך המנוע סיווג 'מעבר' כי {reason}. שכבת האימות משדרגת ל-Phase E כאזהרה שהמהלך כבר התקדם.")
-            return "Phase E (Markup) — אומת אפליקטיבית", True, note
+            # ---------- (3) שדרוג ממצב מעבר כשמבנה המחיר חד-משמעי ----------
+            # (3a) Markup ברור: סטאק ממוצעים מלא + צמוד לשיא 60 יום
+            if full_stack and near_high:
+                why = []
+                if obv_slope <= 0:
+                    why.append("זרימת ההון (OBV) שטוחה/שלילית קלות")
+                if rs <= 0:
+                    why.append("עוצמה יחסית מול השוק עדיין לא חיובית")
+                reason = " ו".join(why) if why else "אישור משני חלקי בלבד"
+                note = (f"מבנה המחיר חד-משמעית במגמת עלייה (סגירה מעל כל הממוצעים, צמוד לשיא 60 יום), "
+                        f"אך המנוע סיווג 'מעבר' כי {reason}. שכבת האימות משדרגת ל-Phase E.")
+                return "Phase E (Markup) — אומת אפליקטיבית", True, note, "confirmed"
 
-        # (2) Breakout/SOS ברור: מעל SMA50, נר ירוק, נפח מתרחב, קרוב לשיא
-        if c > s50 and c > o and vol_exp and c >= high60 * 0.92:
-            note = ("פריצה בעוצמה: סגירה ירוקה מעל ממוצע 50, התרחבות נפח משמעותית וקרבה לשיא 60 יום. "
-                    "המנוע נשאר ב'מעבר' (לרוב בגלל OBV), אך מבנה הפריצה ברור — שודרג ל-Phase D (SOS).")
-            return "Phase D (SOS / Breakout) — אומת אפליקטיבית", True, note
+            # (3b) Breakout/SOS ברור: מעל SMA50, נר ירוק, נפח מתרחב, קרוב לשיא
+            if c > s50 and c > o and vol_exp and c >= high60 * 0.92:
+                note = ("פריצה בעוצמה: סגירה ירוקה מעל ממוצע 50, התרחבות נפח משמעותית וקרבה לשיא 60 יום. "
+                        "המנוע נשאר ב'מעבר' (לרוב בגלל OBV), אך מבנה הפריצה ברור — שודרג ל-Phase D (SOS).")
+                return "Phase D (SOS / Breakout) — אומת אפליקטיבית", True, note, "confirmed"
 
-        # (3) Spring/Shakeout ברור שלא תוייג: שפל חדש שנבלע + סגירה ירוקה בנפח גבוה
-        low60 = float(df["Low"].rolling(60).min().shift(1).iloc[-1])
-        is_new_low = float(df["Low"].iloc[-1]) < low60
-        if is_new_low and c > o and vol_exp and obv_slope >= 0:
-            note = ("ניעור נזילות (Spring): שפל חדש מתחת לטווח שנבלע מיד עם סגירה ירוקה ונפח גבוה, "
-                    "וה-OBV מחזיק. תבנית Phase C קלאסית ששכבת האימות מדגישה.")
-            return "Phase C (Spring / Liquidity Sweep) — אומת אפליקטיבית", True, note
+            # (3c) Spring/Shakeout ברור שלא תוייג: שפל חדש שנבלע + סגירה ירוקה בנפח גבוה
+            low60 = float(df["Low"].rolling(60).min().shift(1).iloc[-1])
+            is_new_low = float(df["Low"].iloc[-1]) < low60
+            if is_new_low and c > o and vol_exp and obv_slope >= 0:
+                note = ("ניעור נזילות (Spring): שפל חדש מתחת לטווח שנבלע מיד עם סגירה ירוקה ונפח גבוה, "
+                        "וה-OBV מחזיק. תבנית Phase C קלאסית ששכבת האימות מדגישה.")
+                return "Phase C (Spring / Liquidity Sweep) — אומת אפליקטיבית", True, note, "confirmed"
 
-        return engine_phase, False, ""
+        # ---------- (4) באמת אין פאזה מובהקת → 'יצאנו מ-X / ממתינים ל-Y' (לא כופים פאזה) ----------
+        ctx = describe_phase_transition(df, engine_phase)
+        note = f"יצאנו מ: {ctx['exited']}. ממתינים לאישור כניסה ל: {ctx['awaiting']}. מה לחפש: {ctx['watch']}"
+        return "מצב מעבר — אין פאזה מאושרת (ממתינים לאישור)", True, note, "transition"
     except Exception:
-        return engine_phase, False, ""
+        return engine_phase, False, "", "confirmed"
 
 
 def build_phase_evidence(df: pd.DataFrame, factors: pd.DataFrame, phase: str) -> list:
@@ -1562,7 +1922,14 @@ def interpret_cis(cis: float, current_phase: str = "") -> dict:
         meaning = "אין עניין מוסדי, או שיש יציאת הון. ציון נמוך = להתרחק מלונג עד לשינוי."
 
     note = ""
-    if cis >= 65 and _phase_family(current_phase) == "bearish":
+    fam = _phase_family(current_phase)
+    if "סיכון הפצה" in current_phase or "Distribution Risk" in current_phase:
+        note = ("הציון משקף את העבר (הצבירה שהניעה את העלייה), אך כעת זוהה תיקון/הפצה בנפח גבוה. "
+                "אל תתבסס על הציון לבדו — המתן לאישור פאזה לפני כניסה.")
+    elif "אין פאזה מאושרת" in current_phase or "ממתינים לאישור" in current_phase:
+        note = ("אין פאזה טכנית מאושרת כרגע — הציון מודד עוצמת כסף, לא תזמון. "
+                "המתן לאישור כניסה לפאזה לפני פעולה.")
+    elif cis >= 65 and fam == "bearish":
         note = "שים לב: הציון גבוה אך הפאזה הטכנית דובית — ייתכן איסוף מוקדם מדי. דרוש אישור פאזה."
     return {"band": band, "color": color, "meaning": meaning, "note": note, "score": round(cis, 1)}
 
@@ -1760,8 +2127,10 @@ def compute_macro_radar() -> dict:
 # ============================================================
 
 def _phase_hot_badge(phase: str, cis: float = 0.0) -> str:
-    """מחזיר צ'יפ HTML להדגשת מניה בפאזת C / Spring / Shakeout / איסוף חזק (אחרת '')."""
+    """מחזיר צ'יפ HTML להדגשת מניה בפאזת C / Spring / Shakeout / איסוף חזק / סיכון הפצה (אחרת '')."""
     p = phase or ""
+    if "Distribution Risk" in p or "סיכון הפצה" in p:
+        return "<span class='phase-hot-badge hot-shake'>⚠️ סיכון הפצה</span>"
     if "Spring" in p or "Phase C" in p:
         if "Strong" in p:
             return "<span class='phase-hot-badge hot-spring'>🎯 Spring חזק</span>"
@@ -1774,6 +2143,32 @@ def _phase_hot_badge(phase: str, cis: float = 0.0) -> str:
     except Exception:
         pass
     return ""
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def pick_phase_caution(ticker: str, engine_phase: str):
+    """
+    לכרטיסי סריקה (קרוסלה / Swipe / סקטור): מסלול הסריקה מציג את תווית המנוע הגולמית
+    ואינו עובר דרך refine_wyckoff_phase. כאן מיישמים את אותה שכבת-אימות נקודתית:
+    אם המנוע נתן תווית 'המשך עלייה' (Re-accumulation/Phase D/E) אך מדובר בתיקון/הפצה
+    בנפח גבוה (כמו WULF) — מחליפים לתווית 'סיכון הפצה'. שכבת אפליקציה בלבד (המנוע לא נוגע).
+    מחזיר (display_phase, is_risk, dist_pct).
+    """
+    ep = engine_phase or ""
+    is_cont = (
+        any(k in ep for k in ("Re-accumulation", "Phase E", "Markup", "Phase D", "LPS", "SOS", "Breakout"))
+        and "Spring" not in ep and "Phase C" not in ep
+    )
+    if not is_cont or not ticker:
+        return ep, False, 0.0
+    try:
+        df = get_cached_data(ticker, period="1y")
+        risk = detect_distribution_risk(df)
+        if risk.get("risk"):
+            return "⚠️ סיכון הפצה — תיקון בנפח גבוה (Distribution Risk)", True, float(risk.get("dist_pct", 0.0))
+    except Exception:
+        pass
+    return ep, False, 0.0
 
 
 def render_data_status(ticker: str, df: pd.DataFrame = None, fund_data: dict = None,
@@ -1815,37 +2210,63 @@ def render_data_status(ticker: str, df: pd.DataFrame = None, fund_data: dict = N
 
 
 def render_phase_evidence(intel: dict, ticker: str = "") -> None:
-    """מציג בלוק 'למה הפאזה הזו' עם הראיות (נפח/מחיר/ספיגה/OBV/RS)."""
+    """מציג בלוק 'איפה אנחנו בתהליך + למה' עם הראיות. כשאין פאזה מאושרת — אומר זאת מפורשות."""
     phase = intel.get("display_phase", intel.get("current_phase", "—"))
     evidence = intel.get("phase_evidence", []) or []
-    fam = _phase_family(phase)
-    pill_cls = "neut"
-    if fam == "bearish":
-        pill_cls = "bear"
-    elif fam in ("bullish_adv", "bullish_early"):
-        pill_cls = ""
+    status = intel.get("phase_status", "confirmed")
     refined = intel.get("phase_refined", False)
     note = intel.get("phase_refine_note", "")
 
+    # צבע ה-pill לפי סטטוס: caution=אדום, transition=ענבר, אחרת לפי משפחת הפאזה
+    if status == "caution":
+        pill_cls = "bear"
+    elif status == "transition":
+        pill_cls = "neut"
+    else:
+        fam = _phase_family(phase)
+        pill_cls = "bear" if fam == "bearish" else ("" if fam in ("bullish_adv", "bullish_early") else "neut")
+
     parts = ["<div class='phase-evidence'>", "<div class='pe-head'>",
              f"<span class='pe-phase-pill {pill_cls}'>{phase}</span>"]
-    if refined:
+    if status == "caution":
+        parts.append("<span class='pe-refined-tag' style='background:rgba(239,68,68,0.16); color:#fca5a5;'>שכבת אימות — אזהרה</span>")
+    elif status == "transition":
+        parts.append("<span class='pe-refined-tag' style='background:rgba(245,158,11,0.16); color:#fcd34d;'>ללא פאזה מאושרת</span>")
+    elif refined:
         parts.append("<span class='pe-refined-tag'>אומת ע\"י שכבת אימות</span>")
     parts.append("</div>")
-    if refined and note:
+
+    # באנר מרכזי: כשאין פאזה מאושרת / סיכון הפצה — מציגים את הנרטיב 'יצאנו מ-X / ממתינים ל-Y' בבירור
+    if status in ("transition", "caution") and note:
+        if status == "caution":
+            banner_style = "border-right:4px solid #ef4444; background:rgba(239,68,68,0.08);"
+            icon = "⚠️"
+        else:
+            banner_style = "border-right:4px solid #f59e0b; background:rgba(245,158,11,0.08);"
+            icon = "🧭"
+        parts.append(
+            f"<div class='pe-summary' style='{banner_style} padding:12px 14px; border-radius:10px; "
+            f"line-height:1.7; color:#e2e8f0;'>{icon} {note}</div>"
+        )
+    elif refined and note:
         parts.append(f"<div class='pe-summary'>🔎 {note}</div>")
+
+    # הראיות הגולמיות נשארות אינפורמטיביות בכל מצב
     if not evidence:
         parts.append("<div class='pe-summary'>אין מספיק נתונים גולמיים לפירוט ראיות.</div>")
-    for ev in evidence:
-        tone = ev.get("tone", "neu")
-        ico = {"pos": "▲", "neg": "▼", "neu": "■"}.get(tone, "■")
-        parts.append(
-            f"<div class='pe-item pe-{tone}'>"
-            f"<span class='pe-ico'>{ico}</span>"
-            f"<span><span class='pe-label'>{ev.get('label','')}:</span> "
-            f"<span class='pe-val'>{ev.get('value','')}</span> — {ev.get('text','')}</span>"
-            f"</div>"
-        )
+    else:
+        if status in ("transition", "caution"):
+            parts.append("<div class='pe-summary' style='color:#94a3b8; font-size:0.84rem;'>הראיות הגולמיות (לכל כיוון):</div>")
+        for ev in evidence:
+            tone = ev.get("tone", "neu")
+            ico = {"pos": "▲", "neg": "▼", "neu": "■"}.get(tone, "■")
+            parts.append(
+                f"<div class='pe-item pe-{tone}'>"
+                f"<span class='pe-ico'>{ico}</span>"
+                f"<span><span class='pe-label'>{ev.get('label','')}:</span> "
+                f"<span class='pe-val'>{ev.get('value','')}</span> — {ev.get('text','')}</span>"
+                f"</div>"
+            )
     parts.append("</div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
 
@@ -1971,6 +2392,100 @@ def render_swing_plan(plan: dict, rec_data: dict) -> None:
             f"</div>",
             unsafe_allow_html=True,
         )
+
+
+def render_wyckoff_deep_analysis(ticker: str, intel: dict) -> None:
+    """ניתוח Wyckoff מעמיק: Trading Range + אירועים מבניים + VSA + יעדי Cause & Effect.
+    שכבת אפליקציה בלבד (קוראת OHLCV, לא נוגעת בליבה)."""
+    df = intel.get("df")
+    if df is None or len(df) < 40:
+        st.caption("נדרשים לפחות 40 ימי מסחר לניתוח Wyckoff מעמיק.")
+        return
+    tr = detect_trading_range(df)
+    events = detect_wyckoff_events(df, tr)
+    vsa = classify_vsa_bars(df, n=15)
+    targets = wyckoff_cause_effect_targets(df, tr)
+    _tone_col = {"pos": "#22c55e", "neg": "#ef4444", "neu": "#eab308"}
+    _tone_ico = {"pos": "▲", "neg": "▼", "neu": "■"}
+
+    # --- 1. Trading Range ---
+    if tr.get("valid") and tr.get("is_range"):
+        loc_he = {"breakout_up": "פריצה מעל הטווח (Markup)", "breakdown": "שבירה מתחת לטווח (Markdown)",
+                  "upper": "שליש עליון — קרוב להתנגדות", "lower": "שליש תחתון — קרוב לתמיכה",
+                  "middle": "אמצע הטווח — אזור קונפליקט"}.get(tr["location"], tr["location"])
+        pos_pct = max(0, min(100, int(tr["position"] * 100)))
+        st.markdown(
+            f"<div class='phase-evidence'><div class='pe-head'>"
+            f"<span class='pe-phase-pill'>📦 טווח מסחר (Trading Range)</span>"
+            f"<span style='color:#94a3b8; font-size:0.85rem;'>{loc_he}</span></div>"
+            f"<div class='wyck-tr-bar'><div class='wyck-tr-dot' style='left:{pos_pct}%;'></div></div>"
+            f"<div style='display:flex; justify-content:space-between; font-size:0.8rem; color:#94a3b8; margin-top:6px;'>"
+            f"<span>🟢 תמיכה ${tr['support']}</span><span>רוחב {tr['width_pct']}%</span>"
+            f"<span>🔴 התנגדות ${tr['resistance']}</span></div>"
+            f"<div class='pe-summary'>המחיר ב-{pos_pct}% מהטווח · נגיעות תמיכה: {tr['touches_s']} · "
+            f"התנגדות: {tr['touches_r']} · ~{tr['bars']} ברים בטווח (גודל ה'סיבה' לפי חוק Cause & Effect).</div></div>",
+            unsafe_allow_html=True,
+        )
+    elif tr.get("valid"):
+        # מגמה — אין טווח מסחר מובהק (לא משליכים 'טווח' מזויף)
+        st.markdown(
+            f"<div class='phase-evidence'><div class='pe-head'>"
+            f"<span class='pe-phase-pill'>📈 מגמה — אין טווח מסחר מובהק</span></div>"
+            f"<div class='pe-summary'>המחיר במהלך כיווני ללא קונסולידציה ברורה (חצה את אמצע הטווח רק "
+            f"{tr.get('crossings',0)} פעמים). אירועי TR ויעדי Cause & Effect דורשים טווח אמיתי — לכן מוצגת "
+            f"כאן קריאת VSA נר-נר בלבד. לזיהוי פאזה/סיכון ראה את הניתוח הראשי למעלה.</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    # --- 2. אירועי Wyckoff מבניים ---
+    if events:
+        st.markdown("<div class='section-label' style='margin-top:12px;'>🎯 אירועי Wyckoff מזוהים</div>", unsafe_allow_html=True)
+        for ev in events:
+            col = _tone_col[ev["tone"]]
+            st.markdown(
+                f"<div class='plan-stage' style='border-color:{col}44;'>"
+                f"<span class='plan-stage-label' style='color:{col};'>{ev['event']}</span>"
+                f"<span class='plan-stage-val' style='color:{col};'>${ev['price']} · {ev['date']}</span>"
+                f"<span class='plan-stage-note'>{ev['desc']}</span></div>",
+                unsafe_allow_html=True,
+            )
+
+    # --- 3. VSA — נרות אחרונים ---
+    if vsa:
+        st.markdown("<div class='section-label' style='margin-top:12px;'>📊 VSA — קריאת נרות אחרונים (Volume Spread Analysis)</div>", unsafe_allow_html=True)
+        rows = []
+        for b in vsa[::-1][:7]:
+            col = _tone_col[b["tone"]]
+            rows.append(
+                f"<div class='pe-item pe-{b['tone']}'>"
+                f"<span class='pe-ico' style='color:{col};'>{_tone_ico[b['tone']]}</span>"
+                f"<span><b>{b['date']}</b> · <span style='color:{col};'>{b['label']}</span> "
+                f"<span style='color:#64748b;'>(נפח ×{b['vol_ratio']})</span> — {b['note']}</span></div>"
+            )
+        st.markdown("".join(rows), unsafe_allow_html=True)
+
+    # --- 4. יעדי Cause & Effect ---
+    if targets.get("valid"):
+        st.markdown("<div class='section-label' style='margin-top:12px;'>🎯 יעדי Cause & Effect (השלכת רוחב הטווח)</div>", unsafe_allow_html=True)
+        st.caption(f"חוק הסיבה והתוצאה: רוחב הטווח (${targets['width']}, {targets['width_pct']}%) הוא ה'סיבה' הצבורה. "
+                   f"היעדים נמדדים מרמת הפריצה — שמרני (×1), בסיס (×2), מורחב (×3). פרוקסי לספירת P&F אופקית.")
+        up, down = targets["up"], targets["down"]
+        st.markdown(
+            f"<div class='scenario-grid'>"
+            f"<div class='scenario-card bull'><div class='sc-title bull'>⬆️ פריצה מעל ${targets['breakout_up']}</div>"
+            f"<div class='sc-body'>שמרני <b>${up['conservative']['price']}</b> ({up['conservative']['pct']:+}%) · "
+            f"בסיס <b>${up['base']['price']}</b> ({up['base']['pct']:+}%) · "
+            f"מורחב <b>${up['extended']['price']}</b> ({up['extended']['pct']:+}%)</div></div>"
+            f"<div class='scenario-card bear'><div class='sc-title bear'>⬇️ שבירה מתחת ${targets['breakdown']}</div>"
+            f"<div class='sc-body'>שמרני <b>${down['conservative']['price']}</b> ({down['conservative']['pct']:+}%) · "
+            f"בסיס <b>${down['base']['price']}</b> ({down['base']['pct']:+}%) · "
+            f"מורחב <b>${down['extended']['price']}</b> ({down['extended']['pct']:+}%)</div></div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    if not (tr.get("valid") or events or vsa):
+        st.caption("לא זוהה מבנה טווח מסחר מובהק כרגע (ייתכן שהמניה במגמה חדה ללא קונסולידציה).")
 
 
 def init_session_state() -> None:
@@ -2222,7 +2737,8 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
     וסיכון לאי-עקביות בין שני מסכי הסריקה.
     """
     price_html = render_price_inline(p["ticker"])
-    hot_html = _phase_hot_badge(p.get("phase", ""), p.get("cis", 0))
+    _cphase, _crisk, _ = pick_phase_caution(p["ticker"], p.get("phase", ""))
+    hot_html = _phase_hot_badge(_cphase, p.get("cis", 0))
     st.markdown(
         f"""<div class='pick-card' style='border-right:5px solid {p['color']}; border-top:none; margin-bottom:8px;'>
             <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
@@ -2233,7 +2749,7 @@ def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str 
             </div>
             <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
             <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
-                · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
+                · Wyckoff: {_cphase} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
             <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
         </div>""",
         unsafe_allow_html=True,
@@ -2285,7 +2801,8 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
         price_html = render_price_inline(p["ticker"])
     except Exception:
         price_html = ""
-    hot_html = _phase_hot_badge(p.get("phase", ""), p.get("cis", 0))
+    _cphase, _crisk, _ = pick_phase_caution(p["ticker"], p.get("phase", ""))
+    hot_html = _phase_hot_badge(_cphase, p.get("cis", 0))
 
     # --- stage: container אמיתי המכיל את הכרטיס + שני תת-containers (חץ כל אחד) ---
     stage = st.container()
@@ -2305,7 +2822,7 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
                     </div>
                     <div class='pick-headline' style='color:{p['color']}; margin-top:8px;'>{p['headline']}</div>
                     <div class='pick-meta'>תמחור: <b style='color:{p['valuation_color']}'>{p['valuation']}</b> · CIS {p['cis']:.0f}
-                        · Wyckoff: {p.get('phase','-')} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
+                        · Wyckoff: {_cphase} · FCF: {p['fcf_yield']} · P/E: {p['pe']} · {p['sector_he']}</div>
                     <div class='pick-score-pill'>ציון משוקלל: {p['composite']:.0f}</div>
                 </div>""",
                 unsafe_allow_html=True,
@@ -2365,7 +2882,8 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
             sp_price_html = render_price_inline(sp["ticker"])
         except Exception:
             sp_price_html = ""
-        sp_hot = _phase_hot_badge(sp.get("phase", ""), sp.get("cis", 0))
+        sp_cphase, sp_crisk, _ = pick_phase_caution(sp["ticker"], sp.get("phase", ""))
+        sp_hot = _phase_hot_badge(sp_cphase, sp.get("cis", 0))
         parts.append(
             f"<div class='swipe-card' style='border-right:5px solid {sp['color']};'>"
             f"<div class='swipe-card-top'>"
@@ -2376,7 +2894,7 @@ def _render_card_carousel(results: list, key_prefix: str, index_key: str, dest_p
             f"</div>"
             f"<div class='pick-headline' style='color:{sp['color']};'>{sp.get('headline','')}</div>"
             f"<div class='pick-meta'>תמחור: <b style='color:{sp['valuation_color']}'>{sp['valuation']}</b> · CIS {sp['cis']:.0f}"
-            f" · Wyckoff: {sp.get('phase','-')} · FCF: {sp['fcf_yield']} · P/E: {sp['pe']} · {sp['sector_he']}</div>"
+            f" · Wyckoff: {sp_cphase} · FCF: {sp['fcf_yield']} · P/E: {sp['pe']} · {sp['sector_he']}</div>"
             f"<div class='pick-score-pill'>ציון משוקלל: {sp['composite']:.0f}</div>"
             f"</div>"
         )
@@ -2759,6 +3277,10 @@ def screen_home() -> None:
         render_cis_meaning(result["current_cis"], result["factors"], result["display_phase"])
         render_phase_evidence(result, ticker)
 
+        # === V20.3: ניתוח Wyckoff מעמיק — TR / אירועים / VSA / Cause & Effect (expander) ===
+        with st.expander("🔬 ניתוח Wyckoff מעמיק — טווח מסחר, אירועים, VSA, יעדי Cause & Effect", expanded=False):
+            render_wyckoff_deep_analysis(ticker, result)
+
         # === מכאן ואילך: עומק טכני (Deep Dive) - וואיקוף מפורט ===
         st.markdown("<hr style='border-color: rgba(255,255,255,0.08); margin:26px 0 18px 0;'>", unsafe_allow_html=True)
         st.markdown("<div class='section-label'>🔍 ניתוח טכני מעמיק - Wyckoff Deep Dive</div>", unsafe_allow_html=True)
@@ -2787,8 +3309,24 @@ def screen_home() -> None:
             with right:
                 st.markdown("#### איפה אנחנו בתהליך? (Wyckoff Phase)")
                 cp = result["display_phase"]
-                is_transition = any(x in cp for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"])
-                if is_transition:
+                pstatus = result.get("phase_status", "confirmed")
+                wait_note = result.get("phase_refine_note", "")
+                # כשאין פאזה מאושרת — אומרים זאת מפורשות ולא כופים שלב על הסקאלה
+                if pstatus in ("transition", "caution"):
+                    if pstatus == "caution":
+                        st.warning("⚠️ **אין פאזה מאושרת.** שכבת האימות מזהה תיקון/הפצה בנפח גבוה — לא איסוף חוזר רגוע.")
+                    else:
+                        st.info("ℹ️ **אין שלב Wyckoff מאושר כרגע.** זהו מצב מעבר בין פאזות — המערכת לא כופה התאמה.")
+                    if wait_note:
+                        accent = "#ef4444" if pstatus == "caution" else "#f59e0b"
+                        st.markdown(
+                            f"<div style='border-right:4px solid {accent}; background:rgba(148,163,184,0.06); "
+                            f"padding:12px 14px; border-radius:10px; line-height:1.75; margin-top:8px; color:#e2e8f0;'>"
+                            f"{wait_note}</div>",
+                            unsafe_allow_html=True,
+                        )
+                    st.caption(f"**זיהוי גולמי של המנוע:** `{result['current_phase']}` · **תצוגה:** `{cp}`")
+                elif any(x in cp for x in ["TRANSITION", "UNCERTAIN", "לא בתהליך"]):
                     st.info("ℹ️ לא נמצא שלב Wyckoff מובהק כרגע (מעבר/חוסר ודאות).")
                     st.caption(f"**זיהוי מלא:** `{cp}`")
                 else:
@@ -3062,11 +3600,13 @@ def screen_institutional_map() -> None:
                 for r in results:
                     rcol1, rcol2 = st.columns([3, 1])
                     with rcol1:
-                        r_hot = _phase_hot_badge(r.get("phase", ""), r.get("cis", 0))
+                        r_cphase, r_crisk, _ = pick_phase_caution(r["ticker"], r.get("phase", ""))
+                        r_hot = _phase_hot_badge(r_cphase, r.get("cis", 0))
+                        r_note = " · <b style='color:#f59e0b'>⚠️ סיכון הפצה (תיקון בנפח גבוה)</b>" if r_crisk else ""
                         st.markdown(
                             f"**{r['ticker']}** &nbsp; {render_price_inline(r['ticker'])} {r_hot}<br>"
                             f"<span style='color:{r['color']}'>{r['headline']}</span> · "
-                            f"תמחור: <b style='color:{r['valuation_color']}'>{r['valuation']}</b> · CIS {r['cis']:.0f} · ציון {r['composite']:.0f}",
+                            f"תמחור: <b style='color:{r['valuation_color']}'>{r['valuation']}</b> · CIS {r['cis']:.0f} · ציון {r['composite']:.0f}{r_note}",
                             unsafe_allow_html=True,
                         )
                     with rcol2:
@@ -3359,6 +3899,9 @@ def screen_trading_scout() -> None:
                 if _intel:
                     render_cis_meaning(_intel["current_cis"], _intel["factors"], _intel["display_phase"])
                     render_phase_evidence(_intel, tkr)
+                    # === V20.3: ניתוח Wyckoff מעמיק (expander) ===
+                    with st.expander("🔬 ניתוח Wyckoff מעמיק — טווח מסחר, אירועים, VSA, יעדי Cause & Effect", expanded=False):
+                        render_wyckoff_deep_analysis(tkr, _intel)
 
                 # === שלב 2: הסבר קצר ואנושי - למה דווקא המניה הזו, עכשיו (Q16: bullets + הסבר נוסף) ===
                 if _fund:
@@ -3498,6 +4041,12 @@ def screen_trading_scout() -> None:
 
                     # === V20.2: תוכנית מסחר Swing ישימה (מתקנת באג trade_plan חסר) ===
                     st.markdown(f"**פעולה מומלצת:** {rec_data['action']}")
+                    # קוהרנטיות עם שכבת האימות: אם זוהה סיכון הפצה / אין פאזה מאושרת — מתריעים מעל התוכנית
+                    _ps = (_intel or {}).get("phase_status", "confirmed")
+                    if _ps == "caution":
+                        st.warning("⚠️ שכבת האימות מזהה **סיכון הפצה / תיקון בנפח גבוה**. התוכנית למטה מבוססת תווית פאזת הליבה — שקול להמתין לאישור (שפל גבוה-יותר בנפח דועך + סגירה מעל ההתנגדות בנפח) לפני כניסה.")
+                    elif _ps == "transition":
+                        st.info("ℹ️ אין פאזה טכנית מאושרת כרגע (מצב מעבר). התוכנית למטה היא תרחיש מותנה — דרוש אישור כניסה לפאזה לפני פעולה.")
                     if rec in ("SELL", "STRONG SELL"):
                         st.warning("🚫 לא קיימת תוכנית כניסה ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה / הנכס בפאזת הפצה.")
                     else:
@@ -3850,3 +4399,4 @@ if __name__ == "__main__":
     main()
 
 # V20.2 – תוקנו: דיוק פאזות, הסברים, תוכנית מסחר, נתונים.
+# V20.3 – נוסף: ניתוח Wyckoff מעמיק (Trading Range, אירועים, VSA, יעדי Cause & Effect) — שכבת אפליקציה בלבד.
