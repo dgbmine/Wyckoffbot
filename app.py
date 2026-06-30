@@ -1,8 +1,29 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V20.4 (Phase Coherence Gate)
+INSTITUTIONAL SCOUT PRO V21.0 (Structural Wyckoff Engine — Tier 1)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V21.0 — היפוך ההיררכיה: מנוע מבני (טווח מסחר + רצף אירועים) הוא כעת הקובע
+        הראשי של הפאזה; ה-CIS (מהליבה) הופך לקלט *מאַשר*, לא קובע. כל השינויים
+        בשכבת האפליקציה בלבד — FactorEngine, get_wyckoff_phase, composite_cis
+        והליבה המוגנת אינם נוגעים. עיקרון-על: הפאזה נקבעת קודם מבנית (שערים
+        קשיחים), ורק אז מחושב ביטחון — כך CIS=100 לבדו לא יוצר פאזת איסוף.
+  • מכונת מצבים (8 states): MARKDOWN / ACC_BASE / ACC_SPRING / ACC_CONFIRM /
+    MARKUP / DIST_WARNING / DIST_ACTIVE / UNDETERMINED. הקביעה *מודעת-רצף*:
+    נשלטת ע"י האירוע המכריע האחרון + מיקום המחיר (SOS אחרי SOW ישן ⇒ שורי).
+  • אישור רב-טווחי (gate): _to_weekly (resample ללא רשת) + assess_weekly_context.
+    השבועי מבדיל איסוף-חוזר (תיקון ב-WEEKLY_MARKUP) מהפצה (WEEKLY_TOPPING).
+  • ציון ביטחון רציף (0-100), נפרד מ-CIS: מבנה 35% · VSA 20% · שבועי 20% ·
+    איכות-טווח 10% · CIS 10% (מאַשר) · הסכמת-מנוע 5%. ספים 70/50/30.
+  • סטופים ויעדים *מבוססי-מבנה* (לא ATR): סטופ מתחת לשפל הניעור/התמיכה;
+    יעדים מ-Cause & Effect + ההתנגדות. תוכנית נוצרת רק ל-ACC_SPRING/CONFIRM
+    בביטחון ≥50 בתוך טווח — אחרת אין תוכנית כפויה.
+  • Playbook 'אם-אז' לכל מצב: שורה תחתונה קודם, מסלול צפוי, ומה לעשות אם
+    משתבש (לחזק / לצאת / לצאת חלקית) + ציפיית זמן.
+  • ממשק: 3 חיוגים נפרדים (טביעת אצבע מוסדית / ביטחון פאזה / ערך) + סיפור עקבי
+    שמתחיל תמיד מהשורה התחתונה הפשוטה. WULF ⇒ UNDETERMINED, ביטחון נמוך,
+    "טביעת כסף חכם חזקה אך אין מבנה טווח תקין", ללא כניסה.
 
 V20.4 — שער עקביות פאזה (Phase Coherence Gate) — תיקון משוב WULF #2:
         כשהמנוע נותן תווית פאזה *בטוחה* אך *סותרת את המבנה* — המערכת לא כופה
@@ -1170,6 +1191,31 @@ def inject_css() -> None:
     .wyck-tr-dot { position: absolute; top: 50%; width: 16px; height: 16px; border-radius: 50%;
         background: #f8fafc; border: 3px solid #0f172a; transform: translate(-50%, -50%);
         box-shadow: 0 0 10px rgba(248,250,252,0.6); }
+    /* V21.0 — Structural summary: bottom-line banner + 3 dials + consistent story */
+    .struct-bottomline { background: linear-gradient(135deg, rgba(30,41,59,0.92), rgba(15,23,42,0.92));
+        border: 1px solid rgba(148,163,184,0.28); border-radius: 14px; padding: 16px 18px;
+        font-size: 1.06rem; font-weight: 700; color: #f1f5f9; line-height: 1.55; margin: 6px 0 14px 0;
+        box-shadow: 0 6px 22px rgba(0,0,0,0.28); }
+    .sbl-tag { display:inline-block; background: rgba(99,102,241,0.22); color:#c7d2fe;
+        font-size: 0.7rem; font-weight: 800; padding: 2px 10px; border-radius: 999px;
+        margin-left: 10px; vertical-align: middle; letter-spacing: 0.5px; }
+    .dial { background: rgba(30,41,59,0.55); border: 1px solid rgba(148,163,184,0.18);
+        border-radius: 14px; padding: 14px 10px; text-align:center; min-height: 118px;
+        display:flex; flex-direction:column; justify-content:center; }
+    .dial-val { font-size: 2.05rem; font-weight: 800; line-height: 1.05; }
+    .dial-label { font-size: 0.92rem; font-weight: 700; color: #e2e8f0; margin-top: 6px; }
+    .dial-sub { font-size: 0.74rem; color: #94a3b8; margin-top: 4px; line-height:1.35; }
+    .story-box { background: rgba(15,23,42,0.45); border: 1px solid rgba(148,163,184,0.14);
+        border-radius: 14px; padding: 6px 16px; margin: 14px 0 4px 0; }
+    .story-row { display:flex; gap: 14px; padding: 11px 0; border-bottom: 1px solid rgba(148,163,184,0.10);
+        align-items: flex-start; }
+    .story-row:last-child { border-bottom: none; }
+    .story-k { flex: 0 0 130px; font-weight: 800; color: #cbd5e1; font-size: 0.9rem; }
+    .story-v { flex: 1; color: #e5e7eb; font-size: 0.92rem; line-height: 1.6; }
+    .story-ul { margin: 0; padding-right: 18px; }
+    .story-ul li { margin: 2px 0; }
+    .story-foot { color: #94a3b8; font-size: 0.78rem; margin-top: 12px; padding-top: 10px;
+        border-top: 1px dashed rgba(148,163,184,0.18); line-height: 1.5; }
     </style>
 
     <script>
@@ -1217,18 +1263,29 @@ def _compute_wyckoff(ticker: str):
 
     # === V20.2: שכבת אימות + ראיות + טריות נתונים (אפליקטיבי, מעל המנוע המוגן) ===
     refined_phase, was_refined, refine_note, phase_status = refine_wyckoff_phase(df, factors, current_phase)
-    evidence = build_phase_evidence(df, factors, refined_phase)
     freshness = assess_data_freshness(df)
+
+    # === V21.0: המנוע המבני הוא כעת הקובע הראשי של הפאזה (ה-CIS הופך למאַשר) ===
+    df_weekly = _to_weekly(df)
+    weekly_ctx = assess_weekly_context(df_weekly)
+    wyckoff_state = analyze_wyckoff_structural(df, weekly_ctx, factors, current_cis, current_phase)
+    display_phase = wyckoff_state["phase_he"]          # ← מבני, לא המנוע הגולמי
+    phase_status = wyckoff_state["status"]             # confirmed / transition / caution
+    phase_confidence = wyckoff_state["confidence"]
+    evidence = build_phase_evidence(df, factors, current_phase)
 
     return {
         "df": df,
         "factors": factors,
         "cis": cis,
-        "current_phase": current_phase,        # פלט המנוע המקורי (לא שונה)
-        "display_phase": refined_phase,         # פלט מוצג לאחר אימות אפליקטיבי
+        "current_phase": current_phase,        # פלט המנוע המקורי (לשקיפות בלבד)
+        "display_phase": display_phase,         # ← V21.0: התווית המבנית הקובעת
         "phase_refined": was_refined,
-        "phase_refine_note": refine_note,
+        "phase_refine_note": wyckoff_state["bottom_line"],
         "phase_status": phase_status,           # confirmed / transition / caution
+        "phase_confidence": phase_confidence,   # ← V21.0: ביטחון פאזה רציף (0-100), נפרד מ-CIS
+        "wyckoff_state": wyckoff_state,         # ← V21.0: אובייקט המצב המבני המלא
+        "weekly_ctx": weekly_ctx,
         "phase_evidence": evidence,
         "freshness": freshness,
         "current_cis": current_cis,
@@ -1634,6 +1691,408 @@ def assess_phase_coherence(df: pd.DataFrame, engine_phase: str, tr: dict):
         return False, reason, watch
     except Exception:
         return True, "", ""
+
+
+# ============================================================
+# V21.0 — Structural Wyckoff Engine (Tier 1)
+# מנוע מבני שמניע את הפאזה הראשית במקום ה-CIS. שכבת אפליקציה בלבד —
+# FactorEngine והליבה המוגנת אינם נוגעים (הליבה הופכת לקלט *מאַשר*).
+# עיקרון-על: הפאזה נקבעת קודם מבנית (שערים קשיחים: טווח + gate שבועי),
+# ורק אז מחושב ביטחון. CIS/שבועי מזינים את הביטחון — לא עוקפים את הקביעה.
+# מבנה 8 מצבים. כל הפונקציות עמידות (try/except) ל-Cloud Run.
+# ============================================================
+
+# --- 8 מצבי מכונת המצבים (states) ---
+_WSTATES = {
+    "MARKDOWN":     {"he": "מגמת ירידה (Markdown)",          "track": "bear", "simple": "המניה במגמת ירידה — לא אזור קנייה."},
+    "ACC_BASE":     {"he": "שלב A/B — בניית בסיס (איסוף)",     "track": "bull", "simple": "נבנה בסיס בתחתית — מוקדם, לעקוב ולא להיכנס עדיין."},
+    "ACC_SPRING":   {"he": "שלב C — ניעור (Spring)",          "track": "bull", "simple": "זוהה ניעור — אזור הכניסה הקלאסי, בכפוף לאישור."},
+    "ACC_CONFIRM":  {"he": "שלב D — אישור איסוף (SOS/LPS)",    "track": "bull", "simple": "האיסוף אושר — אזור תוספת לפני הפריצה."},
+    "MARKUP":       {"he": "שלב E — מגמת עלייה (Markup)",      "track": "bull", "simple": "מגמת עלייה — לרכוב עם סטופ נגרר."},
+    "DIST_WARNING": {"he": "אזהרת הפצה (Distribution)",        "track": "bear", "simple": "סימני הפצה בפסגה — זהירות, לשקול צמצום."},
+    "DIST_ACTIVE":  {"he": "הפצה פעילה / שבירה",               "track": "bear", "simple": "הפצה אושרה — אזור יציאה."},
+    "UNDETERMINED": {"he": "אין פאזה מאושרת — ממתינים למבנה",  "track": "none", "simple": "אין מבנה טווח ברור — עדיף להמתין."},
+}
+
+
+def _to_weekly(df: pd.DataFrame):
+    """resample של ה-daily הקיים ל-W-FRI — ללא קריאת רשת נוספת. None אם אין די נתונים."""
+    try:
+        if df is None or len(df) < 30:
+            return None
+        w = df[["Open", "High", "Low", "Close", "Volume"]].resample("W-FRI").agg(
+            {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}).dropna()
+        return w if len(w) >= 12 else None
+    except Exception:
+        return None
+
+
+def assess_weekly_context(dfw: pd.DataFrame) -> dict:
+    """
+    הקשר רב-טווחי (ה-gate): מגמה שבועית מחיר מול SMA10/30 + שיפוע, וזיהוי
+    Topping/Bottoming. מחזיר regime + weekly_bias[-1..+1]. זהו מה שמבדיל
+    איסוף-חוזר (תיקון ב-WEEKLY_MARKUP) מהפצה (תיקון ב-WEEKLY_TOPPING).
+    """
+    res = {"regime": "WEEKLY_UNKNOWN", "weekly_bias": 0.0,
+           "note": "אין די נתונים שבועיים לקונטקסט רב-טווחי."}
+    try:
+        if dfw is None or len(dfw) < 12:
+            return res
+        close = dfw["Close"]
+        c = float(close.iloc[-1])
+        s10 = float(close.rolling(10).mean().iloc[-1])
+        s30 = float(close.rolling(min(30, len(dfw))).mean().iloc[-1])
+        s10_prev = float(close.rolling(10).mean().iloc[-5]) if len(dfw) > 15 else s10
+        slope = (s10 - s10_prev) / s10_prev if s10_prev else 0.0
+        hi12 = float(dfw["High"].tail(12).max())
+        lo12 = float(dfw["Low"].tail(12).min())
+        off_high = c < hi12 * 0.92
+        off_low = c > lo12 * 1.08
+
+        if c > s10 > s30 and slope > 0.004:
+            regime, bias = "WEEKLY_MARKUP", 0.8
+        elif c < s10 < s30 and slope < -0.004:
+            regime, bias = "WEEKLY_MARKDOWN", -0.8
+        elif c > s30 and off_high and slope <= 0.004:
+            regime, bias = "WEEKLY_TOPPING", 0.0      # היה למעלה, מתהפך מהשיא
+        elif c < s30 and off_low and slope >= -0.004:
+            regime, bias = "WEEKLY_BOTTOMING", 0.0     # היה למטה, מתבסס
+        else:
+            regime, bias = "WEEKLY_RANGE", round(max(-0.4, min(0.4, slope * 20)), 2)
+        notes = {
+            "WEEKLY_MARKUP": "טווח-זמן שבועי במגמת עלייה — תיקון יומי כאן הוא הקשר של איסוף-חוזר.",
+            "WEEKLY_MARKDOWN": "טווח-זמן שבועי במגמת ירידה — קריאות שוריות יומיות חשודות (נגד הזרם).",
+            "WEEKLY_TOPPING": "טווח-זמן שבועי מתהפך מהשיא — תיקון יומי כאן נוטה להקשר של הפצה.",
+            "WEEKLY_BOTTOMING": "טווח-זמן שבועי מתבסס בתחתית — תומך בקריאות איסוף.",
+            "WEEKLY_RANGE": "טווח-זמן שבועי דשדושי — אין הטיה רב-טווחית ברורה.",
+        }
+        res = {"regime": regime, "weekly_bias": round(float(bias), 2), "note": notes[regime]}
+    except Exception:
+        pass
+    return res
+
+
+def _structure_features(df: pd.DataFrame, tr: dict, events: list, vsa: list) -> dict:
+    """מסכם את התמונה המבנית לקלט נקי ל-FSM (מגמה, OBV, פרבולי-שבור, נוכחות אירועים)."""
+    f = {"trend": "flat", "obv_dir": 0.0, "parabolic_broken": False,
+         "has_spring": False, "has_sos": False, "has_utad": False, "has_sow": False,
+         "has_sc": False, "has_bc": False, "has_stopping": False,
+         "has_no_demand": False, "has_no_supply": False,
+         "dist_from_high": 0.0, "pos_bucket": "mid"}
+    try:
+        close = df["Close"]
+        c = float(close.iloc[-1])
+        s20, s50, s200 = _sma(close, 20), _sma(close, 50), _sma(close, 200)
+        up = (not any(pd.isna(x) for x in (s20, s50))) and c > s20 > s50
+        dn = (not any(pd.isna(x) for x in (s20, s50))) and c < s20 < s50
+        f["trend"] = "up" if up else ("down" if dn else "flat")
+        f["obv_dir"] = _obv_slope(df) or 0.0
+        high60 = float(df["High"].rolling(min(60, len(df))).max().iloc[-1])
+        f["dist_from_high"] = (high60 - c) / high60 if high60 else 0.0
+        big_run = (not pd.isna(s200)) and c > s200 * 1.15
+        f["parabolic_broken"] = (not tr.get("is_range")) and f["dist_from_high"] >= 0.10 \
+            and f["obv_dir"] < 0 and big_run
+        ev = " ".join(e.get("event", "") for e in (events or []))
+        f["has_spring"] = "Spring" in ev
+        f["has_sos"] = "SOS" in ev
+        f["has_utad"] = ("Upthrust" in ev) or ("UTAD" in ev)
+        f["has_sow"] = "SOW" in ev
+        vn = " ".join(b.get("label", "") for b in (vsa or []))
+        f["has_sc"] = "Selling Climax" in vn
+        f["has_bc"] = "Buying Climax" in vn
+        f["has_stopping"] = "Stopping Volume" in vn
+        f["has_no_demand"] = "No Demand" in vn
+        f["has_no_supply"] = "No Supply" in vn
+        pos = tr.get("position", 0.5)
+        f["pos_bucket"] = "low" if pos <= 0.34 else ("high" if pos >= 0.66 else "mid")
+    except Exception:
+        pass
+    return f
+
+
+def classify_wyckoff_state(df: pd.DataFrame, tr: dict, events: list, vsa: list, weekly_ctx: dict) -> dict:
+    """
+    מכונת המצבים — קובעת את ה-state המבני עם שערים קשיחים. סדר הבדיקות מהחזק
+    לחלש; הפרבולי-שבור (WULF) נבדק *ראשון* כדי שלא ייפול בטעות ל-MARKUP.
+    מחזיר {state, structural_score, evidence[], required_missing[], features}.
+    """
+    f = _structure_features(df, tr, events, vsa)
+    is_range = bool(tr.get("is_range"))
+    pos = f["pos_bucket"]
+    wb = float(weekly_ctx.get("weekly_bias", 0.0))
+    state, sscore, evid, missing = "UNDETERMINED", 25, [], []
+
+    # האירוע המכריע *האחרון* (events ממוין מהחדש לישן) + מיקום המחיר ביחס לטווח —
+    # כדי שפריצה (SOS) שאחרי שבירה ישנה (SOW) תזוהה כשורית, ולא להפך (מודעות לרצף).
+    c = float(df["Close"].iloc[-1]) if df is not None and len(df) else 0.0
+    sup = tr.get("support") or 0.0
+    rst = tr.get("resistance") or 0.0
+    latest = None
+    for e in (events or []):
+        en = e.get("event", "")
+        if "SOW" in en:
+            latest = "SOW"
+        elif "SOS" in en:
+            latest = "SOS"
+        elif "Spring" in en:
+            latest = "Spring"
+        elif ("Upthrust" in en) or ("UTAD" in en):
+            latest = "UTAD"
+        if latest:
+            break
+    broke_up = rst and c > rst * 1.01
+    broke_dn = sup and c < sup * 0.99
+
+    if f["parabolic_broken"]:
+        state, sscore = "UNDETERMINED", 20
+        evid = [f"מהלך פרבולי מורחב עם תיקון של ~{f['dist_from_high']*100:.0f}% בנפח ו-OBV יורד — אין טווח מסחר נקי."]
+        missing = ["היווצרות טווח מסחר אמיתי (תמיכה/התנגדות שנבחנות מספר פעמים)"]
+    elif is_range:
+        if latest == "SOW" or (broke_dn and latest != "Spring"):
+            state, sscore = "DIST_ACTIVE", 70
+            evid = ["שבירת תמיכת הטווח בנפח (SOW) — הפצה מאושרת."]
+        elif latest == "SOS" or (broke_up and latest != "UTAD"):
+            state, sscore = ("ACC_CONFIRM", 75) if latest == "SOS" else ("ACC_CONFIRM", 62)
+            evid = ["SOS / פריצה מעל הטווח בנפח — איסוף מאושר, אזור LPS לתוספת."]
+        elif latest == "Spring":
+            state, sscore = "ACC_SPRING", 70
+            evid = ["Spring — חדירה מתחת לתמיכה ובליעה מיידית (מלכודת דובים)."]
+            missing = ["SOS (אישור) להמשך לשלב D"]
+        elif latest == "UTAD" or (f["has_bc"] and wb < 0.3):
+            state, sscore = "DIST_WARNING", 60
+            evid = ["Upthrust/Buying-Climax בפסגת הטווח — סימני הפצה."]
+            missing = ["SOW (שבירת תמיכה) לאישור הפצה"]
+        elif f["has_sos"] and pos in ("mid", "high") and f["obv_dir"] >= -0.05:
+            state, sscore = "ACC_CONFIRM", 68
+            evid = ["SOS קודם + החזקה מעל אמצע הטווח (LPS) — איסוף מאושר."]
+        elif pos in ("low", "mid") and (f["has_sc"] or f["has_stopping"] or wb < 0):
+            state, sscore = "ACC_BASE", 50
+            evid = ["טווח מסחר בתחתית עם בלימת ירידות — בניית בסיס (איסוף מוקדם)."]
+            missing = ["Spring (ניעור) או SOS — הטריגרים לכניסה"]
+        elif wb >= 0.3:
+            state, sscore = "ACC_BASE", 40
+            missing = ["אירוע מאשר (Spring/SOS) — אין עדיין"]
+            evid = ["טווח מסחר בהקשר שבועי חיובי, אך ללא אירוע מאשר מובהק עדיין."]
+        elif wb <= -0.3:
+            state, sscore = "DIST_WARNING", 40
+            evid = ["טווח מסחר בהקשר שבועי שלילי — סיכון הפצה, ללא אישור עדיין."]
+        else:
+            state, sscore = "UNDETERMINED", 30
+            evid = ["טווח מסחר ללא אירוע מאשר וללא הטיה רב-טווחית — לא ברור."]
+            missing = ["אירוע מאשר (Spring/SOS/UTAD/SOW)"]
+    elif f["trend"] == "up" and f["obv_dir"] >= -0.05:
+        state, sscore = "MARKUP", 65
+        evid = ["מבנה מגמת עלייה (שיאים/שפלים עולים, OBV תומך)."]
+    elif f["trend"] == "down":
+        state, sscore = "MARKDOWN", 65
+        evid = ["מבנה מגמת ירידה (שיאים/שפלים יורדים)."]
+    else:
+        state, sscore = "UNDETERMINED", 25
+        evid = ["אין טווח מסחר ואין מבנה מגמה ברור."]
+        missing = ["מבנה ברור (טווח או מגמה)"]
+
+    return {"state": state, "structural_score": sscore, "evidence": evid,
+            "required_missing": missing, "features": f}
+
+
+def compute_phase_confidence(state_obj: dict, weekly_ctx: dict, vsa: list,
+                             cis: float, engine_phase: str, tr: dict) -> dict:
+    """
+    ציון ביטחון רציף (0-100) — *נפרד מ-CIS*. מודד כמה הקריאה המבנית חזקה ונקייה.
+    משקלים: שלמות מבנית 35% · אישור VSA 20% · יישור שבועי 20% · איכות טווח 10% ·
+    אישור CIS 10% · הסכמת מנוע 5%. CIS הוא מאַשר (10%), לא קובע.
+    """
+    f = state_obj.get("features", {})
+    state = state_obj.get("state", "UNDETERMINED")
+    track = _WSTATES.get(state, {}).get("track", "none")
+    structural = max(0.0, min(1.0, state_obj.get("structural_score", 25) / 100.0))
+
+    vp = sum(1 for b in (vsa or []) if b.get("tone") == "pos")
+    vn = sum(1 for b in (vsa or []) if b.get("tone") == "neg")
+    if track == "bull":
+        vsa_c = 1.0 if vp > vn else (0.5 if vp == vn else 0.2)
+    elif track == "bear":
+        vsa_c = 1.0 if vn > vp else (0.5 if vp == vn else 0.2)
+    else:
+        vsa_c = 0.3
+
+    wb = float(weekly_ctx.get("weekly_bias", 0.0))
+    if track == "bull":
+        weekly_c = max(0.0, min(1.0, (wb + 1) / 2))
+    elif track == "bear":
+        weekly_c = max(0.0, min(1.0, (-wb + 1) / 2))
+    else:
+        weekly_c = 0.3
+
+    if tr.get("is_range"):
+        rq = min(1.0, 0.5 + 0.07 * (tr.get("touches_s", 0) + tr.get("touches_r", 0)))
+    else:
+        rq = 0.1 if state in ("MARKUP", "MARKDOWN") else 0.0
+
+    try:
+        cisv = float(cis)
+    except Exception:
+        cisv = 50.0
+    if track == "bull":
+        cis_c = max(0.0, min(1.0, (cisv - 40) / 40))
+    elif track == "bear":
+        cis_c = max(0.0, min(1.0, (60 - cisv) / 40))
+    else:
+        cis_c = 0.3
+
+    fam = _phase_family(engine_phase)
+    eng = 1.0 if ((track == "bull" and fam in ("bullish_adv", "bullish_early"))
+                  or (track == "bear" and fam == "bearish")) else 0.3
+
+    conf = 100 * (0.35 * structural + 0.20 * vsa_c + 0.20 * weekly_c
+                  + 0.10 * rq + 0.10 * cis_c + 0.05 * eng)
+    conf = int(round(max(0, min(100, conf))))
+    band = "high" if conf >= 70 else ("mid" if conf >= 50 else ("low" if conf >= 30 else "none"))
+    breakdown = {"מבנה": round(structural * 100), "VSA": round(vsa_c * 100),
+                 "שבועי": round(weekly_c * 100), "טווח": round(rq * 100),
+                 "CIS": round(cis_c * 100), "מנוע": round(eng * 100)}
+    return {"confidence": conf, "band": band, "breakdown": breakdown}
+
+
+def build_structural_trade_plan(state_obj: dict, tr: dict, events: list,
+                                df: pd.DataFrame, confidence: int) -> dict:
+    """
+    תוכנית סווינג *מבוססת מבנה* (לא ATR). רק למצבים שורי-פעולה (ACC_SPRING/CONFIRM)
+    בביטחון ≥50 ובתוך טווח אמיתי. סטופ = שבירה מבנית (מתחת לשפל הניעור/התמיכה);
+    יעדים = Cause & Effect + ההתנגדות. אחרת valid=False (אין תוכנית כפויה).
+    """
+    res = {"valid": False}
+    try:
+        state = state_obj.get("state")
+        if state not in ("ACC_SPRING", "ACC_CONFIRM") or confidence < 50 or not tr.get("is_range"):
+            return res
+        c = float(df["Close"].iloc[-1])
+        sup, rst, mid = tr["support"], tr["resistance"], tr["midpoint"]
+        recent_low = float(df["Low"].tail(15).min())
+        spring_low = recent_low
+        for e in (events or []):
+            if "Spring" in e.get("event", ""):
+                spring_low = min(spring_low, float(e.get("price", recent_low)))
+                break
+        stop = round(min(spring_low, sup) * 0.985, 2)             # מתחת לשפל המבני
+        entry_lo = round(min(c, sup * 1.01), 2)
+        entry_hi = round(max(c, mid), 2)
+        ce = wyckoff_cause_effect_targets(df, tr)
+        if ce.get("valid"):
+            t1, t2, t3 = rst, ce["up"]["conservative"]["price"], ce["up"]["base"]["price"]
+        else:
+            t1, t2, t3 = rst, round(rst * 1.10, 2), round(rst * 1.20, 2)
+        risk = c - stop
+        rr = round((t2 - c) / risk, 1) if risk > 0 else 0.0
+        invalid = f"סגירה יומית מתחת ${stop} בנפח — הניעור/האישור נכשל, הקריאה בטלה (צא)."
+        time_txt = "סווינג של 2-6 שבועות; צפה לפריצה/אישור בתוך הטווח הזה."
+        res = {"valid": True, "entry_lo": entry_lo, "entry_hi": entry_hi, "stop": stop,
+               "t1": round(t1, 2), "t2": round(t2, 2), "t3": round(t3, 2),
+               "rr": rr, "invalidation": invalid, "time": time_txt}
+    except Exception:
+        pass
+    return res
+
+
+def build_phase_playbook(state_obj: dict, tr: dict, events: list, confidence: int,
+                         cis: float = 0.0) -> dict:
+    """
+    ה-Playbook ('אם-אז') לכל מצב — שורה תחתונה פשוטה קודם, ואז המסלול הצפוי
+    ומה לעשות אם משתבש (לחזק/לצאת/לצאת חלקית). זהו הלב של ההסבר להדיוט.
+    """
+    state = state_obj.get("state", "UNDETERMINED")
+    missing = state_obj.get("required_missing", [])
+    pb = {"bottom_line": "", "primary": "", "if_fails": "", "if_chops": "",
+          "time": "", "actions": []}
+
+    if state == "ACC_SPRING":
+        pb["bottom_line"] = "זוהה ניעור (Spring) — אזור הכניסה הקלאסי של וויקוף. כניסה על המבחן, סטופ מתחת לשפל הניעור."
+        pb["primary"] = "אם הניעור מחזיק ומגיע SOS (פריצת אמצע-טווח בנפח) → חזק את הפוזיציה והעלה סטופ לשפל הניעור."
+        pb["if_fails"] = "אם סגירה חזרה מתחת לשפל הניעור בנפח → ניעור כושל. צא מיד — צפוי Markdown."
+        pb["if_chops"] = "אם דשדוש ללא כיוון → המתן, החזק חצי פוזיציה עד אישור SOS."
+        pb["time"] = "צפה ל-SOS תוך 1-3 שבועות; אם לא קורה — ה-setup מתיישן, הקטן/צא."
+    elif state == "ACC_CONFIRM":
+        pb["bottom_line"] = "האיסוף אושר (SOS + LPS) — אזור תוספת לפני הפריצה."
+        pb["primary"] = "ה-LPS (פולבק בנפח נמוך לתמיכה/רמת הפריצה) הוא אזור התוספת. החזק ליעד ה-Cause & Effect."
+        pb["if_fails"] = "אם ה-LPS נכשל (סגירה מתחת לתמיכה בנפח) → צמצם או צא, האישור התבטל."
+        pb["if_chops"] = "דשדוש מעל התמיכה = בריא. החזק."
+        pb["time"] = "צפה לפריצה תוך 1-4 שבועות."
+    elif state == "MARKUP":
+        pb["bottom_line"] = "מגמת עלייה (Markup) — לרכוב עם סטופ נגרר מתחת לשפלים העולים."
+        pb["primary"] = "גרור סטופ מתחת לכל שפל-עולה. שחרר חלקית לתוך נפח קלימקטי (Buying Climax)."
+        pb["if_fails"] = "אם נשבר שפל-עולה בנפח → צמצם; אם מופיע UTAD/Buying-Climax → צא."
+        pb["if_chops"] = "קונסולידציה במגמה = בריא (אפשרי איסוף-חוזר). החזק, אל תרדוף."
+        pb["time"] = "מגמה — מוחזק כל עוד מבנה השפלים העולים שלם."
+    elif state == "ACC_BASE":
+        pb["bottom_line"] = "נבנה בסיס בתחתית — מוקדם. עקוב, אל תיכנס עדיין."
+        pb["primary"] = "המתן ל-Spring (ניעור) או ל-SOS — אלו הטריגרים לכניסה."
+        pb["if_fails"] = "אם המחיר שובר את תחתית הבסיס בנפח → אין איסוף, הימנע."
+        pb["if_chops"] = "דשדוש בבסיס = בנייה תקינה. המשך לעקוב."
+        pb["time"] = "בנייה יכולה להימשך שבועות-חודשים; אין למהר."
+    elif state == "DIST_WARNING":
+        pb["bottom_line"] = "סימני הפצה בפסגה — זהירות. אם אתה מחזיק, שקול צמצום לתוך חוזק."
+        pb["primary"] = "אל תיכנס לונג. אם מחזיק — צמצם חלקית, הדק סטופ."
+        pb["if_fails"] = "אם SOW (שבירת תמיכה בנפח) → צא לגמרי."
+        pb["if_chops"] = "אם פריצה מחודשת מעל ההתנגדות בנפח → האזהרה בטלה, חזרה ל-Markup."
+        pb["time"] = "החלטה בדרך כלל בתוך 1-4 שבועות."
+    elif state == "DIST_ACTIVE":
+        pb["bottom_line"] = "הפצה אושרה / שבירה — אזור יציאה. אין לונג."
+        pb["primary"] = "צא מפוזיציות לונג. כיוון המהלך הבא מטה."
+        pb["if_fails"] = "התאוששות מעל התמיכה השבורה בנפח גבוה תבטל את התרחיש — נדיר, דרוש אישור."
+        pb["time"] = "—"
+    elif state == "MARKDOWN":
+        pb["bottom_line"] = "מגמת ירידה — להימנע מלונג. המתן לבלימה (Selling Climax) ובניית בסיס."
+        pb["primary"] = "אין כניסת לונג. חפש SC + AR + טווח כדי לשקול איסוף עתידי."
+        pb["if_fails"] = "—"
+        pb["time"] = "—"
+    else:  # UNDETERMINED
+        strong_cis = ""
+        try:
+            if float(cis) >= 70:
+                strong_cis = "יש טביעת כסף חכם חזקה, אבל "
+        except Exception:
+            pass
+        pb["bottom_line"] = f"אין פאזת וויקוף ברורה כרגע — {strong_cis}אין מבנה טווח תקין. עדיף להמתין."
+        pb["primary"] = ("מה יהפוך את זה לסחיר: " + "; ".join(missing) + ".") if missing \
+            else "מה יהפוך את זה לסחיר: היווצרות טווח מסחר עם אירוע מאשר (Spring/SOS)."
+        pb["if_fails"] = "אין פוזיציה לנהל — אין כניסה מומלצת."
+        pb["if_chops"] = ""
+        pb["time"] = _RESCAN_HINT
+    return pb
+
+
+def analyze_wyckoff_structural(df: pd.DataFrame, weekly_ctx: dict, factors,
+                               cis: float, engine_phase: str) -> dict:
+    """
+    התזמורת: מריץ את כל הצינור המבני ומחזיר wyckoff_state אחיד. נקרא מ-_compute_wyckoff.
+    """
+    tr = detect_trading_range(df)
+    events = detect_wyckoff_events(df, tr)
+    vsa = classify_vsa_bars(df, 15)
+    state_obj = classify_wyckoff_state(df, tr, events, vsa, weekly_ctx)
+    conf = compute_phase_confidence(state_obj, weekly_ctx, vsa, cis, engine_phase, tr)
+    confidence = conf["confidence"]
+    state = state_obj["state"]
+    meta = _WSTATES.get(state, _WSTATES["UNDETERMINED"])
+
+    if state == "UNDETERMINED":
+        status = "transition"
+    elif meta["track"] == "bear" and state != "MARKDOWN":
+        status = "caution"
+    elif confidence < 30:
+        status = "transition"
+    else:
+        status = "confirmed"
+
+    plan = build_structural_trade_plan(state_obj, tr, events, df, confidence)
+    playbook = build_phase_playbook(state_obj, tr, events, confidence, cis)
+
+    return {"state": state, "phase_he": meta["he"], "track": meta["track"], "simple": meta["simple"],
+            "status": status, "confidence": confidence, "conf_band": conf["band"],
+            "conf_breakdown": conf["breakdown"], "evidence": state_obj["evidence"],
+            "missing": state_obj["required_missing"], "tr": tr, "events": events, "vsa": vsa,
+            "weekly": weekly_ctx, "plan": plan, "playbook": playbook,
+            "bottom_line": playbook["bottom_line"]}
 
 
 def refine_wyckoff_phase(df: pd.DataFrame, factors: pd.DataFrame, engine_phase: str):
@@ -2246,6 +2705,94 @@ def pick_phase_caution(ticker: str, engine_phase: str):
     except Exception:
         pass
     return ep, False, 0.0
+
+
+def _dial_color(kind: str, val) -> str:
+    """צבע למד לפי סוג: cis / confidence."""
+    try:
+        v = float(val)
+    except Exception:
+        return "#94a3b8"
+    if kind == "cis":
+        return "#16a34a" if v >= 65 else ("#eab308" if v >= 45 else "#ef4444")
+    if kind == "confidence":
+        return "#16a34a" if v >= 70 else ("#eab308" if v >= 50 else ("#f59e0b" if v >= 30 else "#ef4444"))
+    return "#94a3b8"
+
+
+def render_structural_summary(ticker: str, intel: dict) -> None:
+    """
+    V21.0 — התצוגה הראשית של 'תבדוק לי': שורה תחתונה פשוטה קודם, אחריה 3 חיוגים
+    נפרדים (טביעת אצבע / ביטחון פאזה / ערך), ואז הסיפור העקבי. הלב של ההנגשה.
+    """
+    ws = intel.get("wyckoff_state")
+    if not ws:
+        return
+    cis = intel.get("current_cis", 0.0)
+    conf = ws.get("confidence", 0)
+    pb = ws.get("playbook", {})
+    plan = ws.get("plan", {})
+    fd = get_fundamental_data(ticker) or {}
+    valuation = fd.get("valuation", "—")
+    val_color = fd.get("valuation_color", "#94a3b8")
+    conf_band_he = {"high": "ביטחון גבוה", "mid": "ביטחון בינוני",
+                    "low": "ביטחון נמוך", "none": "אין ביטחון"}.get(ws.get("conf_band"), "")
+
+    # ---------- (1) שורה תחתונה — תמיד ראשונה, פשוטה ----------
+    st.markdown(
+        f"<div class='struct-bottomline'><span class='sbl-tag'>שורה תחתונה</span>{ws.get('bottom_line','')}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ---------- (2) שלושה חיוגים נפרדים ----------
+    cis_col = _dial_color("cis", cis)
+    conf_col = _dial_color("confidence", conf)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown(
+            f"<div class='dial'><div class='dial-val' style='color:{cis_col};'>{cis:.0f}</div>"
+            f"<div class='dial-label'>טביעת אצבע מוסדית</div>"
+            f"<div class='dial-sub'>כמה כסף חכם נוכח (0-100)</div></div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown(
+            f"<div class='dial'><div class='dial-val' style='color:{conf_col};'>{conf}</div>"
+            f"<div class='dial-label'>ביטחון פאזה · {conf_band_he}</div>"
+            f"<div class='dial-sub'>{ws.get('phase_he','')}</div></div>", unsafe_allow_html=True)
+    with c3:
+        st.markdown(
+            f"<div class='dial'><div class='dial-val' style='color:{val_color}; font-size:1.5rem;'>{valuation}</div>"
+            f"<div class='dial-label'>ערך / איכות</div>"
+            f"<div class='dial-sub'>האם שווה החזקה ובאיזה מחיר</div></div>", unsafe_allow_html=True)
+
+    # ---------- (3) הסיפור העקבי — נבנה כמחרוזת HTML *רציפה אחת* (st.markdown יחיד) ----------
+    evid = ws.get("evidence", [])
+    evid_html = "".join(f"<li>{e}</li>" for e in evid) if evid else "<li>—</li>"
+    rows = []
+    rows.append(f"<div class='story-row'><span class='story-k'>📍 איפה אנחנו</span>"
+                f"<span class='story-v'>{ws.get('phase_he','')} · ביטחון {conf}</span></div>")
+    rows.append(f"<div class='story-row'><span class='story-k'>🔍 למה</span>"
+                f"<span class='story-v'><ul class='story-ul'>{evid_html}</ul></span></div>")
+    if pb.get("primary"):
+        rows.append(f"<div class='story-row'><span class='story-k'>👀 מה צפוי</span>"
+                    f"<span class='story-v'>{pb['primary']}</span></div>")
+    if plan.get("valid"):
+        rows.append(f"<div class='story-row'><span class='story-k'>📋 התוכנית (מבנית)</span>"
+                    f"<span class='story-v'>כניסה ${plan['entry_lo']}–${plan['entry_hi']} · "
+                    f"סטופ <b style='color:#ef4444;'>${plan['stop']}</b> (מתחת לשפל המבני) · "
+                    f"יעדים ${plan['t1']} / ${plan['t2']} / ${plan['t3']} · R:R {plan['rr']}</span></div>")
+        rows.append(f"<div class='story-row'><span class='story-k'>⛔ פסילה</span>"
+                    f"<span class='story-v'>{plan['invalidation']}</span></div>")
+    if pb.get("if_fails"):
+        chops = f" · <b>אם דשדוש:</b> {pb['if_chops']}" if pb.get("if_chops") else ""
+        rows.append(f"<div class='story-row'><span class='story-k'>⚠️ אם משתבש</span>"
+                    f"<span class='story-v'><b>אם נכשל:</b> {pb['if_fails']}{chops}</span></div>")
+    if pb.get("time"):
+        rows.append(f"<div class='story-row'><span class='story-k'>⏱️ זמן</span>"
+                    f"<span class='story-v'>{pb['time']}</span></div>")
+    wk = ws.get("weekly", {})
+    foot = (f"<div class='story-foot'>הקשר רב-טווחי: {wk.get('note','—')} · "
+            f"קריאת מנוע גולמית: <code>{intel.get('current_phase','—')}</code></div>")
+    st.markdown(f"<div class='story-box'>{''.join(rows)}{foot}</div>", unsafe_allow_html=True)
 
 
 def render_data_status(ticker: str, df: pd.DataFrame = None, fund_data: dict = None,
@@ -3351,6 +3898,9 @@ def screen_home() -> None:
         # === V20.2: רצועת סטטוס נתונים (טריות מחיר + רבעון אחרון + אזהרות) ===
         _home_fdata = get_fundamental_data(ticker) or {}
         render_data_status(ticker, result["df"], _home_fdata, result.get("freshness"))
+
+        # === V21.0: התצוגה הראשית — שורה תחתונה + 3 חיוגים נפרדים + הסיפור העקבי ===
+        render_structural_summary(ticker, result)
 
         # === השורה התחתונה (Verdict Banner) - ראשון ובולט, לפני כל פירוט טכני ===
         _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"],
@@ -4485,3 +5035,4 @@ if __name__ == "__main__":
 # V20.2 – תוקנו: דיוק פאזות, הסברים, תוכנית מסחר, נתונים.
 # V20.3 – נוסף: ניתוח Wyckoff מעמיק (Trading Range, אירועים, VSA, יעדי Cause & Effect) — שכבת אפליקציה בלבד.
 # V20.4 – נוסף: שער עקביות פאזה — לא כופה תווית שסותרת את המבנה; אומר "אין פאזה מאושרת, סרוק שוב מחר".
+# V21.0 – היפוך: מנוע מבני (8 states + gate שבועי + ביטחון רציף + סטופים/יעדים מבניים + playbook + 3 חיוגים) מניע את הפאזה; CIS מאַשר. שכבת אפליקציה בלבד.
