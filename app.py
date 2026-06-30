@@ -1,8 +1,60 @@
 """
 ============================================================
-INSTITUTIONAL SCOUT PRO V21.0 (Structural Wyckoff Engine — Tier 1)
+INSTITUTIONAL SCOUT PRO V23.0 (Multi-year Durability — Tier 3.0)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V23.0 — איכות רב-שנתית (Durability, רכיב 1 של Tier 3). מוסיף את ממד הזמן לאיכות:
+        עקביות FCF (חיובי בכל אחת מ-5 השנים?) ומגמת מרווחים (חפיר מתחזק/נשחק).
+        נכנס כ-MODIFIER פנימי לציון האיכות מ-Tier 2 — הציון נשאר A-F, רק מדויק
+        יותר. שכבת אפליקציה בלבד; הליבה לא נגעה. (רכיב 2 — כיול היסטורי — נדחה ל-3.1.)
+  • _durability_from_statements (לוגיקה טהורה, נבדקת): מקבל cashflow+financials,
+    סופר FCF=OCF+capex חיובי לאורך עד 5 שנים, מודד מגמת מרווח תפעולי, ומחזיר
+    modifier בנקודות ציון (-20..+10) + פירוט.
+  • compute_durability: עטיפת שליפה עם cache חזק (24ש' — דוחות משתנים רבעונית),
+    עמיד-כשל לחלוטין. אם אין ≥3 שנות נתונים → "אין די היסטוריה לכיול עקביות"
+    (modifier=0, בלי קריסה) — ונשארים עם דירוג ה-snapshot מ-Tier 2.
+  • _quality_adjusted: ציון סופי = snapshot + modifier, ממופה מחדש ל-A-F. זהו
+    הדירוג היחיד שמוצג בכל המסכים (חיוג שלישי, סיפור, מסקנה, שכנוע).
+  • הפירוט הרב-שנתי (FCF X/5, מגמת מרווחים, שורת snapshot→modifier→adjusted)
+    מוצג רק ב-expander "🏢 ניתוח ערך ואיכות". המסכים הראשיים נטענים מהר (Tier 2),
+    והעומק הרב-שנתי תחת cache. 3 החיוגים ומבנה הסיפור לא השתנו.
+  • נבדק: BKNG ⇒ A + FCF 5/5 (עקבי); WULF ⇒ F + FCF 0/5 מרווחים נשחקים (מוגן,
+    UNDETERMINED); JNJ ⇒ snapshot A, עקביות 5/5 ⇒ A מאושר.
+
+V22.0 — שכבת ערך ואיכות (סגנון ניתוח-ערך). ממלאת את החיוג השלישי בעומק אמיתי,
+        ללא נגיעה בליבה ובלי קריאות רשת נוספות (מבוסס fd['_raw'] שכבר נשאב).
+        עיקרון: וויקוף = תזמון; ערך/איכות = שכנוע. האיכות *אינה* מזיזה כניסה/סטופ/יעד.
+  • compute_quality_score: ציון איכות לפי עקרונות ערך — FCF (יצירת מזומן),
+    חפיר/כוח-תמחור (מרווח תפעולי מול הסקטור), תשואה על הון (ROE), חוזק מאזן
+    (מינוף), צמיחה. מחושב פנימית 0-100 ומוצג כ-A-F.
+  • compute_implied_growth (Reverse-DCF): מנרמל מחיר ל-1, פותר את צמיחת ה-FCF
+    הגלומה (r=9%, צמיחה סופית 2.5%, 10 שנים), ומשווה לצמיחה בפועל ⇒ זול/הוגן/יקר.
+    אין FCF חיובי ⇒ "לא ניתן לתמחר לפי תזרים" (אות לעסק ספקולטיבי).
+  • 3 חיוגים נשמרים נפרדים. החיוג השלישי מציג כעת ערך + ציון איכות (A-F) +
+    מסקנת השילוב המילולית (לוגיקת מטריצה).
+  • הסיפור העקבי: נוספה שורת "🏢 העסק" (איכות + Reverse-DCF) ושורת "🎯 שכנוע"
+    (להחזיק Runner מול לקחת רווח — נגזר מהאיכות, מופיע רק כשיש תוכנית פעילה).
+  • מטריצת ערך×איכות (ריבוע צבעוני) — רק ב-expander "🏢 ניתוח ערך ואיכות"
+    (בית + Trading Scout); במסכים הראשיים רק המסקנה המילולית + צבע.
+  • נבדק: BKNG ⇒ איכות A + זול (החזק Runner); WULF ⇒ איכות F + ספקולטיבי
+    (טקטי, קח רווח) ונשאר UNDETERMINED מוגן.
+
+V21.1 — תיקון משוב BKNG: סתירה לוגית (אותה מניה הוצגה גם בשלב C וגם D).
+        שני תיקונים, ללא נגיעה בליבה (הכל בשכבת האפליקציה):
+  1. לוגיקת ה-FSM — "המיקום הנוכחי גובר על אירוע ישן": בתוך טווח מסחר,
+     מחיר בחצי העליון (≥62%) עם OBV חיובי ⇒ שלב D (ACC_CONFIRM) — גם אם
+     ה-Spring היה מזמן. Spring (שלב C) נקבע רק כשהמחיר עדיין בחצי התחתון
+     (≤38%) או מתאושש דרך האמצע. תוקן הבאג שבו אירוע Spring ישן "חטף" את
+     הסיווג ל-C כשהמחיר כבר התקדם לעבר הפריצה.
+  2. מקור אמת יחיד לפאזה — wyckoff_state["phase_he"] (מהמנוע המבני) הוא כעת
+     הפאזה היחידה שמוצגת בכל המסכים: באנר, drill-down, מפת דרכים, ותוכנית
+     המסחר ב-Trading Scout. ה-trading_scout ממשיך לחשב הסתברויות/מנגנון
+     ברקע, אך התווית המוצגת באה ממקור אחד. נוסף _structural_roadmap
+     (היינו/אנחנו/היעד קוהרנטי עם ה-state). גם טקסט ה-verdict (synthesize_verdict)
+     מקבל כעת את הפאזה המבנית — כך שאף פרוזה לא מזכירה פאזה גולמית סותרת.
+     הליבה (get_wyckoff_phase) נשארת לשקיפות בלבד ("קריאת מנוע גולמית").
+     תוצאה: BKNG ⇒ שלב D בכל המסך, ללא אזכור C; WULF ⇒ נשאר UNDETERMINED מוגן.
 
 V21.0 — היפוך ההיררכיה: מנוע מבני (טווח מסחר + רצף אירועים) הוא כעת הקובע
         הראשי של הפאזה; ה-CIS (מהליבה) הופך לקלט *מאַשר*, לא קובע. כל השינויים
@@ -1216,6 +1268,22 @@ def inject_css() -> None:
     .story-ul li { margin: 2px 0; }
     .story-foot { color: #94a3b8; font-size: 0.78rem; margin-top: 12px; padding-top: 10px;
         border-top: 1px dashed rgba(148,163,184,0.18); line-height: 1.5; }
+    /* V22.0 — Value & Quality: grade pill + matrix */
+    .grade-pill { display:inline-block; min-width: 22px; padding: 1px 8px; margin-right: 8px;
+        border-radius: 8px; color: #0b1220; font-weight: 900; font-size: 1.05rem; vertical-align: middle; }
+    .vq-detail { background: rgba(15,23,42,0.4); border: 1px solid rgba(148,163,184,0.14);
+        border-radius: 12px; padding: 14px 16px; }
+    .vq-headline { font-weight: 800; font-size: 1.0rem; margin-bottom: 8px; }
+    .vq-grade-row { font-size: 0.92rem; color: #e2e8f0; margin-bottom: 14px; }
+    .vq-score { color: #94a3b8; font-size: 0.82rem; }
+    .vq-matrix { display: grid; grid-template-columns: 96px 1fr 1fr 1fr; gap: 5px;
+        max-width: 420px; margin: 6px 0 14px 0; align-items: center; }
+    .vq-corner { }
+    .vq-axis { font-size: 0.74rem; color: #94a3b8; text-align: center; font-weight: 700; }
+    .vq-axis-row { text-align: right; padding-left: 8px; }
+    .vq-cell { height: 34px; border-radius: 7px; opacity: 0.42; }
+    .vq-cell-active { opacity: 1; box-shadow: 0 0 0 3px #f8fafc, 0 0 12px rgba(248,250,252,0.5); }
+    .vq-sub { font-size: 0.88rem; color: #cbd5e1; line-height: 1.6; margin-top: 8px; }
     </style>
 
     <script>
@@ -1848,38 +1916,60 @@ def classify_wyckoff_state(df: pd.DataFrame, tr: dict, events: list, vsa: list, 
         evid = [f"מהלך פרבולי מורחב עם תיקון של ~{f['dist_from_high']*100:.0f}% בנפח ו-OBV יורד — אין טווח מסחר נקי."]
         missing = ["היווצרות טווח מסחר אמיתי (תמיכה/התנגדות שנבחנות מספר פעמים)"]
     elif is_range:
-        if latest == "SOW" or (broke_dn and latest != "Spring"):
+        pos_val = tr.get("position", 0.5)
+        obv_ok = f["obv_dir"] >= -0.05
+        obv_pos = f["obv_dir"] >= 0.0
+        # 1) מחיר כבר עזב את הטווח (פריצה/שבירה) — קודם כל
+        if broke_dn or latest == "SOW":
             state, sscore = "DIST_ACTIVE", 70
             evid = ["שבירת תמיכת הטווח בנפח (SOW) — הפצה מאושרת."]
-        elif latest == "SOS" or (broke_up and latest != "UTAD"):
-            state, sscore = ("ACC_CONFIRM", 75) if latest == "SOS" else ("ACC_CONFIRM", 62)
-            evid = ["SOS / פריצה מעל הטווח בנפח — איסוף מאושר, אזור LPS לתוספת."]
-        elif latest == "Spring":
-            state, sscore = "ACC_SPRING", 70
-            evid = ["Spring — חדירה מתחת לתמיכה ובליעה מיידית (מלכודת דובים)."]
-            missing = ["SOS (אישור) להמשך לשלב D"]
-        elif latest == "UTAD" or (f["has_bc"] and wb < 0.3):
+        elif broke_up or latest == "SOS":
+            state, sscore = "ACC_CONFIRM", 78
+            evid = ["SOS / פריצה מעל ההתנגדות בנפח — איסוף מאושר, אזור LPS לתוספת לפני המשך."]
+        elif latest == "UTAD" or (f["has_bc"] and wb < 0.3 and pos_val >= 0.6):
             state, sscore = "DIST_WARNING", 60
             evid = ["Upthrust/Buying-Climax בפסגת הטווח — סימני הפצה."]
             missing = ["SOW (שבירת תמיכה) לאישור הפצה"]
-        elif f["has_sos"] and pos in ("mid", "high") and f["obv_dir"] >= -0.05:
-            state, sscore = "ACC_CONFIRM", 68
-            evid = ["SOS קודם + החזקה מעל אמצע הטווח (LPS) — איסוף מאושר."]
-        elif pos in ("low", "mid") and (f["has_sc"] or f["has_stopping"] or wb < 0):
-            state, sscore = "ACC_BASE", 50
-            evid = ["טווח מסחר בתחתית עם בלימת ירידות — בניית בסיס (איסוף מוקדם)."]
-            missing = ["Spring (ניעור) או SOS — הטריגרים לכניסה"]
-        elif wb >= 0.3:
-            state, sscore = "ACC_BASE", 40
-            missing = ["אירוע מאשר (Spring/SOS) — אין עדיין"]
-            evid = ["טווח מסחר בהקשר שבועי חיובי, אך ללא אירוע מאשר מובהק עדיין."]
-        elif wb <= -0.3:
-            state, sscore = "DIST_WARNING", 40
-            evid = ["טווח מסחר בהקשר שבועי שלילי — סיכון הפצה, ללא אישור עדיין."]
+        # 2) מחיר *בתוך* הטווח — המיקום הנוכחי גובר על אירוע ישן (תיקון BKNG):
+        elif pos_val >= 0.62 and obv_pos:
+            # חצי עליון + הון נכנס ⇒ מתקדם לעבר הפריצה (LPS) = שלב D, גם אם ה-Spring היה מזמן
+            state, sscore = "ACC_CONFIRM", 70
+            evid = ["מחיר בחצי העליון של הטווח עם OBV חיובי — מתקדם לעבר הפריצה (LPS). האיסוף בשלב מתקדם (D)."]
+            missing = ["SOS — סגירה מעל ההתנגדות בנפח לאישור הפריצה"]
+        elif pos_val <= 0.38:
+            # חצי תחתון — שלב C אם יש ניעור טרי, אחרת בניית בסיס
+            if latest == "Spring":
+                state, sscore = "ACC_SPRING", 70
+                evid = ["Spring טרי בתחתית הטווח — חדירה מתחת לתמיכה ובליעה מיידית (מלכודת דובים)."]
+                missing = ["SOS (אישור) להמשך לשלב D"]
+            elif f["has_sc"] or f["has_stopping"] or wb < 0:
+                state, sscore = "ACC_BASE", 50
+                evid = ["טווח מסחר בתחתית עם בלימת ירידות — בניית בסיס (איסוף מוקדם)."]
+                missing = ["Spring (ניעור) או SOS — הטריגרים לכניסה"]
+            else:
+                state, sscore = "ACC_BASE", 42
+                evid = ["מחיר בתחתית הטווח — בנייה מוקדמת, ללא אירוע מאשר עדיין."]
+                missing = ["Spring/SOS — הטריגרים לכניסה"]
         else:
-            state, sscore = "UNDETERMINED", 30
-            evid = ["טווח מסחר ללא אירוע מאשר וללא הטיה רב-טווחית — לא ברור."]
-            missing = ["אירוע מאשר (Spring/SOS/UTAD/SOW)"]
+            # אמצע הטווח — אזור החלטה; מכריעים לפי אירוע + OBV + שבועי
+            if latest == "Spring" and obv_ok:
+                state, sscore = "ACC_SPRING", 60
+                evid = ["Spring שמתאושש דרך אמצע הטווח — איסוף בשלב C מתקדם."]
+                missing = ["SOS לאישור שלב D"]
+            elif f["has_sos"] and obv_pos:
+                state, sscore = "ACC_CONFIRM", 64
+                evid = ["SOS קודם + החזקה באמצע הטווח (LPS) — איסוף מאושר."]
+            elif wb >= 0.3:
+                state, sscore = "ACC_BASE", 45
+                evid = ["טווח מסחר בהקשר שבועי חיובי, ללא אירוע מאשר מובהק עדיין."]
+                missing = ["אירוע מאשר (Spring/SOS)"]
+            elif wb <= -0.3:
+                state, sscore = "DIST_WARNING", 42
+                evid = ["טווח מסחר בהקשר שבועי שלילי — סיכון הפצה, ללא אישור עדיין."]
+            else:
+                state, sscore = "UNDETERMINED", 32
+                evid = ["מחיר באמצע הטווח ללא אירוע מאשר וללא הטיה רב-טווחית — אזור החלטה לא ברור."]
+                missing = ["אירוע מאשר (Spring/SOS/UTAD/SOW)"]
     elif f["trend"] == "up" and f["obv_dir"] >= -0.05:
         state, sscore = "MARKUP", 65
         evid = ["מבנה מגמת עלייה (שיאים/שפלים עולים, OBV תומך)."]
@@ -2707,6 +2797,387 @@ def pick_phase_caution(ticker: str, engine_phase: str):
     return ep, False, 0.0
 
 
+# ============================================================
+# V22.0 — Value & Quality layer (Tier 2, סגנון ערך)
+# ממלא את החיוג השלישי בעומק אמיתי: ציון איכות (8 עקרונות → A-F) ו-Reverse-DCF
+# (צמיחה גלומה במחיר מול צמיחה בפועל). שכבת אפליקציה בלבד; מבוסס על הנתונים
+# שכבר נשאבים (fd['_raw']) — אפס קריאות רשת נוספות. לא נוגע בנקודות הכניסה/סטופ/
+# יעדים (הן נשארות מבניות); משפיע רק על שורת השכנוע (להחזיק Runner / לקחת רווח).
+# ============================================================
+
+def compute_quality_score(fd: dict) -> dict:
+    """
+    ציון איכות עסקי בסגנון ערך. מפרק לפילרים: FCF (יצירת מזומן), חפיר/כוח-תמחור
+    (מרווח מול סקטור), תשואה על הון (ROE), מאזן (מינוף), צמיחה. מחזיר
+    {score(0-100 פנימי), grade(A-F לתצוגה), drivers[], summary}.
+    """
+    res = {"score": None, "grade": "—", "drivers": [],
+           "summary": "אין די נתונים פונדמנטליים לדירוג איכות."}
+    try:
+        raw = fd.get("_raw") or {}
+        if not raw:
+            return res
+        fcf = float(raw.get("fcf_yield") or 0.0)
+        om = float(raw.get("op_margin") or 0.0)
+        bench_om = float(raw.get("bench_om") or 10.0)
+        roe = float(raw.get("roe_pct") or 0.0)
+        ndte_v = raw.get("net_debt_ebitda")
+        ndte = float(ndte_v) if ndte_v is not None else 0.0
+        rg = float(raw.get("rev_growth") or 0.0)
+        drivers = []
+
+        # 1) יצירת FCF (30) — ליבת ניתוח הערך
+        if fcf >= 6:   s_fcf, t = 30, f"FCF {fcf:.1f}% — מכונת מזומנים"
+        elif fcf >= 4: s_fcf, t = 23, f"FCF {fcf:.1f}% — בריא"
+        elif fcf >= 2: s_fcf, t = 14, f"FCF {fcf:.1f}% — בינוני"
+        elif fcf > 0:  s_fcf, t = 7,  f"FCF {fcf:.1f}% — חלש"
+        else:          s_fcf, t = 0,  "FCF שלילי/אפסי — שורף מזומן"
+        drivers.append(t)
+        # 2) חפיר / כוח תמחור (25) — מרווח תפעולי מול הסקטור
+        edge = om - bench_om
+        if om <= 0:        s_moat, t = 0,  f"שולי תפעול שליליים ({om:.0f}%)"
+        elif edge >= 15:   s_moat, t = 25, f"מרווח {om:.0f}% מעל סקטור {bench_om:.0f}% — חפיר חזק"
+        elif edge >= 5:    s_moat, t = 19, f"מרווח {om:.0f}% מעל סקטור {bench_om:.0f}% — כוח תמחור"
+        elif edge >= -3:   s_moat, t = 12, f"מרווח {om:.0f}% ~ סקטור {bench_om:.0f}%"
+        else:              s_moat, t = 5,  f"מרווח {om:.0f}% מתחת סקטור {bench_om:.0f}% — חלש"
+        drivers.append(t)
+        # 3) תשואה על הון (20)
+        if roe >= 20:   s_roc, t = 20, f"ROE {roe:.0f}% — גבוהה"
+        elif roe >= 15: s_roc, t = 15, f"ROE {roe:.0f}% — טובה"
+        elif roe >= 8:  s_roc, t = 10, f"ROE {roe:.0f}% — בינונית"
+        elif roe > 0:   s_roc, t = 5,  f"ROE {roe:.0f}% — נמוכה"
+        else:           s_roc, t = 0,  f"ROE שלילי ({roe:.0f}%)"
+        drivers.append(t)
+        # 4) חוזק מאזן (15) — מינוף חוב נטו/EBITDA
+        if ndte <= 0:    s_bs, t = 15, "מאזן איתן — ללא חוב נטו / מזומן עודף"
+        elif ndte < 1:   s_bs, t = 15, f"מינוף {ndte:.1f}x — איתן"
+        elif ndte < 2:   s_bs, t = 11, f"מינוף {ndte:.1f}x — סביר"
+        elif ndte < 3:   s_bs, t = 7,  f"מינוף {ndte:.1f}x — בינוני"
+        elif ndte < 4:   s_bs, t = 3,  f"מינוף {ndte:.1f}x — גבוה"
+        else:            s_bs, t = 0,  f"מינוף {ndte:.1f}x — מסוכן"
+        drivers.append(t)
+        # 5) צמיחה (10)
+        if rg >= 15:   s_g, t = 10, f"צמיחה {rg:.0f}% — מהירה"
+        elif rg >= 8:  s_g, t = 7,  f"צמיחה {rg:.0f}% — יציבה"
+        elif rg >= 3:  s_g, t = 5,  f"צמיחה {rg:.0f}% — מתונה"
+        elif rg >= 0:  s_g, t = 2,  f"צמיחה {rg:.0f}% — איטית"
+        else:          s_g, t = 0,  f"הכנסות מתכווצות ({rg:.0f}%)"
+        drivers.append(t)
+
+        score = s_fcf + s_moat + s_roc + s_bs + s_g
+        grade = ("A" if score >= 80 else "B" if score >= 68 else
+                 "C" if score >= 55 else "D" if score >= 40 else "F")
+        if grade in ("A", "B"):
+            summ = "עסק איכותי — מכונת מזומנים עם יתרון תחרותי ומאזן בריא."
+        elif grade == "C":
+            summ = "עסק סביר — איכות בינונית, לא בולט לטוב או לרע."
+        else:
+            summ = "עסק באיכות נמוכה — חולשה בתזרים/רווחיות/מאזן. סיכון מוגבר."
+        res = {"score": score, "grade": grade, "drivers": drivers, "summary": summ}
+    except Exception:
+        pass
+    return res
+
+
+def compute_implied_growth(fd: dict) -> dict:
+    """
+    Reverse-DCF פשוט ושקוף: מנרמלים מחיר ל-1, FCF_0 = תשואת ה-FCF, ומחפשים את
+    שיעור צמיחת ה-FCF שמצדיק את המחיר (r=9%, צמיחה סופית 2.5%, 10 שנים). משווים
+    לצמיחה בפועל ⇒ זול/הוגן/יקר. אם אין FCF חיובי — לא ניתן לתמחר כך (אות ספקולטיבי).
+    """
+    res = {"valid": False,
+           "summary": "אין FCF חיובי — לא ניתן לתמחר לפי תזרים. זהו עסק תלוי-צמיחה/ספקולטיבי."}
+    try:
+        raw = fd.get("_raw") or {}
+        fcf = float(raw.get("fcf_yield") or 0.0) / 100.0
+        rg = float(raw.get("rev_growth") or 0.0)
+        ni = float(raw.get("ni_growth") or 0.0)
+        if fcf <= 0:
+            return res
+        actual = max(0.0, min(40.0, (rg * 0.6 + ni * 0.4) if ni else rg))
+        r, g_term, yrs = 0.09, 0.025, 10
+
+        def pv(gp):
+            g = gp / 100.0
+            tot, f = 0.0, fcf
+            for t in range(1, yrs + 1):
+                f *= (1 + g)
+                tot += f / ((1 + r) ** t)
+            term = (f * (1 + g_term) / (r - g_term)) / ((1 + r) ** yrs)
+            return tot + term
+
+        lo, hi = -5.0, 60.0
+        for _ in range(60):
+            mid = (lo + hi) / 2
+            if pv(mid) < 1:
+                lo = mid
+            else:
+                hi = mid
+        implied = round((lo + hi) / 2, 1)
+        gap = round(actual - implied, 1)
+        if implied <= actual * 0.8:
+            verdict = "זול"
+        elif implied >= actual * 1.2 + 2:
+            verdict = "יקר"
+        else:
+            verdict = "הוגן"
+        vtxt = {"זול": "מתומחר בחסר (זול)", "יקר": "מתומחר ביוקר", "הוגן": "מתומחר בהוגן"}[verdict]
+        summ = (f"המחיר מגלם צמיחת FCF של ~{implied:.0f}% לשנה; העסק צומח בפועל ~{actual:.0f}% "
+                f"⇒ {vtxt}.")
+        res = {"valid": True, "implied": implied, "actual": round(actual, 1),
+               "verdict": verdict, "gap": gap, "summary": summ}
+    except Exception:
+        pass
+    return res
+
+
+# ============================================================
+# V23.0 — Multi-year Durability (Tier 3.0, רכיב 1)
+# מוסיף את ממד הזמן לאיכות: עקביות FCF (חיובי כל שנה?) ומגמת מרווחים (חפיר
+# מתחזק/נשחק) על פני עד 5 שנים. נכנס כ-MODIFIER פנימי לציון האיכות (Tier 2);
+# הציון נשאר A-F, רק מדויק יותר. שכבת אפליקציה בלבד, cache חזק, עמיד-כשל:
+# אם אין די היסטוריה → modifier=0 + "אין די היסטוריה" (בלי קריסה).
+# הלוגיקה מופרדת מהשליפה (פונקציה טהורה הניתנת לבדיקה).
+# ============================================================
+
+def _statement_row(frame, *names):
+    """מחזיר שורה שלמה (כל השנים, מהחדש לישן) של השם הראשון שנמצא, או None."""
+    try:
+        if frame is None or getattr(frame, "empty", True):
+            return None
+        for nm in names:
+            if nm in frame.index:
+                vals = []
+                for x in frame.loc[nm].values:
+                    if x is None:
+                        continue
+                    try:
+                        fx = float(x)
+                    except Exception:
+                        continue
+                    if fx == fx:  # not NaN
+                        vals.append(fx)
+                if vals:
+                    return vals
+    except Exception:
+        pass
+    return None
+
+
+def _durability_from_statements(cf, fin) -> dict:
+    """
+    לוגיקה טהורה (נבדקת בקלות): מקבלת cashflow + financials, מחזירה
+    {valid, modifier(נק' ציון, -20..+10), summary, fcf_pos, fcf_total, margin_trend, detail[]}.
+    """
+    res = {"valid": False, "modifier": 0,
+           "summary": "אין די היסטוריה לכיול עקביות (פחות מ-3 שנות נתונים).",
+           "fcf_pos": 0, "fcf_total": 0, "margin_trend": "—", "detail": []}
+    try:
+        ocf = _statement_row(cf, "Operating Cash Flow",
+                             "Cash Flow From Continuing Operating Activities",
+                             "Total Cash From Operating Activities")
+        cpx = _statement_row(cf, "Capital Expenditure", "Capital Expenditures")
+        rev = _statement_row(fin, "Total Revenue", "Operating Revenue")
+        opi = _statement_row(fin, "Operating Income", "Total Operating Income As Reported")
+
+        if not ocf or len(ocf) < 3:
+            return res
+
+        # --- עקביות FCF (FCF = תזרים תפעולי + capex; ב-yfinance capex שלילי) ---
+        n = min(len(ocf), 5)
+        fcf_years = []
+        for i in range(n):
+            c = cpx[i] if (cpx and i < len(cpx)) else 0.0
+            fcf_years.append(ocf[i] + c)
+        fcf_total = len(fcf_years)
+        fcf_pos = sum(1 for f in fcf_years if f > 0)
+
+        # --- מגמת מרווחים (op_income/revenue): השוואת חדש מול ישן ---
+        margin_trend = "—"
+        if rev and opi and len(rev) >= 3 and len(opi) >= 3:
+            k = min(len(rev), len(opi), 5)
+            margins = [opi[i] / rev[i] for i in range(k) if rev[i]]
+            if len(margins) >= 3:
+                recent = sum(margins[:2]) / len(margins[:2])     # ממוצע 2 העדכניות
+                old = sum(margins[-2:]) / len(margins[-2:])       # ממוצע 2 הישנות
+                diff = recent - old
+                margin_trend = ("מתחזק" if diff > 0.02 else
+                                "נשחק" if diff < -0.02 else "יציב")
+
+        # --- חישוב ה-modifier ---
+        modifier = 0
+        detail = []
+        ratio = fcf_pos / fcf_total if fcf_total else 0.0
+        if ratio >= 1.0:
+            modifier += 6
+            detail.append(f"FCF חיובי ב-{fcf_pos}/{fcf_total} השנים — עקבי")
+        elif ratio >= 0.6:
+            detail.append(f"FCF חיובי ב-{fcf_pos}/{fcf_total} השנים — תנודתי חלקית")
+        else:
+            modifier -= 12
+            detail.append(f"FCF חיובי רק ב-{fcf_pos}/{fcf_total} השנים — תנודתי")
+
+        if margin_trend == "מתחזק":
+            modifier += 4
+            detail.append("מרווחים מתחזקים לאורך זמן — חפיר מתחזק")
+        elif margin_trend == "נשחק":
+            modifier -= 8
+            detail.append("מרווחים נשחקים לאורך זמן — חפיר נחלש")
+        elif margin_trend == "יציב":
+            detail.append("מרווחים יציבים לאורך זמן")
+
+        modifier = max(-20, min(10, modifier))
+        if modifier > 0:
+            summ = f"היסטוריה עקבית מחזקת את האיכות (FCF {fcf_pos}/{fcf_total}, מרווחים {margin_trend})."
+        elif modifier < 0:
+            summ = f"היסטוריה תנודתית מחלישה את האיכות (FCF {fcf_pos}/{fcf_total}, מרווחים {margin_trend})."
+        else:
+            summ = f"היסטוריה יציבה (FCF {fcf_pos}/{fcf_total}, מרווחים {margin_trend})."
+
+        res = {"valid": True, "modifier": modifier, "summary": summ,
+               "fcf_pos": fcf_pos, "fcf_total": fcf_total,
+               "margin_trend": margin_trend, "detail": detail}
+    except Exception:
+        pass
+    return res
+
+
+@st.cache_data(ttl=86400, max_entries=256, show_spinner=False)
+def compute_durability(ticker: str) -> dict:
+    """
+    עטיפת שליפה (cache חזק — 24ש', הדוחות משתנים רק רבעונית). מושכת cashflow+
+    financials מ-yfinance ומריצה את הלוגיקה הטהורה. עמיד-כשל לחלוטין.
+    """
+    try:
+        tk = yf.Ticker(ticker)
+        try:
+            cf = tk.cashflow
+        except Exception:
+            cf = None
+        try:
+            fin = tk.financials
+        except Exception:
+            fin = None
+        return _durability_from_statements(cf, fin)
+    except Exception:
+        return {"valid": False, "modifier": 0,
+                "summary": "אין די היסטוריה לכיול עקביות.", "fcf_pos": 0,
+                "fcf_total": 0, "margin_trend": "—", "detail": []}
+
+
+def _quality_adjusted(fd: dict, durability: dict) -> dict:
+    """
+    ציון האיכות הסופי = snapshot (Tier 2) + modifier רב-שנתי (Tier 3), ממופה
+    מחדש ל-A-F. זהו הציון היחיד שמוצג בכל המסכים (מקור אמת אחד לאיכות).
+    """
+    snap = compute_quality_score(fd)
+    if snap.get("score") is None:
+        snap = dict(snap)
+        snap["modifier"] = 0
+        snap["score_adj"] = None
+        return snap
+    mod = int((durability or {}).get("modifier", 0))
+    final = max(0, min(100, snap["score"] + mod))
+    grade = ("A" if final >= 80 else "B" if final >= 68 else
+             "C" if final >= 55 else "D" if final >= 40 else "F")
+    out = dict(snap)
+    out["score_adj"] = final
+    out["grade"] = grade           # ← הדרגה המותאמת היא הדרגה הקובעת
+    out["modifier"] = mod
+    return out
+
+
+def _grade_color(grade: str) -> str:
+    return {"A": "#16a34a", "B": "#22c55e", "C": "#eab308",
+            "D": "#f59e0b", "F": "#ef4444"}.get(grade, "#94a3b8")
+
+
+def _value_quality_conclusion(valuation: str, grade: str):
+    """לוגיקת המטריצה כמסקנה מילולית + צבע (למסכים הראשיים)."""
+    v = (valuation or "").strip()
+    cheap, exp = ("זול" in v), ("יקר" in v)
+    good, bad = (grade in ("A", "B")), (grade in ("D", "F"))
+    if cheap and good: return "עסק איכותי במחיר אטרקטיבי — שילוב אידיאלי.", "#16a34a"
+    if cheap and bad:  return "זול אך באיכות נמוכה — היזהר ממלכודת ערך.", "#f59e0b"
+    if exp and good:   return "עסק מצוין אך יקר — דרושה סבלנות או מחיר טוב יותר.", "#eab308"
+    if exp and bad:    return "יקר וגם איכות נמוכה — ספקולטיבי, לא להחזקה.", "#ef4444"
+    if good:           return "עסק איכותי במחיר הוגן — בסיס טוב להחזקה.", "#22c55e"
+    if bad:            return "איכות נמוכה — גם במחיר הוגן, סיכון מוגבר.", "#f59e0b"
+    return "תמחור ואיכות סבירים.", "#94a3b8"
+
+
+def _conviction_note(grade: str, confidence: int) -> str:
+    """שורת שכנוע: להחזיק Runner מעבר ליעד או לקחת רווח — נגזר מהאיכות (לא מזיז סטופ/יעד)."""
+    good, bad = (grade in ("A", "B")), (grade in ("D", "F"))
+    if good and confidence >= 50:
+        return ("האיכות הגבוהה תומכת בהחזקת ה-Runner מעבר ליעד הראשון — אפשר לתת לרווח "
+                "לרוץ עם סטופ נגרר (העסק שווה החזקה ארוכה).")
+    if bad:
+        return ("האיכות נמוכה — זו עסקה טקטית בלבד. קח רווח ביעדים, אל תחזיק מעבר להם "
+                "ואל תתאהב בנייר.")
+    return ("איכות בינונית — החזק עד היעדים לפי התוכנית; הארכת Runner רק אם המבנה נשאר חזק.")
+
+
+def render_value_quality_detail(ticker: str, fd: dict) -> None:
+    """תוכן ה-expander 'ניתוח ערך ואיכות': מטריצה + פילרי איכות + עקביות רב-שנתית + Reverse-DCF."""
+    dura = compute_durability(ticker)              # V23.0
+    qual = _quality_adjusted(fd, dura)             # דרגה מותאמת-עקביות
+    ig = compute_implied_growth(fd)
+    grade = qual.get("grade", "—")
+    snap_score = qual.get("score")
+    adj_score = qual.get("score_adj")
+    modifier = qual.get("modifier", 0)
+    valuation = fd.get("valuation", "—")
+    gcol = _grade_color(grade)
+    vq_text, vq_col = _value_quality_conclusion(valuation, grade)
+
+    # מטריצה 3x3 (איכות × ערך) עם התא הנוכחי מודגש
+    v = (valuation or "").strip()
+    col = 0 if "זול" in v else (2 if "יקר" in v else 1)
+    qrow = {"A": 0, "B": 0, "C": 1, "D": 2, "F": 2}.get(grade, 1)
+    cells = [["#16a34a", "#22c55e", "#eab308"],
+             ["#22c55e", "#eab308", "#f59e0b"],
+             ["#f59e0b", "#f59e0b", "#ef4444"]]
+    col_lbls = ["זול", "הוגן", "יקר"]
+    row_lbls = ["איכות גבוהה", "איכות בינונית", "איכות נמוכה"]
+    grid = "<div class='vq-matrix'>"
+    grid += "<div class='vq-corner'></div>"
+    for cl in col_lbls:
+        grid += f"<div class='vq-axis'>{cl}</div>"
+    for ri in range(3):
+        grid += f"<div class='vq-axis vq-axis-row'>{row_lbls[ri]}</div>"
+        for ci in range(3):
+            active = " vq-cell-active" if (ri == qrow and ci == col) else ""
+            grid += f"<div class='vq-cell{active}' style='background:{cells[ri][ci]};'></div>"
+    grid += "</div>"
+
+    drivers_html = "".join(f"<li>{d}</li>" for d in qual.get("drivers", []))
+    ig_html = ig.get("summary", "")
+
+    # שורת ההתאמה (snapshot → modifier → adjusted)
+    if dura.get("valid") and snap_score is not None:
+        adj_line = (f"ציון snapshot {snap_score} {('+' if modifier >= 0 else '')}{modifier} "
+                    f"(עקביות רב-שנתית) = <b>{adj_score}</b> ⇒ דרגה {grade}")
+        dura_html = "<b>עקביות (5 שנים):</b><ul class='story-ul'>" + \
+                    "".join(f"<li>{x}</li>" for x in dura.get("detail", [])) + "</ul>"
+    else:
+        adj_line = f"ציון snapshot {snap_score if snap_score is not None else '—'} ⇒ דרגה {grade}"
+        dura_html = f"<b>עקביות (5 שנים):</b> {dura.get('summary', 'אין די היסטוריה לכיול עקביות.')}"
+
+    st.markdown(
+        f"<div class='vq-detail'>"
+        f"<div class='vq-headline' style='color:{vq_col};'>השילוב: {vq_text}</div>"
+        f"<div class='vq-grade-row'>איכות עסקית: <span class='grade-pill' style='background:{gcol};'>{grade}</span>"
+        f"<span class='vq-score'>({adj_line})</span> · תמחור: <b>{valuation}</b></div>"
+        f"{grid}"
+        f"<div class='vq-sub'><b>פילרי האיכות (snapshot, סגנון ערך):</b><ul class='story-ul'>{drivers_html}</ul></div>"
+        f"<div class='vq-sub'>{dura_html}</div>"
+        f"<div class='vq-sub'><b>תמחור לפי תזרים (Reverse-DCF):</b> {ig_html}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _dial_color(kind: str, val) -> str:
     """צבע למד לפי סוג: cis / confidence."""
     try:
@@ -2720,7 +3191,23 @@ def _dial_color(kind: str, val) -> str:
     return "#94a3b8"
 
 
-def render_structural_summary(ticker: str, intel: dict) -> None:
+def _structural_roadmap(state: str) -> dict:
+    """מפת דרכים קוהרנטית עם ה-state המבני (מקור אמת יחיד): היינו / אנחנו / היעד + פעולה."""
+    M = {
+        "MARKDOWN":     ("הפצה / פסגה", "מגמת ירידה (Markdown)", "בלימה ובניית בסיס (SC)", "להימנע מלונג; להמתין לבלימה ולבניית בסיס."),
+        "ACC_BASE":     ("מגמת ירידה / בלימה", "בניית בסיס (שלב A/B)", "ניעור (Spring, שלב C)", "לעקוב; להמתין לטריגר Spring/SOS לפני כניסה."),
+        "ACC_SPRING":   ("בניית בסיס (B)", "ניעור (Spring, שלב C)", "אישור (SOS/LPS, שלב D)", "כניסה על המבחן, סטופ מתחת לשפל הניעור."),
+        "ACC_CONFIRM":  ("ניעור (Spring, C)", "אישור איסוף (שלב D)", "פריצה ומגמת עלייה (שלב E)", "חזק/הוסף לקראת הפריצה; אזור LPS לתוספת."),
+        "MARKUP":       ("אישור (שלב D)", "מגמת עלייה (שלב E)", "פסגה / הפצה עתידית", "לרכוב עם סטופ נגרר; לשחרר חלקית לתוך חוזק."),
+        "DIST_WARNING": ("מגמת עלייה (E)", "אזהרת הפצה", "שבירה (SOW) או חזרה לעלייה", "זהירות; לשקול צמצום לתוך חוזק."),
+        "DIST_ACTIVE":  ("אזהרת הפצה", "הפצה / שבירה", "מגמת ירידה (Markdown)", "לצאת מפוזיציות לונג."),
+        "UNDETERMINED": ("—", "אין פאזה מאושרת", "היווצרות מבנה ברור", "להמתין; לסרוק שוב ביום המסחר הבא."),
+    }
+    prev, cur, nxt, act = M.get(state, M["UNDETERMINED"])
+    return {"prev": prev, "current": cur, "next": nxt, "action": act}
+
+
+def render_structural_summary(ticker: str, intel: dict, show_plan: bool = True) -> None:
     """
     V21.0 — התצוגה הראשית של 'תבדוק לי': שורה תחתונה פשוטה קודם, אחריה 3 חיוגים
     נפרדים (טביעת אצבע / ביטחון פאזה / ערך), ואז הסיפור העקבי. הלב של ההנגשה.
@@ -2735,6 +3222,13 @@ def render_structural_summary(ticker: str, intel: dict) -> None:
     fd = get_fundamental_data(ticker) or {}
     valuation = fd.get("valuation", "—")
     val_color = fd.get("valuation_color", "#94a3b8")
+    qual = compute_quality_score(fd)          # V22.0: snapshot איכות
+    _dura = compute_durability(ticker)        # V23.0: עקביות רב-שנתית (cache חזק, עמיד-כשל)
+    qual = _quality_adjusted(fd, _dura)       # ← ציון מותאם-עקביות (A-F, מקור יחיד)
+    grade = qual.get("grade", "—")
+    gcol = _grade_color(grade)
+    ig = compute_implied_growth(fd)           # V22.0: Reverse-DCF — צמיחה גלומה
+    vq_text, vq_col = _value_quality_conclusion(valuation, grade)
     conf_band_he = {"high": "ביטחון גבוה", "mid": "ביטחון בינוני",
                     "low": "ביטחון נמוך", "none": "אין ביטחון"}.get(ws.get("conf_band"), "")
 
@@ -2760,9 +3254,10 @@ def render_structural_summary(ticker: str, intel: dict) -> None:
             f"<div class='dial-sub'>{ws.get('phase_he','')}</div></div>", unsafe_allow_html=True)
     with c3:
         st.markdown(
-            f"<div class='dial'><div class='dial-val' style='color:{val_color}; font-size:1.5rem;'>{valuation}</div>"
-            f"<div class='dial-label'>ערך / איכות</div>"
-            f"<div class='dial-sub'>האם שווה החזקה ובאיזה מחיר</div></div>", unsafe_allow_html=True)
+            f"<div class='dial'><div class='dial-val' style='color:{val_color}; font-size:1.35rem;'>{valuation}"
+            f"<span class='grade-pill' style='background:{gcol};'>{grade}</span></div>"
+            f"<div class='dial-label'>ערך · איכות</div>"
+            f"<div class='dial-sub' style='color:{vq_col};'>{vq_text}</div></div>", unsafe_allow_html=True)
 
     # ---------- (3) הסיפור העקבי — נבנה כמחרוזת HTML *רציפה אחת* (st.markdown יחיד) ----------
     evid = ws.get("evidence", [])
@@ -2775,13 +3270,15 @@ def render_structural_summary(ticker: str, intel: dict) -> None:
     if pb.get("primary"):
         rows.append(f"<div class='story-row'><span class='story-k'>👀 מה צפוי</span>"
                     f"<span class='story-v'>{pb['primary']}</span></div>")
-    if plan.get("valid"):
+    if plan.get("valid") and show_plan:
         rows.append(f"<div class='story-row'><span class='story-k'>📋 התוכנית (מבנית)</span>"
                     f"<span class='story-v'>כניסה ${plan['entry_lo']}–${plan['entry_hi']} · "
                     f"סטופ <b style='color:#ef4444;'>${plan['stop']}</b> (מתחת לשפל המבני) · "
                     f"יעדים ${plan['t1']} / ${plan['t2']} / ${plan['t3']} · R:R {plan['rr']}</span></div>")
         rows.append(f"<div class='story-row'><span class='story-k'>⛔ פסילה</span>"
                     f"<span class='story-v'>{plan['invalidation']}</span></div>")
+        rows.append(f"<div class='story-row'><span class='story-k'>🎯 שכנוע</span>"
+                    f"<span class='story-v'>{_conviction_note(grade, conf)}</span></div>")
     if pb.get("if_fails"):
         chops = f" · <b>אם דשדוש:</b> {pb['if_chops']}" if pb.get("if_chops") else ""
         rows.append(f"<div class='story-row'><span class='story-k'>⚠️ אם משתבש</span>"
@@ -2789,6 +3286,12 @@ def render_structural_summary(ticker: str, intel: dict) -> None:
     if pb.get("time"):
         rows.append(f"<div class='story-row'><span class='story-k'>⏱️ זמן</span>"
                     f"<span class='story-v'>{pb['time']}</span></div>")
+    # 🏢 העסק — איכות (A-F) + תמחור לפי תזרים (Reverse-DCF). העומק המלא + מטריצה ב-expander.
+    _biz = f"איכות <b style='color:{gcol};'>{grade}</b> — {qual.get('summary','')}"
+    if ig.get("summary"):
+        _biz += f" {ig['summary']}"
+    rows.append(f"<div class='story-row'><span class='story-k'>🏢 העסק</span>"
+                f"<span class='story-v'>{_biz}</span></div>")
     wk = ws.get("weekly", {})
     foot = (f"<div class='story-foot'>הקשר רב-טווחי: {wk.get('note','—')} · "
             f"קריאת מנוע גולמית: <code>{intel.get('current_phase','—')}</code></div>")
@@ -3625,7 +4128,10 @@ def _render_home_fundamental_summary(ticker: str, cis_score: float, current_phas
     fdata = get_fundamental_data(ticker) or {}
     disp = display_phase or current_phase
 
-    verdict = synthesize_verdict(fdata, cis_score, current_phase, ticker)
+    # V21.1: מקור אמת יחיד — גם טקסט ה-verdict משתמש בפאזה המבנית (disp), לא בגולמית.
+    # התוויות המבניות מכילות את מילות-המפתח (SOS/Spring) כך שהסתעפות ה-verdict נשמרת;
+    # 'אין פאזה מאושרת' נופל ל-verdict ניטרלי/זהיר — וזה הרצוי.
+    verdict = synthesize_verdict(fdata, cis_score, disp, ticker)
     valuation = fdata.get("valuation", "-") if fdata else None
     pe_disp = (fdata.get('pe_forward') if fdata.get('pe_forward') != 'N/A' else fdata.get('pe_trailing', 'N/A')) if fdata else "N/A"
 
@@ -3901,6 +4407,10 @@ def screen_home() -> None:
 
         # === V21.0: התצוגה הראשית — שורה תחתונה + 3 חיוגים נפרדים + הסיפור העקבי ===
         render_structural_summary(ticker, result)
+
+        # === V22.0: ניתוח ערך ואיכות — מטריצה + פילרים + Reverse-DCF (expander) ===
+        with st.expander("🏢 ניתוח ערך ואיכות — מטריצה, פילרי איכות, Reverse-DCF", expanded=False):
+            render_value_quality_detail(ticker, get_fundamental_data(ticker) or {})
 
         # === השורה התחתונה (Verdict Banner) - ראשון ובולט, לפני כל פירוט טכני ===
         _render_home_fundamental_summary(ticker, result["current_cis"], result["current_phase"],
@@ -4289,24 +4799,33 @@ def screen_fundamental() -> None:
             df = get_cached_data(tkr)
             cis_score = 0.0
             current_phase = ""
+            struct_phase = ""
             if df is not None and not df.empty:
                 engine = FactorEngine(BacktestConfig())
                 factors = engine.compute(df)
                 cis_score = float(engine.composite_cis(factors, df).iloc[-1])
                 current_phase = str(engine.get_wyckoff_phase(df).iloc[-1])
+                # V21.1: מקור אמת יחיד — גם המסך הפונדמנטלי מציג את הפאזה המבנית
+                try:
+                    _wctx = assess_weekly_context(_to_weekly(df))
+                    _ws_f = analyze_wyckoff_structural(df, _wctx, factors, cis_score, current_phase)
+                    struct_phase = _ws_f["phase_he"]
+                except Exception:
+                    struct_phase = current_phase
 
         # --- כותרת מחיר אחידה ליד הטיקר ---
         render_price_header(tkr)
 
         # --- סינתזה קשיחה אחת (נקודת אמת יחידה, ללא סתירות) ---
-        verdict_obj = synthesize_verdict(fdata, cis_score, current_phase, tkr)
+        _phase_disp = struct_phase or current_phase or "—"
+        verdict_obj = synthesize_verdict(fdata, cis_score, _phase_disp, tkr)
         v_color_val = fdata.get("valuation_color", "#94a3b8")
         valuation = fdata.get("valuation", "-")
 
         # === השורה התחתונה האחידה (אותו רכיב בכל המסכים) ===
         st.markdown("<div class='section-label'>השורה התחתונה — הכרעה מאוחדת</div>", unsafe_allow_html=True)
         render_verdict_banner(
-            verdict_obj, ticker=tkr, cis_score=cis_score, current_phase=(current_phase or "—"),
+            verdict_obj, ticker=tkr, cis_score=cis_score, current_phase=_phase_disp,
             valuation=valuation, valuation_color=v_color_val,
         )
 
@@ -4516,14 +5035,38 @@ def screen_trading_scout() -> None:
                 else:
                     render_data_status(tkr, None, _fund0)
 
+                # === V21.1: מקור אמת יחיד לפאזה — wyckoff_state מהמנוע המבני (לכל המסך) ===
+                if _intel and _intel.get("wyckoff_state"):
+                    _ws = _intel["wyckoff_state"]
+                    _struct_phase = _ws["phase_he"]
+                    _srm = _structural_roadmap(_ws["state"])
+                    render_structural_summary(tkr, _intel, show_plan=False)
+                else:
+                    _struct_phase = rec_data.get('current_phase', '')
+                    _srm = None
+
+                # === V22.0: ניתוח ערך ואיכות — מטריצה + פילרים + Reverse-DCF (expander) ===
+                with st.expander("🏢 ניתוח ערך ואיכות — מטריצה, פילרי איכות, Reverse-DCF", expanded=False):
+                    render_value_quality_detail(tkr, get_fundamental_data(tkr) or {})
+
                 # === שלב 1: השורה התחתונה האחידה (Verdict Banner) - ראשון ובולט ===
-                _verdict = rec_data.get("verdict")
                 _fund = rec_data.get("fundamental", {}) or {}
+                _verdict = rec_data.get("verdict")
+                # V21.1: מקור אמת יחיד — בנה מחדש את ה-verdict עם הפאזה המבנית (אותה
+                # synthesize_verdict הקנונית), כך שגם טקסט ההכרעה לא יזכיר פאזה גולמית סותרת.
+                if _intel and _intel.get("wyckoff_state"):
+                    try:
+                        _cis_v = rec_data.get('prob_engine', {}).get('accumulation_chance')
+                        if _cis_v is None:
+                            _cis_v = _intel.get("current_cis", 0)
+                        _verdict = synthesize_verdict(_fund, _cis_v, _struct_phase, tkr)
+                    except Exception:
+                        _verdict = rec_data.get("verdict")
                 if _verdict:
                     render_verdict_banner(
                         _verdict, ticker=tkr,
                         cis_score=rec_data.get('prob_engine', {}).get('accumulation_chance'),
-                        current_phase=rec_data.get('current_phase', ''),
+                        current_phase=_struct_phase,
                         valuation=_fund.get('valuation'),
                         valuation_color=_fund.get('valuation_color', '#94a3b8'),
                         extra_chips=[f"המלצה <b>{rec_data.get('recommendation','-')}</b>"],
@@ -4539,7 +5082,7 @@ def screen_trading_scout() -> None:
 
                 # === שלב 2: הסבר קצר ואנושי - למה דווקא המניה הזו, עכשיו (Q16: bullets + הסבר נוסף) ===
                 if _fund:
-                    _why_phase = rec_data.get('current_phase', '')
+                    _why_phase = _struct_phase
                     why_bullets = build_fundamental_bullets(_fund, tkr, current_phase=_why_phase)
                     st.markdown(
                         f"<div class='narrative-box'><span class='narrative-title'>🦅 למה דווקא {tkr}, עכשיו?</span>"
@@ -4595,6 +5138,9 @@ def screen_trading_scout() -> None:
                 roadmap_prev = rec_data.get('roadmap', {}).get('previous_phase', '—')
                 roadmap_next = rec_data.get('roadmap', {}).get('next_phase', '—')
                 roadmap_action = rec_data.get('roadmap', {}).get('action_plan', '')
+                # V21.1: מפת דרכים קוהרנטית עם הפאזה המבנית (מקור אמת יחיד)
+                if _srm:
+                    roadmap_prev, roadmap_next, roadmap_action = _srm["prev"], _srm["next"], _srm["action"]
                 roadmap_success = rec_data.get('roadmap', {}).get('what_if_success', '')
                 roadmap_fail = rec_data.get('roadmap', {}).get('what_if_fail', '')
                 
@@ -4613,7 +5159,7 @@ def screen_trading_scout() -> None:
                     f"<div class='scout-prob' style='color: {color}; text-shadow: 0 0 40px {color}60;'>{rec_data['prob_engine']['accumulation_chance']}%</div>",
                     "<div class='scout-phase-pill'>",
                     "<span style='color:#94a3b8; font-size:0.95rem;'>Wyckoff Phase:</span> ",
-                    f"<span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{rec_data['current_phase']}</span>",
+                    f"<span style='color:#f8fafc; font-weight:700; font-size:1.05rem; margin-right: 6px;'>{_struct_phase}</span>",
                     "</div>",
                     "</div>",
                     
@@ -4621,7 +5167,7 @@ def screen_trading_scout() -> None:
                     "<div class='roadmap-box'>",
                     "<div class='roadmap-step'><span class='roadmap-label'>היינו ב:</span><span class='roadmap-value'>", roadmap_prev, "</span></div>",
                     "<div class='roadmap-arrow'>←</div>",
-                    "<div class='roadmap-step'><span class='roadmap-label'>אנחנו ב:</span><span class='roadmap-value' style='color:#38bdf8;'>", rec_data['current_phase'], "</span></div>",
+                    "<div class='roadmap-step'><span class='roadmap-label'>אנחנו ב:</span><span class='roadmap-value' style='color:#38bdf8;'>", _struct_phase, "</span></div>",
                     "<div class='roadmap-arrow'>←</div>",
                     "<div class='roadmap-step'><span class='roadmap-label'>היעד סביר:</span><span class='roadmap-value'>", roadmap_next, "</span></div>",
                     "</div>",
@@ -4685,6 +5231,8 @@ def screen_trading_scout() -> None:
                         st.warning("🚫 לא קיימת תוכנית כניסה ללונג במצב זה. ההסתברות לצבירה מוסדית נמוכה / הנכס בפאזת הפצה.")
                     else:
                         _swing = build_swing_trade_plan(rec_data)
+                        if isinstance(_swing, dict) and _struct_phase:
+                            _swing['phase'] = _struct_phase   # V21.1: מקור אמת יחיד לפאזה גם בכותרת התוכנית
                         render_swing_plan(_swing, rec_data)
 
                         # גודל פוזיציה (כשנבחרה רמת פירוט מתאימה) - מבוסס סיכון 1% לעסקה
@@ -4702,7 +5250,7 @@ def screen_trading_scout() -> None:
 
                         # מפת דרכים (השלמה תמציתית למודל הוויקוף)
                         with st.expander("🗺️ מפת דרכים מורחבת (מודל הוויקוף)", expanded=False):
-                            st.markdown(f"**היינו ב:** {roadmap_prev} → **אנחנו ב:** {rec_data['current_phase']} → **היעד הסביר:** {roadmap_next}")
+                            st.markdown(f"**היינו ב:** {roadmap_prev} → **אנחנו ב:** {_struct_phase} → **היעד הסביר:** {roadmap_next}")
                             st.markdown(f"**✅ אם התבנית מצליחה:** {roadmap_success}")
                             st.markdown(f"**❌ אם התבנית נכשלת:** {roadmap_fail}")
 
@@ -5036,3 +5584,6 @@ if __name__ == "__main__":
 # V20.3 – נוסף: ניתוח Wyckoff מעמיק (Trading Range, אירועים, VSA, יעדי Cause & Effect) — שכבת אפליקציה בלבד.
 # V20.4 – נוסף: שער עקביות פאזה — לא כופה תווית שסותרת את המבנה; אומר "אין פאזה מאושרת, סרוק שוב מחר".
 # V21.0 – היפוך: מנוע מבני (8 states + gate שבועי + ביטחון רציף + סטופים/יעדים מבניים + playbook + 3 חיוגים) מניע את הפאזה; CIS מאַשר. שכבת אפליקציה בלבד.
+# V21.1 – תיקון BKNG: (1) FSM — מיקום נוכחי גובר על אירוע ישן (חצי עליון+OBV חיובי ⇒ שלב D). (2) מקור אמת יחיד — wyckoff_state["phase_he"] בכל המסכים.
+# V22.0 – שכבת ערך ואיכות (Tier 2): ציון איכות A-F (8 עקרונות) + Reverse-DCF (צמיחה גלומה) → חיוג שלישי + שורת שכנוע (Runner/רווח). לא מזיז כניסה/סטופ/יעד. שכבת אפליקציה בלבד.
+# V23.0 – איכות רב-שנתית (Tier 3.0): עקביות FCF (5 שנים) + מגמת מרווחים → modifier פנימי לציון (נשאר A-F). cache חזק, עמיד-כשל. פירוט ב-expander. שכבת אפליקציה בלבד.
