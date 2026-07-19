@@ -1,8 +1,20 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V33.3 (In-House Fundamentals)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V34.0 (Short Module)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V34.0 — מודול שורט (טווח קצר בלבד): ראי וויקופיאני מלא של מנוע הלונג.
+  • התאמה: DIST_ACTIVE/MARKDOWN ⇒ "מתאים (שורט)", DIST_WARNING ⇒ "מותנה —
+    באישור בלבד". כותרת: "🔻 מומלצת לשורט (טווח קצר) בלבד — לא ללונג";
+    צ'יפ 🔻שורט ברצועת הבית. בינוני/ארוך: לעולם לא שורט (הודעה מפנה לקצר).
+  • מטריצת כניסות-ראי (עד 3, סטופ מעל, R:R מהטריגר): אזהרת-הפצה ⇒ אישור יחיד
+    (Sell-Stop מתחת לשליש-התחתון, "רק לאחר פסגה-נמוכה-יותר בנפח דועך");
+    הפצה-פעילה ⇒ ראלי-LPSY (Short-Limit, שורט על חוזק) + שבירת-רצפה (Sell-Stop
+    בנפח); צמוד-לתמיכה ⇒ "אין שורט-שוק"; MARKDOWN ⇒ ריטסט-הקרח. ביטול-כללי:
+    סגירה מעל פסגת הטווח. שומר-רדיפה-ראי. רמות ראי: l3/LPSY/brk_dn/ce_dn.
+  • הקצאת הון לשורט מוקטנת (מתאים 3-5%, מותנה 1-2%) — סיכון א-סימטרי, שקוף.
+  • ריפליי-רמות דו-כיווני + כיתוב מרג'ין/גאפים. מנוע הלונג — ביט-זהה.
 
 V33.3 — חישוב פונדמנטלי אין-האוס (תוקן: "נתונים פונדמנטליים חסרים" במניות
         קטנות כמו PBK): שדות ה-info של yfinance דלילים בטיקרים קטנים, אבל
@@ -4814,8 +4826,20 @@ def _horizon_fit(ws: dict, grade: str = "—", valuation: str = "",
     bear = state in ("DIST_WARNING", "DIST_ACTIVE", "MARKDOWN")
     unk = state in ("", "UNDETERMINED")
 
-    # --- קצר (ימים-שבועות): אירוע בתוקף ---
-    if bear or unk:
+    # --- קצר (ימים-שבועות): אירוע בתוקף. V34: הפצה/ירידה ⇒ שורט (קצר בלבד) ---
+    s_side = "long"
+    if unk:
+        s = ("לא מתאים", "אין מבנה מוגדר לשום כיוון")
+    elif state == "DIST_WARNING":
+        s_side = "short"
+        s = ("מותנה", "סימני הפצה — שורט רק לאחר אישור (פסגה-נמוכה-יותר)")
+    elif state == "DIST_ACTIVE":
+        s_side = "short"
+        s = ("מתאים", "הפצה פעילה — שורט מובנה על ראלי/שבירה")
+    elif state == "MARKDOWN":
+        s_side = "short"
+        s = ("מתאים", "מגמת ירידה — שורט על ראלי-תיקון לקרח")
+    elif bear:
         s = ("לא מתאים", "אין מבנה שורי למסחר קצר")
     elif state == "MARKUP":
         s = ("מתאים", "במהלך — כניסות רק בנגיעות, לא ברדיפה")
@@ -4872,15 +4896,17 @@ def _horizon_fit(ws: dict, grade: str = "—", valuation: str = "",
             m = ("מותנה", m[1] + " · סקטור-האם בלחץ")
     if earn_days is not None and earn_days <= 7 and s[0] != "לא מתאים":
         s = ("מותנה", s[1] + f" · דוח בעוד {earn_days} ימים — הימור על אירוע")
-    fits = {"short": {"fit": s[0], "reason": s[1]},
-            "mid": {"fit": m[0], "reason": m[1]},
-            "long": {"fit": l[0], "reason": l[1]}}
+    fits = {"short": {"fit": s[0], "reason": s[1], "side": s_side},
+            "mid": {"fit": m[0], "reason": m[1], "side": "long"},
+            "long": {"fit": l[0], "reason": l[1], "side": "long"}}
     score = {"מתאים": 2, "מותנה": 1, "לא מתאים": 0}
     order = ["mid", "short", "long"]  # שובר שוויון: בינוני תחילה (ליבת וויקוף)
     best = max(order, key=lambda k: score[fits[k]["fit"]])
     he = {"short": "טווח קצר", "mid": "טווח בינוני", "long": "טווח ארוך"}
     goods = [k for k in ("short", "mid", "long") if fits[k]["fit"] == "מתאים"]
-    if len(goods) == 1:
+    if goods == ["short"] and s_side == "short":
+        headline = "🔻 מומלצת לשורט (טווח קצר) בלבד — לא ללונג"
+    elif len(goods) == 1:
         verb = "להשקעה" if goods[0] == "long" else "למסחר"
         headline = f"מניה מומלצת {verb} ל{he[goods[0]]} בלבד"
     elif len(goods) >= 2:
@@ -4927,6 +4953,12 @@ def _levels_dict(ws: dict, last: float) -> dict:
             "creek": round(rst, 2),                            # מדף הריטסט אחרי פריצה
             "brk_s": round(rst * 1.005, 2), "brk_m": round(rst * 1.008, 2),
             "ce1": round(t_ce1, 2), "ce2": round(t_ce2, 2),
+            # V34.0 — רמות ראי לשורט
+            "l3": round(sup + 0.34 * rng, 2),
+            "lpsy_lo": round(sup + 0.45 * rng, 2), "lpsy_hi": round(sup + 0.65 * rng, 2),
+            "brk_dn": round(sup * 0.995, 2),
+            "ce_dn1": max(round(sup - rng, 2), round(sup * 0.60, 2)),
+            "ce_dn2": max(round(sup - 1.5 * rng, 2), round(sup * 0.45, 2)),
         })
     except Exception:
         pass
@@ -4934,18 +4966,22 @@ def _levels_dict(ws: dict, last: float) -> dict:
 
 
 def _mk_entry(kind, name, order_he, trig, stop, t1, t2=None, valid=15,
-              cancel="", note="", cond=""):
-    """בונה כניסה מותנית; RR מחושב ממחיר הטריגר (לא מהספוט)."""
+              cancel="", note="", cond="", side="long"):
+    """בונה כניסה מותנית; RR מחושב ממחיר הטריגר (לא מהספוט). V34: מודע-כיוון."""
     trig, stop = round(float(trig), 2), round(float(stop), 2)
     rr = 0.0
     try:
-        risk = trig - stop
-        rr = round((float(t1) - trig) / risk, 1) if risk > 0 else 0.0
+        if side == "short":
+            risk = stop - trig            # הסטופ מעל הטריגר
+            rr = round((trig - float(t1)) / risk, 1) if risk > 0 else 0.0
+        else:
+            risk = trig - stop
+            rr = round((float(t1) - trig) / risk, 1) if risk > 0 else 0.0
     except Exception:
         pass
     return {"kind": kind, "name": name, "order_he": order_he, "trig": trig,
             "stop": stop, "t1": round(float(t1), 2),
-            "t2": round(float(t2), 2) if t2 else None, "rr": rr,
+            "t2": round(float(t2), 2) if t2 else None, "rr": rr, "side": side,
             "valid": int(valid), "cancel": cancel, "note": note, "cond": cond}
 
 
@@ -4953,6 +4989,14 @@ def _chase_guard(entries: list, last: float) -> None:
     """שומר-רדיפה: אם המחיר כבר מעל טריגר-נגיעה — סמן להמתין לנגיעה הבאה."""
     for e in entries:
         try:
+            if e.get("side") == "short":
+                if e["kind"] == "touch" and last < e["trig"] * 0.985:
+                    e["note"] = (e["note"] + " · " if e["note"] else "") + \
+                        "המחיר כבר מתחת לאזור — אל תרדוף שורט; המתן לראלי"
+                if e["kind"] == "breakdown" and last < e["trig"] * 0.98:
+                    e["note"] = (e["note"] + " · " if e["note"] else "") + \
+                        "כבר נשברה — עדיף להמתין לריטסט הקרח"
+                continue
             if e["kind"] == "touch" and last > e["trig"] * 1.015:
                 e["note"] = (e["note"] + " · " if e["note"] else "") + \
                     "המחיר כעת מעל האזור — אל תרדוף; המתן לנגיעה"
@@ -4974,7 +5018,47 @@ def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str):
     days = int(ws.get("days_in_phase", 0) or 0)
     E, cancel_all, none_reason = [], "", ""
     if state in ("DIST_WARNING", "DIST_ACTIVE", "MARKDOWN"):
-        return [], "", "מבנה הפצה/ירידה — אין כניסות לונג. המתן לסיום ההפצה ולבניית בסיס חדש."
+        if horizon != "short":
+            return [], "", ("מבנה הפצה/ירידה — אין כניסות לונג לטווח זה. "
+                            "תוכנית שורט זמינה בטווח הקצר בלבד.")
+        if not lv.get("ok"):
+            return [], "", ("בירידה ללא טווח מזוהה — אין רמות מבניות לשורט; "
+                            "המתן לראלי-תיקון מובנה.")
+        cancel_all = (f"סגירה יומית מעל ${round(lv['rst'] * 1.005, 2)} — "
+                      f"המבנה השורי חזר, כל תוכנית השורט מבוטלת")
+        if state == "DIST_WARNING":
+            E.append(_mk_entry("confirm", "אישור הפצה (שער האזהרה)",
+                     f"פקודת Sell-Stop ב-${lv['l3']}", lv["l3"], lv["lpsy_hi"],
+                     lv["sup"], lv["ce_dn1"], 12, cancel_all,
+                     "כניסת שורט יחידה מותרת במצב אזהרה",
+                     "רק לאחר פסגה-נמוכה-יותר בנפח דועך", side="short"))
+        elif state == "DIST_ACTIVE":
+            pos = float((ws.get("tr") or {}).get("position", 0.5) or 0.5)
+            e_dn = _mk_entry("breakdown", "שבירת רצפת הטווח",
+                             f"פקודת Sell-Stop ב-${lv['brk_dn']}", lv["brk_dn"],
+                             round(lv["sup"] * 1.02, 2), lv["ce_dn1"], lv["ce_dn2"],
+                             15, f"החזרה וסגירה מעל ${lv['sup']}", "",
+                             "בנפח שבירה מובהק", side="short")
+            e_rly = _mk_entry("touch", "ראלי לאזור ההיצע (LPSY)",
+                              f"פקודת Short-Limit ב-${lv['lpsy_lo']}", lv["lpsy_lo"],
+                              round(lv["lpsy_hi"] * 1.015, 2), lv["sup"], lv["ce_dn1"],
+                              20, cancel_all,
+                              "שורט על חוזק מתוכנן (ראלי), לא על חולשה", side="short")
+            if pos <= 0.34:
+                e_dn["note"] = "צמוד לתמיכה — אין שורט-שוק; רק בשבירה או בראלי לאזור ההיצע"
+                E += [e_dn, e_rly]
+            else:
+                if lv["lpsy_lo"] <= last <= lv["lpsy_hi"]:
+                    e_rly["note"] = "המחיר כעת בתוך אזור ההיצע — Short-Limit במחיר השוק לגיטימי"
+                E += [e_rly, e_dn]
+        else:  # MARKDOWN
+            E.append(_mk_entry("touch", "ריטסט הקרח (התמיכה שנשברה)",
+                     f"פקודת Short-Limit ב-${lv['sup']}", lv["sup"],
+                     round(lv["sup"] * 1.025, 2), lv["ce_dn1"], lv["ce_dn2"],
+                     15, cancel_all,
+                     "במגמת ירידה — שורט על ראלים, לא רודפים מטה", side="short"))
+        _chase_guard(E, last)
+        return E[:3], cancel_all, ""
     if state in ("", "UNDETERMINED"):
         return [], "", "אין מבנה מוגדר — אין רמות אמינות לתוכנית. המתן להתגבשות טווח."
     if not lv.get("ok"):
@@ -5078,7 +5162,7 @@ def _apply_sizing(entries: list, capital: float, risk_pct: float) -> None:
     for e in entries:
         try:
             risk_cash = capital * risk_pct / 100.0
-            per_share = e["trig"] - e["stop"]
+            per_share = abs(e["trig"] - e["stop"])
             qty = int(risk_cash // per_share) if per_share > 0 else 0
             e["qty"] = max(qty, 0)
             e["cash"] = round(e["qty"] * e["trig"], 0)
@@ -5089,15 +5173,21 @@ def _apply_sizing(entries: list, capital: float, risk_pct: float) -> None:
 def _scenario_lines(entries: list, cancel_all: str, horizon: str) -> list:
     lines = []
     for e in entries:
+        _short = e.get("side") == "short"
         if e["kind"] == "watch":
             lines.append(f"אם תפרוץ ${e['trig']} → תופעל תוכנית פריצה (חזור לניתוח)")
+        elif e["kind"] == "breakdown":
+            lines.append(f"אם תישבר ${e['trig']}{' בנפח' if e.get('cond') else ''} → {e['name']} (שורט)")
+        elif e["kind"] == "touch" and _short:
+            lines.append(f"אם תרלה ל-${e['trig']} → {e['name']} ({e['order_he']})")
         elif e["kind"] == "touch":
             lines.append(f"אם תיגע ב-${e['trig']} → {e['name']} ({e['order_he']})")
         elif e["kind"] == "breakout":
             lines.append(f"אם תפרוץ ${e['trig']}{' בנפח' if e.get('cond') else ''} → {e['name']}")
         else:
             cond = f" ({e['cond']})" if e.get("cond") else ""
-            lines.append(f"אם יתקבל אישור{cond} מעל ${e['trig']} → {e['name']}")
+            _dirw = "מתחת ל" if _short else "מעל"
+            lines.append(f"אם יתקבל אישור{cond} {_dirw}-${e['trig']} → {e['name']}")
     if cancel_all:
         lines.append(f"❌ {cancel_all}")
     if horizon == "short" and entries:
@@ -5198,7 +5288,7 @@ def _next_earnings_days(ticker: str):
 
 
 def _replay_levels(df, trig: float, stop: float, t1: float, kind: str,
-                   valid_bars: int, lookback: int = 250) -> dict:
+                   valid_bars: int, lookback: int = 250, side: str = "long") -> dict:
     """
     V32.1 — ריפליי-רמות נאיבי: בודק על העבר כמה פעמים הטריגר הנוכחי היה נורה,
     והאם יעד-1 הושג לפני הסטופ בתוך חלון התוקף. בדיקת *רמות*, לא מבנה מתגלגל —
@@ -5211,7 +5301,14 @@ def _replay_levels(df, trig: float, stop: float, t1: float, kind: str,
         n = len(d)
         i = 1
         while i < n - 1:
-            fired = (hi[i] >= trig and hi[i - 1] < trig) if kind in ("breakout", "confirm")                 else (lo[i] <= trig and lo[i - 1] > trig)
+            if side == "short":
+                fired = ((lo[i] <= trig and lo[i - 1] > trig)
+                         if kind in ("breakdown", "confirm")
+                         else (hi[i] >= trig and hi[i - 1] < trig))
+            else:
+                fired = ((hi[i] >= trig and hi[i - 1] < trig)
+                         if kind in ("breakout", "confirm")
+                         else (lo[i] <= trig and lo[i - 1] > trig))
             if not fired:
                 i += 1
                 continue
@@ -5219,8 +5316,12 @@ def _replay_levels(df, trig: float, stop: float, t1: float, kind: str,
             outcome = "timeout"
             j_end = min(n, i + 1 + max(1, int(valid_bars)))
             for j in range(i + 1, j_end):
-                hit_stop = lo[j] <= stop
-                hit_t1 = hi[j] >= t1
+                if side == "short":
+                    hit_stop = hi[j] >= stop
+                    hit_t1 = lo[j] <= t1
+                else:
+                    hit_stop = lo[j] <= stop
+                    hit_t1 = hi[j] >= t1
                 if hit_stop and hit_t1:
                     outcome = "loss"      # שמרני: שניהם באותו בר → הפסד
                     break
@@ -5355,7 +5456,8 @@ def _war_chart(df, lv: dict, ws: dict) -> None:
 
 
 def _capital_allocation(fit: str, conf, grade: str, valuation: str,
-                        sector_bear: bool = False, earn_days=None) -> dict:
+                        sector_bear: bool = False, earn_days=None,
+                        side: str = "long") -> dict:
     """
     המלצת הקצאת הון (% מהתיק) — המלצה בלבד, לפי סיכון-סיכוי משולב. שקוף:
     כל רכיב מוסבר. מתאים→5-8%, מותנה→2-4%, לא מתאים→0%. שערי-הקשר רק מורידים.
@@ -5364,7 +5466,11 @@ def _capital_allocation(fit: str, conf, grade: str, valuation: str,
     chips = []
     if fit == "לא מתאים":
         return {"pct": 0, "chips": ["התאמה שלילית — ללא הקצאה"], "he": "0% — אין הקצאה"}
-    base, cap = (5, 8) if fit == "מתאים" else (2, 4)
+    if side == "short":
+        base, cap = (3, 5) if fit == "מתאים" else (1, 2)
+        chips.append("שורט — סיכון א-סימטרי: הקצאה מוקטנת")
+    else:
+        base, cap = (5, 8) if fit == "מתאים" else (2, 4)
     pct = base
     chips.append(f"בסיס ({fit}): {base}%")
     try:
@@ -5617,7 +5723,8 @@ def _render_horizon_strip(ticker: str, ws: dict, fd: dict) -> None:
                             sector_bear=bool(_sctx.get("bearish")), earn_days=_edays)
         he = {"short": "קצר", "mid": "בינוני", "long": "ארוך"}
         chips = " ".join(
-            f"<span class='ready-chip'>{_HZ_ICON[fits[k]['fit']]} {he[k]}: {fits[k]['fit']}</span>"
+            f"<span class='ready-chip'>{_HZ_ICON[fits[k]['fit']]} {he[k]}: {fits[k]['fit']}"
+            f"{' · 🔻שורט' if fits[k].get('side') == 'short' else ''}</span>"
             for k in ("short", "mid", "long"))
         st.markdown(
             f"<div class='story-box' style='margin:6px 0 4px;'>"
@@ -5644,6 +5751,10 @@ def _render_horizon_strip(ticker: str, ws: dict, fd: dict) -> None:
 
 
 def _render_entry_card(e: dict, idx: int) -> None:
+    _sh = e.get("side") == "short"
+    _badge = " <span style='color:#ef4444; font-weight:800;'>🔻 שורט</span>" if _sh else ""
+    _stop_k = "סטופ (מעל, מראש)" if _sh else "סטופ (מראש)"
+    _brd = "border-right:3px solid #ef4444; " if _sh else ""
     t2 = f" · יעד 2: ${e['t2']}" if e.get("t2") else ""
     cond = f"<div class='story-row'><span class='story-k'>תנאי</span><span class='story-v'>{e['cond']}</span></div>" if e.get("cond") else ""
     note = f"<div class='story-row'><span class='story-k'>💡</span><span class='story-v'>{e['note']}</span></div>" if e.get("note") else ""
@@ -5652,13 +5763,13 @@ def _render_entry_card(e: dict, idx: int) -> None:
         qty = (f"<div class='story-row'><span class='story-k'>גודל</span>"
                f"<span class='story-v'>{e['qty']} מניות (≈${int(e['cash']):,})</span></div>")
     st.markdown(
-        f"<div class='story-box' style='margin-bottom:10px;'>"
+        f"<div class='story-box' style='{_brd}margin-bottom:10px;'>"
         f"<div class='story-row'><span class='story-k'>כניסה {idx}</span>"
-        f"<span class='story-v'><b>{e['name']}</b></span></div>"
+        f"<span class='story-v'><b>{e['name']}</b>{_badge}</span></div>"
         f"<div class='story-row'><span class='story-k'>פקודה</span>"
         f"<span class='story-v'><b>{e['order_he']}</b></span></div>"
         f"{cond}"
-        f"<div class='story-row'><span class='story-k'>סטופ (מראש)</span>"
+        f"<div class='story-row'><span class='story-k'>{_stop_k}</span>"
         f"<span class='story-v'>${e['stop']}</span></div>"
         f"<div class='story-row'><span class='story-k'>יעדים</span>"
         f"<span class='story-v'>יעד 1: ${e['t1']}{t2} · R:R מהטריגר: {e['rr']}</span></div>"
@@ -5741,7 +5852,8 @@ def screen_trade_strategy() -> None:
     st.markdown(f"<div class='section-label'>{_HZ_ICON[f['fit']]} התאמה: <b>{f['fit']}</b> — {f['reason']}</div>",
                 unsafe_allow_html=True)
     _alloc = _capital_allocation(f["fit"], ws.get("confidence"), grade, valuation,
-                                 sector_bear=bool(_sctx.get("bearish")), earn_days=_edays)
+                                 sector_bear=bool(_sctx.get("bearish")), earn_days=_edays,
+                                 side=f.get("side", "long"))
     _achips = " · ".join(_alloc["chips"])
     st.markdown(f"<div class='story-box'><div class='story-row'>"
                 f"<span class='story-k'>💼 הקצאת הון</span>"
@@ -5790,6 +5902,9 @@ def screen_trade_strategy() -> None:
     st.markdown("<div class='section-label'>🎯 הכניסות המותנות</div>", unsafe_allow_html=True)
     for i, e in enumerate(entries, 1):
         _render_entry_card(e, i)
+    if entries and entries[0].get("side") == "short":
+        st.caption("🔻 שורט מחייב חשבון מרג'ין וזמינות השאלה — ודא מול הברוקר. "
+                   "סיכון א-סימטרי: בגאפ-פתיחה הסטופ אינו ערובה למחיר הביצוע.")
     _render_options_filter(tkr, ws, lv, last)
     with st.expander("🕰️ ריפליי-רמות היסטורי (בדיקה נאיבית של הטריגרים)"):
         st.caption("בודק על ~250 ימי המסחר האחרונים: כמה פעמים הטריגר הנוכחי היה נורה, "
@@ -5798,7 +5913,8 @@ def screen_trade_strategy() -> None:
         for i, e in enumerate(entries, 1):
             if e["kind"] == "watch":
                 continue
-            rp = _replay_levels(df, e["trig"], e["stop"], e["t1"], e["kind"], e["valid"])
+            rp = _replay_levels(df, e["trig"], e["stop"], e["t1"], e["kind"], e["valid"],
+                                side=e.get("side", "long"))
             if rp["signals"] == 0:
                 st.markdown(f"**כניסה {i}** — הטריגר לא נורה כלל ב-250 הימים האחרונים "
                             f"(רמה חדשה/נדירה).")
@@ -8751,3 +8867,4 @@ if __name__ == "__main__":
 # V33.1 – 'תבדוק לי' = סלוט טיקר בלבד; הוסרו הברכות וזרקור-ההזדמנויות (כפילות מול 'תמצא לי').
 # V33.2 – תוקן: HTML מודלף בכרטיסיות ({hot_html} ריק ⇒ שורה ריקה ⇒ CommonMark סוגר בלוק). _H() מחטא + כל 5 האתרים עטופים + סורק מאמת אפס חשיפה.
 # V33.3 – פונדמנטלי אין-האוס: P/E/שוליים/צמיחה/FCF/ROE/שווי-שוק מחושבים מהדוחות הגולמיים כשה-info חסר; לעולם לא דורס ליבה; הפסדית=בלי מכפיל מומצא; שקיפות מקור.
+# V34.0 – מודול שורט (קצר בלבד): כניסות-ראי (LPSY/שבירה/ריטסט-קרח/אישור), סטופ מעל, RR מהטריגר, הקצאה מוקטנת, ריפליי דו-כיווני. לונג ביט-זהה.
