@@ -1,8 +1,15 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V35.0 (The Ledger — התיק שלי)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V35.1 (Ledger Form Entry)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V35.1 — הזנת התיק שוכתבה לטופס (בקשת המשתמש): רובריקות טיקר/מחיר-ממוצע/
+        כמות/לונג-שורט → "✅ אישור והוסף" מזין לרשימה והשדות מתנקים אוטומטית
+        לטיקר הבא (st.form clear_on_submit); טיקר קיים ⇒ עדכון השורה (לא כפילות);
+        ❌ מחיקה פר-שורה; מזומן; "💾 שמור וטען" מקבע את הטיוטה כתיק הפעיל —
+        רק אז המערכת מסתנכרנת (עד אז כיתוב "שינויים שטרם נשמרו"); "⬇️ הורד"
+        נפתח רק אחרי שמירה. העלאה מסנכרנת פעיל+טיוטה. הוסר st.data_editor.
 
 V35.0 — "התיק שלי" (THE LEDGER): תיק-משתמש בזיכרון-סשן + סנכרון מלא.
   • כרטיס חמישי רחב וראשון בבית (מעל הארכיונים) → מסך תיק: עורך פוזיציות
@@ -6106,49 +6113,92 @@ def screen_portfolio() -> None:
                "רוה\"פ מחושב מול הממוצע שהזנת ומחירי yfinance (עיכוב קל) — ללא עמלות/מס/דיבידנדים.")
     pf = _pf_get()
 
-    # ---- עורך פוזיציות ----
-    import pandas as _pd
-    base_rows = pf.get("positions") or [{"ticker": "", "side": "long", "qty": 0.0, "avg": 0.0}]
-    edited = st.data_editor(
-        _pd.DataFrame(base_rows), num_rows="dynamic", use_container_width=True, key="pf_editor",
-        column_config={
-            "ticker": st.column_config.TextColumn("טיקר", help="כפי שמופיע ב-yfinance (למשל NVDA, SMH, BTC-USD)"),
-            "side": st.column_config.SelectboxColumn("כיוון", options=["long", "short"], default="long"),
-            "qty": st.column_config.NumberColumn("כמות", min_value=0.0, step=0.0001, format="%.4f"),
-            "avg": st.column_config.NumberColumn("מחיר ממוצע $", min_value=0.0, step=0.01,
-                                                 help="קנייה ללונג / מכירה לשורט"),
-        })
-    cash = st.number_input("💵 מזומן פנוי ($)", min_value=0.0,
-                           value=float(pf.get("cash", 0.0)), step=500.0, key="pf_cash")
-    # סנכרון לזיכרון (שורות תקינות בלבד; שגויות מדווחות)
-    new_pos, _bad = [], []
-    for _, row in edited.iterrows():
-        t = str(row.get("ticker") or "").strip().upper()
-        if not t:
-            continue
-        try:
-            q, a = float(row.get("qty") or 0), float(row.get("avg") or 0)
-            s = str(row.get("side") or "long").lower()
-            if q > 0 and a > 0 and s in ("long", "short"):
-                new_pos.append({"ticker": t, "side": s, "qty": q, "avg": a})
-            else:
-                _bad.append(t)
-        except Exception:
-            _bad.append(t)
-    pf["positions"], pf["cash"] = new_pos, float(cash)
-    st.session_state["portfolio"] = pf
-    if _bad:
-        st.warning("שורות לא תקינות (כמות/מחיר חיוביים? כיוון long/short?): " + ", ".join(_bad))
-
-    # ---- הורדה / העלאה / איפוס ----
+    # ---- V35.1: הזנה טופסית — רובריקות → אישור (מתנקה) → שמור וטען ----
     import json as _json
+    import copy as _copy
+    if "pf_draft" not in st.session_state:
+        st.session_state["pf_draft"] = _copy.deepcopy(pf)      # זריעה מהתיק הפעיל (אם הועלה)
+    draft = st.session_state["pf_draft"]
+
+    st.markdown("<div class='section-label'>➕ הזנת פוזיציה</div>", unsafe_allow_html=True)
+    with st.form("pf_add_form", clear_on_submit=True):
+        f1, f2, f3, f4 = st.columns([1.4, 1.1, 1.1, 1.1])
+        with f1:
+            _t = st.text_input("טיקר", key="pf_in_ticker",
+                               placeholder="NVDA / SMH / BTC-USD")
+        with f2:
+            _avg = st.number_input("מחיר כניסה ממוצע $", min_value=0.0, step=0.01,
+                                   key="pf_in_avg")
+        with f3:
+            _qty = st.number_input("כמות", min_value=0.0, step=0.0001, format="%.4f",
+                                   key="pf_in_qty")
+        with f4:
+            _side_he = st.radio("כיוון", ["לונג", "שורט"], horizontal=True, key="pf_in_side")
+        _add = st.form_submit_button("✅ אישור והוסף", use_container_width=True)
+    if _add:
+        _tk = (_t or "").strip().upper()
+        if not _tk:
+            st.error("הזן טיקר.")
+        elif _qty <= 0 or _avg <= 0:
+            st.error("כמות ומחיר חייבים להיות חיוביים.")
+        else:
+            _row = {"ticker": _tk, "side": "short" if _side_he == "שורט" else "long",
+                    "qty": float(_qty), "avg": float(_avg)}
+            _existing = next((i for i, p in enumerate(draft["positions"])
+                              if p["ticker"] == _tk), None)
+            if _existing is not None:
+                draft["positions"][_existing] = _row
+                st.success(f"{_tk} עודכן (החליף את השורה הקיימת). השדות נוקו לטיקר הבא.")
+            else:
+                draft["positions"].append(_row)
+                st.success(f"{_tk} נוסף. השדות נוקו לטיקר הבא.")
+
+    # רשימת ההזנות + מחיקה
+    if draft["positions"]:
+        st.markdown("<div class='section-label'>📒 הפוזיציות שהוזנו</div>", unsafe_allow_html=True)
+        for _i, _p in enumerate(list(draft["positions"])):
+            c1, c2 = st.columns([5, 0.6])
+            with c1:
+                _sd = "🔻 שורט" if _p["side"] == "short" else "לונג"
+                st.markdown(_H(f"<div class='sector-row'><div class='sector-head'>"
+                               f"<b>{_p['ticker']}</b> · {_sd} · {_p['qty']:g} יח' @ "
+                               f"${_p['avg']:g}</div></div>"), unsafe_allow_html=True)
+            with c2:
+                if st.button("❌", key=f"pf_del_{_i}_{_p['ticker']}", use_container_width=True):
+                    draft["positions"].pop(_i)
+                    st.rerun()
+
+    draft["cash"] = float(st.number_input("💵 מזומן פנוי ($)", min_value=0.0,
+                                          value=float(draft.get("cash", 0.0)),
+                                          step=500.0, key="pf_cash_in"))
+    st.session_state["pf_draft"] = draft
+
+    _dirty = _json.dumps(draft, sort_keys=True) != _json.dumps(pf, sort_keys=True)
+    if _dirty:
+        st.caption("✏️ יש שינויים שטרם נשמרו — לחץ 'שמור וטען' כדי שהמערכת תסתנכרן אליהם.")
+    if st.button("💾 שמור וטען", type="primary", use_container_width=True, key="pf_save_btn",
+                 disabled=not (draft["positions"] or draft["cash"] > 0)):
+        st.session_state["portfolio"] = _copy.deepcopy(draft)
+        try:
+            _e = _pf_enrich(st.session_state["portfolio"])
+            st.success(f"התיק נטען למערכת: {len(draft['positions'])} פוזיציות · "
+                       f"שווי חי ${int(_e['equity']):,} · מזומן ${int(draft['cash']):,}. "
+                       f"תוכניות התקיפה מסונכרנות מעכשיו.")
+        except Exception:
+            st.success("התיק נטען למערכת.")
+        st.rerun()
+
+    # ---- קובץ: הורדה (לשימוש הבא) · העלאה · איפוס ----
     b1, b2, b3 = st.columns(3)
     with b1:
-        st.download_button("⬇️ הורד את התיק", data=_json.dumps(pf, ensure_ascii=False, indent=1).encode("utf-8"),
+        st.download_button("⬇️ הורד את התיק (לשימוש הבא)",
+                           data=_json.dumps(pf, ensure_ascii=False, indent=1).encode("utf-8"),
                            file_name="codex_portfolio.json", mime="application/json",
-                           use_container_width=True, key="pf_dl")
+                           use_container_width=True, key="pf_dl",
+                           disabled=not pf.get("positions"))
     with b2:
-        up = st.file_uploader("⬆️ העלה תיק", type=["json"], key="pf_up", label_visibility="collapsed")
+        up = st.file_uploader("⬆️ העלה תיק", type=["json"], key="pf_up",
+                              label_visibility="collapsed")
         if up is not None and st.session_state.get("pf_up_done") != up.name + str(up.size):
             try:
                 obj = _json.loads(up.read().decode("utf-8"))
@@ -6158,14 +6208,17 @@ def screen_portfolio() -> None:
                         st.error(e)
                 else:
                     st.session_state["portfolio"] = newpf
+                    st.session_state["pf_draft"] = _copy.deepcopy(newpf)
                     st.session_state["pf_up_done"] = up.name + str(up.size)
-                    st.success(f"התיק נטען: {len(newpf['positions'])} פוזיציות · מזומן ${int(newpf['cash']):,}")
+                    st.success(f"התיק נטען: {len(newpf['positions'])} פוזיציות · "
+                               f"מזומן ${int(newpf['cash']):,}")
                     st.rerun()
             except Exception:
                 st.error("קובץ לא קריא — ודא שזה קובץ התיק שהורדת מהמערכת.")
     with b3:
         if st.button("↺ אפס תיק", use_container_width=True, key="pf_reset"):
             st.session_state["portfolio"] = {"ver": 1, "cash": 0.0, "positions": []}
+            st.session_state["pf_draft"] = {"ver": 1, "cash": 0.0, "positions": []}
             st.session_state.pop("pf_up_done", None)
             st.success("התיק אופס — תוכניות התקיפה יהיו אובייקטיביות. הקובץ אצלך נשמר.")
             st.rerun()
@@ -9456,3 +9509,4 @@ if __name__ == "__main__":
 # V33.3 – פונדמנטלי אין-האוס: P/E/שוליים/צמיחה/FCF/ROE/שווי-שוק מחושבים מהדוחות הגולמיים כשה-info חסר; לעולם לא דורס ליבה; הפסדית=בלי מכפיל מומצא; שקיפות מקור.
 # V34.0 – מודול שורט (קצר בלבד): כניסות-ראי (LPSY/שבירה/ריטסט-קרח/אישור), סטופ מעל, RR מהטריגר, הקצאה מוקטנת, ריפליי דו-כיווני. לונג ביט-זהה.
 # V35.0 – התיק שלי: LEDGER בבית, מסך תיק (JSON הורדה/העלאה, ניתוח דו-עדשתי 4-שכבות), סנכרון-תקיפה (קיצוץ-סקטור 25%, תקרת-מזומן, מתג-אובייקטיבי), מנוע-קונפליקטים (מימוש/כיסוי), נקודות-מגע.
+# V35.1 – הזנה טופסית: אישור→ניקוי-שדות→הבא; אותו-טיקר=עדכון; ❌ מחיקה; 'שמור וטען' מקבע ומסנכרן; הורדה אחרי שמירה.
