@@ -1,8 +1,28 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V34.0 (Short Module)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V35.0 (The Ledger — התיק שלי)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V35.0 — "התיק שלי" (THE LEDGER): תיק-משתמש בזיכרון-סשן + סנכרון מלא.
+  • כרטיס חמישי רחב וראשון בבית (מעל הארכיונים) → מסך תיק: עורך פוזיציות
+    (טיקר/כיוון/כמות/מחיר-ממוצע, כמויות שבורות), מזומן USD, "⬇️ הורד את התיק"
+    (JSON) / "⬆️ העלה תיק" (ולידציה מלאה, החלפה) / "↺ אפס" (⇒ תוכניות אובייקטיביות).
+  • ניתוח-תיק דו-עדשתי: ⚡ קצר (מבני — הפצה⇒מימוש/שורט גם בחברה חזקה) /
+    🏛️ ארוך (פונדמנטלי-תחילה — "הפצה טקטית אינה שוברת תזה" באיכות A/B; דוגמת
+    המתכות). 4 שכבות: תמונת-מצב חיה (שווי=מזומן+לונגים+רוה"פ-שורטים, גלוי),
+    חשיפות-סקטור מול חום-הרדאר (ETF look-through), תווית-פעולה פר-אחזקה,
+    ונטיית-על. אזהרת-מזומן כללית בלבד בניתוח (ההגבלה — בתקיפה).
+  • סנכרון תוכנית-התקיפה: באנר "💼 מסונכרן לתיק" + מתג "🔓 התעלם"; הון-לתכנון
+    מתמלא משווי-התיק (ניתן לדריסה); קיצוץ-סקטוריאלי מדורג (סף 25%→0% ב-40%)
+    עם נימוק שקוף; אין תקרת-שם (העדפת המשתמש — צ'יפ מידע בלבד); תקרת-מזומן
+    לכניסות לונג ("מוגבל-מזומן: הכמויות הוקטנו").
+  • מנוע-קונפליקטים: מחזיק-לונג + הפצה + קצר ⇒ תוכנית-מימוש (Sell-Limit בראלי
+    60% + Sell-Stop הגנה 40%, רוה"פ בכל מחיר) — לא שורט נגד עצמך; בינוני ⇒
+    הפניה; ארוך + איכות A/B לא-יקרה ⇒ "החזקה סבירה, אין תוספת". מחזיק-שורט +
+    מבנה שורי ⇒ תוכנית-כיסוי (Buy-to-Cover בנגיעה + מגן-פריצה).
+  • נקודות-מגע: "💼 בתיק: N יח' @ $X · ±% · %מהתיק" בחדר-המלחמה; "💼 אחזקתך: %"
+    בשורות רדאר-הסקטורים. גילוי-נאות דיוק (ממוצע-משתמש × מחירי-yfinance).
 
 V34.0 — מודול שורט (טווח קצר בלבד): ראי וויקופיאני מלא של מנוע הלונג.
   • התאמה: DIST_ACTIVE/MARKDOWN ⇒ "מתאים (שורט)", DIST_WARNING ⇒ "מותנה —
@@ -1722,6 +1742,9 @@ def inject_css() -> None:
         font-size: 0.62rem; font-weight: 500; letter-spacing: 0.36em; pointer-events: none;
         transition: border-color .6s ease, color .6s ease; }
     .codex-card:hover .codex-tab { border-color: rgba(206,176,116,0.55); color: #d5bd85; }
+    .codex-ledger { min-height: 0; padding: 18px 26px 14px; margin-bottom: 18px; }
+    .codex-ledger .stButton > button { font-size: 1.24rem !important; padding: 2px 0 6px !important; }
+    .codex-ledger .codex-desc { min-height: 0; }
     .codex-folio { text-align: center; margin: 30px 0 4px; color: #6f6a5b;
         font-size: 0.6rem; font-weight: 500; letter-spacing: 0.5em; }
 
@@ -5516,6 +5539,13 @@ def _render_war_room(ticker: str, result: dict, fd: dict) -> None:
         f"<span style='color:{tcol}; font-weight:700;'>{tag}</span>"
         f"{(' (' + val + ')') if val else ''}</span></div></div>",
         unsafe_allow_html=True)
+    _wpc = _pf_ctx(ticker)
+    if _wpc.get("loaded") and _wpc.get("held"):
+        _h = _wpc["held"]
+        _pp = f" · {_h['pnl_pct']:+.1f}%" if _h.get("pnl_pct") is not None else ""
+        _ww = f" · {_h['weight']}% מהתיק" if _h.get("weight") is not None else ""
+        st.caption(f"💼 בתיק: {_h['qty']:g} יח' @ ${_h['avg']:g}{_pp}{_ww} "
+                   f"({'שורט' if _h['side'] == 'short' else 'לונג'})")
 
     col_fund, col_tech = st.columns([1, 1.35], gap="medium")
     with col_tech:
@@ -5780,6 +5810,463 @@ def _render_entry_card(e: dict, idx: int) -> None:
         unsafe_allow_html=True)
 
 
+# ============================================================
+# V35.0 — "התיק שלי" (THE LEDGER): מודל תיק בזיכרון-סשן, קובץ JSON
+# (הורדה/העלאה עם ולידציה), מסך ניתוח דו-עדשתי, וסנכרון תוכנית-התקיפה
+# (קיצוץ סקטוריאלי מדורג, תקרת-מזומן, מנוע-קונפליקטים: מימוש במקום שורט-נגד-עצמך).
+# שכבת אפליקציה בלבד. USD בלבד; טיקרים מתומחרי-yfinance בלבד (הכרעות המשתמש).
+# ============================================================
+
+def _pf_get() -> dict:
+    pf = st.session_state.get("portfolio")
+    if not isinstance(pf, dict):
+        pf = {"ver": 1, "cash": 0.0, "positions": []}
+        st.session_state["portfolio"] = pf
+    return pf
+
+
+def _pf_loaded() -> bool:
+    pf = st.session_state.get("portfolio") or {}
+    return bool(pf.get("positions"))
+
+
+def _pf_last_price(ticker: str):
+    try:
+        df = get_cached_data(ticker)
+        if df is not None and len(df):
+            return float(df["Close"].iloc[-1])
+    except Exception:
+        pass
+    return None
+
+
+def _etf_sector_map() -> dict:
+    try:
+        return {d["etf"]: name for name, d in _map_sectors_dict().items() if d.get("etf")}
+    except Exception:
+        return {}
+
+
+def _pf_sector_of(ticker: str):
+    """סקטור של אחזקה: חבר-טקסונומיה, או ETF סקטוריאלי ישיר (look-through)."""
+    name, _ = _sector_of_ticker(ticker)
+    if name:
+        return name
+    return _etf_sector_map().get((ticker or "").upper())
+
+
+def _pf_validate(obj) -> tuple:
+    """ולידציית קובץ תיק. מחזיר (pf|None, שגיאות[])."""
+    errs = []
+    if not isinstance(obj, dict):
+        return None, ["הקובץ אינו קובץ תיק תקין (JSON של CODEX ALPHA)."]
+    cash = obj.get("cash", 0)
+    try:
+        cash = float(cash)
+        if cash < 0:
+            errs.append("מזומן שלילי אינו נתמך.")
+    except Exception:
+        errs.append("שדה המזומן אינו מספר.")
+        cash = 0.0
+    out = []
+    for i, p in enumerate(obj.get("positions") or [], 1):
+        try:
+            t = str(p.get("ticker", "")).strip().upper()
+            side = str(p.get("side", "long")).strip().lower()
+            qty = float(p.get("qty", 0))
+            avg = float(p.get("avg", 0))
+            if not t:
+                errs.append(f"שורה {i}: טיקר ריק.")
+                continue
+            if side not in ("long", "short"):
+                errs.append(f"שורה {i} ({t}): כיוון חייב להיות long/short.")
+                continue
+            if qty <= 0 or avg <= 0:
+                errs.append(f"שורה {i} ({t}): כמות ומחיר-ממוצע חייבים להיות חיוביים.")
+                continue
+            out.append({"ticker": t, "side": side, "qty": qty, "avg": avg})
+        except Exception:
+            errs.append(f"שורה {i}: פורמט לא תקין.")
+    if errs:
+        return None, errs
+    return {"ver": 1, "cash": cash, "positions": out}, []
+
+
+def _pf_enrich(pf: dict, price_fn=None) -> dict:
+    """
+    העשרה חיה: מחיר, רווח/הפסד, משקל, סקטור. שווי-תיק = מזומן + שווי לונגים +
+    רוה"פ שורטים (מוסבר גלוי במסך). טהור (הזרקת price_fn) ועמיד-כשל.
+    """
+    price = price_fn or _pf_last_price
+    rows, long_val, short_pnl, short_expo = [], 0.0, 0.0, 0.0
+    for p in (pf or {}).get("positions", []):
+        px = price(p["ticker"])
+        r = dict(p)
+        r["px"] = round(px, 2) if px else None
+        r["sector"] = _pf_sector_of(p["ticker"])
+        if px:
+            if p["side"] == "long":
+                r["val"] = round(p["qty"] * px, 0)
+                r["pnl_pct"] = round((px / p["avg"] - 1) * 100, 1)
+                long_val += r["val"]
+            else:
+                r["val"] = round(p["qty"] * px, 0)                 # חשיפת שורט
+                r["pnl_pct"] = round((p["avg"] / px - 1) * 100, 1)
+                short_pnl += p["qty"] * (p["avg"] - px)
+                short_expo += r["val"]
+        else:
+            r["val"], r["pnl_pct"] = None, None
+        rows.append(r)
+    cash = float((pf or {}).get("cash", 0) or 0)
+    equity = round(cash + long_val + short_pnl, 0)
+    for r in rows:
+        r["weight"] = round(r["val"] / equity * 100, 1) if (r.get("val") and equity > 0) else None
+    return {"rows": rows, "cash": cash, "long_val": round(long_val, 0),
+            "short_expo": round(short_expo, 0), "short_pnl": round(short_pnl, 0),
+            "equity": equity,
+            "cash_pct": round(cash / equity * 100, 1) if equity > 0 else 0.0}
+
+
+def _pf_sector_exposure(enr: dict) -> dict:
+    """חשיפה סקטוריאלית (לונגים; שמרני לצורך התקרה). {סקטור: %מהתיק}."""
+    out = {}
+    eq = enr.get("equity") or 0
+    if eq <= 0:
+        return out
+    for r in enr.get("rows", []):
+        if r.get("side") == "long" and r.get("val") and r.get("sector"):
+            out[r["sector"]] = out.get(r["sector"], 0.0) + r["val"] / eq * 100.0
+    return {k: round(v, 1) for k, v in out.items()}
+
+
+def _pf_ctx(ticker: str) -> dict:
+    """הקשר-תיק לחדר-המלחמה ולתוכנית-התקיפה (עמיד-כשל; לא טעון ⇒ loaded=False)."""
+    try:
+        if not _pf_loaded():
+            return {"loaded": False}
+        enr = _pf_enrich(_pf_get())
+        t = (ticker or "").upper()
+        held = next((r for r in enr["rows"] if r["ticker"] == t), None)
+        sector = _pf_sector_of(t)
+        sect_pct = _pf_sector_exposure(enr).get(sector) if sector else None
+        return {"loaded": True, "equity": enr["equity"], "cash": enr["cash"],
+                "cash_pct": enr["cash_pct"], "held": held,
+                "sector": sector, "sector_pct": sect_pct}
+    except Exception:
+        return {"loaded": False}
+
+
+def _pf_sector_cut(base_pct: int, sector_pct, thr: float = 25.0, zero_at: float = 40.0):
+    """קיצוץ מדורג של ההקצאה מעל סף חשיפה סקטוריאלית (25%→40%: ליניארי עד 0)."""
+    try:
+        sp = float(sector_pct)
+    except Exception:
+        return base_pct, None
+    if sp < thr:
+        return base_pct, None
+    scale = max(0.0, (zero_at - sp) / (zero_at - thr))
+    adj = int(round(base_pct * scale))
+    chip = f"חשיפה סקטוריאלית {sp:.0f}% (סף {thr:.0f}%): הקצאה קוצצה {base_pct}%→{adj}%"
+    return adj, chip
+
+
+def _pf_cash_cap(entries: list, cash: float):
+    """תקרת-מזומן לכניסות לונג: כמויות מוקטנות ברצף כדי לא לחרוג מהמזומן הפנוי."""
+    if cash is None:
+        return False
+    remaining, capped = max(0.0, float(cash)), False
+    for e in entries:
+        if e.get("side") not in (None, "long"):
+            continue
+        try:
+            max_qty = int(remaining // e["trig"]) if e["trig"] > 0 else 0
+            if e.get("qty", 0) > max_qty:
+                e["qty"] = max_qty
+                e["cash"] = round(max_qty * e["trig"], 0)
+                capped = True
+            remaining -= e.get("cash", 0) or 0
+        except Exception:
+            continue
+    return capped
+
+
+def _pf_exit_plan(ws: dict, lv: dict, held: dict):
+    """
+    מנוע-קונפליקט (הכרעת המשתמש): מחזיק לונג + מבנה הפצה/ירידה + טווח קצר ⇒
+    תוכנית מימוש לפוזיציה הקיימת — לא שורט נגד עצמך. שתי מדרגות: מימוש בראלי
+    (על חוזק) + יציאת-הגנה בשבירה. ללא הון חדש.
+    """
+    if not lv.get("ok"):
+        return [], "", "בירידה ללא מבנה — מימוש לפי שיקול; אין רמות אמינות."
+    qty = float(held.get("qty", 0) or 0)
+    avg = float(held.get("avg", 0) or 0)
+    q1 = max(1, int(round(qty * 0.6)))
+    q2 = max(0, int(qty) - q1)
+    rally = lv["lpsy_lo"] if ws.get("state") != "MARKDOWN" else lv["sup"]
+    cancel = (f"סגירה יומית מעל ${round(lv['rst'] * 1.005, 2)} — המבנה השורי חזר; "
+              f"תוכנית המימוש מבוטלת, חזרה להחזקה")
+    def _px_pnl(px):
+        return round((px / avg - 1) * 100, 1) if avg > 0 else None
+    e1 = {"kind": "exit", "side": "exit", "name": "מימוש בראלי (על חוזק)",
+          "order_he": f"פקודת Sell-Limit ב-${rally}", "trig": rally, "qty": q1,
+          "cash": round(q1 * rally, 0), "pnl_at": _px_pnl(rally), "valid": 20,
+          "cancel": cancel, "note": "מוכרים לתוך הראלי — שם יש קונים"}
+    e2 = {"kind": "exit", "side": "exit", "name": "יציאת הגנה (שבירה)",
+          "order_he": f"פקודת Sell-Stop ב-${lv['brk_dn']}", "trig": lv["brk_dn"],
+          "qty": q2 if q2 > 0 else q1, "cash": round((q2 if q2 > 0 else q1) * lv["brk_dn"], 0),
+          "pnl_at": _px_pnl(lv["brk_dn"]), "valid": 20, "cancel": cancel,
+          "note": "היתרה יוצאת אוטומטית אם הרצפה נשברת"}
+    return ([e1, e2] if q2 > 0 else [e1]), cancel, ""
+
+
+def _pf_cover_plan(ws: dict, lv: dict, held: dict):
+    """מחזיק שורט + מבנה שורי ⇒ תוכנית כיסוי (Buy-to-Cover), לא לונג נגד עצמך."""
+    if not lv.get("ok"):
+        return [], "", "מבנה שורי ללא טווח — כסה לפי שיקול."
+    qty = int(float(held.get("qty", 0) or 0))
+    avg = float(held.get("avg", 0) or 0)
+    tgt = lv["lps_hi"]
+    prot = round(lv["rst"] * 1.005, 2)
+    def _px_pnl(px):
+        return round((avg / px - 1) * 100, 1) if px > 0 else None
+    e1 = {"kind": "cover", "side": "cover", "name": "כיסוי בנגיעה (על חולשה)",
+          "order_he": f"פקודת Buy-to-Cover Limit ב-${tgt}", "trig": tgt, "qty": qty,
+          "cash": round(qty * tgt, 0), "pnl_at": _px_pnl(tgt), "valid": 20,
+          "cancel": f"אם תפרוץ ${prot} קודם — הכיסוי-המגן ייכנס",
+          "note": "מבנה איסוף נבנה נגד השורט שלך"}
+    e2 = {"kind": "cover", "side": "cover", "name": "כיסוי-מגן (פריצה)",
+          "order_he": f"פקודת Buy-to-Cover Stop ב-${prot}", "trig": prot, "qty": qty,
+          "cash": round(qty * prot, 0), "pnl_at": _px_pnl(prot), "valid": 20,
+          "cancel": "", "note": "חובה: מגן מפני פריצה נגד הפוזיציה"}
+    return [e1, e2], "", ""
+
+
+def _render_close_card(e: dict, idx: int) -> None:
+    """כרטיס מימוש/כיסוי — לפוזיציה קיימת (ללא הון חדש, ללא R:R)."""
+    _c = "#f59e0b" if e.get("side") == "exit" else "#7ba7c7"
+    _pn = e.get("pnl_at")
+    _pnl = (f"<div class='story-row'><span class='story-k'>רוה\"פ במחיר זה</span>"
+            f"<span class='story-v'><b>{_pn:+.1f}%</b> מול הממוצע שלך</span></div>") if _pn is not None else ""
+    _cx = (f"<div class='story-row'><span class='story-k'>ביטול</span>"
+           f"<span class='story-v'>{e['cancel']}</span></div>") if e.get("cancel") else ""
+    st.markdown(_H(f"""<div class='story-box' style='border-right:3px solid {_c}; margin-bottom:10px;'>
+        <div class='story-row'><span class='story-k'>שלב {idx}</span>
+        <span class='story-v'><b>{e['name']}</b></span></div>
+        <div class='story-row'><span class='story-k'>פקודה</span>
+        <span class='story-v'><b>{e['order_he']}</b> · {e['qty']} יח' (≈${int(e['cash']):,})</span></div>
+        {_pnl}
+        <div class='story-row'><span class='story-k'>תוקף</span>
+        <span class='story-v'>~{e['valid']} ימי מסחר</span></div>
+        {_cx}
+        <div class='story-row'><span class='story-k'>💡</span>
+        <span class='story-v'>{e['note']}</span></div></div>"""), unsafe_allow_html=True)
+
+
+def _pf_action_label(lens: str, r: dict, qs: dict, grade: str, valuation: str):
+    """תווית פעולה פר-אחזקה לפי העדשה: קצר=מבני (וויקוף), ארוך=פונדמנטלי-תחילה."""
+    state = (qs or {}).get("state", "")
+    if lens == "short":
+        if r.get("side") == "short":
+            if state in ("ACC_SPRING", "ACC_CONFIRM", "MARKUP"):
+                return "🟠", "מבנה שורי נגד השורט — שקול כיסוי", "#f59e0b"
+            if state in ("DIST_ACTIVE", "MARKDOWN"):
+                return "🟢", "השורט עובד — החזק עם מגן", "#22c55e"
+            return "😐", "נטרלי — עקוב", "#94a3b8"
+        if state == "MARKDOWN":
+            return "🔻", "מתחת לתמיכה המבנית — בחינה/מימוש", "#ef4444"
+        if state == "DIST_ACTIVE":
+            return "🟠", "הפצה פעילה — שקול מימוש (תוכנית תקיפה)", "#f97316"
+        if state == "DIST_WARNING":
+            return "⚠️", "סימני הפצה — היכון, המתן לאישור", "#eab308"
+        if state == "ACC_SPRING":
+            return "🌱", "ניעור — מועמדת לתוספת (טריגר)", "#84cc16"
+        if state in ("ACC_CONFIRM", "MARKUP"):
+            return "🟢", "מבנה תקין — החזק", "#22c55e"
+        return "😐", "אין מבנה — עקוב", "#94a3b8"
+    # עדשה ארוכה: הפונדמנטל קודם; המבנה = הערה טקטית בלבד (דוגמת המתכות)
+    g = (grade or "—")[:1].upper()
+    tact = " (הפצה טקטית — לא שוברת תזה)" if state in ("DIST_WARNING", "DIST_ACTIVE", "MARKDOWN") else ""
+    if g in ("A", "B") and "זול" in (valuation or ""):
+        return "🏛️", f"איכות {g} + זול — צבור בירידות{tact}", "#22c55e"
+    if g in ("A", "B") and "יקר" in (valuation or ""):
+        return "⏸️", f"איכות {g} אך יקרה — החזק, אין תוספת{tact}", "#eab308"
+    if g in ("A", "B"):
+        return "🟢", f"איכות {g} — החזק{tact}", "#22c55e"
+    if g in ("D", "F"):
+        return "🔻", f"איכות {g} — התזה חלשה; שקול הקטנה", "#ef4444"
+    if g == "C":
+        return "😐", "איכות בינונית — נטרלי", "#94a3b8"
+    return "❔", "אין נתוני איכות — השלם בדיקה", "#94a3b8"
+
+
+def screen_portfolio() -> None:
+    _render_screen_nav("misc")
+    st.markdown("### 💼 התיק שלי — THE LEDGER")
+    st.caption("התיק חי בזיכרון הסשן בלבד: בסוף השימוש הורד את הקובץ, ובשימוש הבא העלה אותו. "
+               "רוה\"פ מחושב מול הממוצע שהזנת ומחירי yfinance (עיכוב קל) — ללא עמלות/מס/דיבידנדים.")
+    pf = _pf_get()
+
+    # ---- עורך פוזיציות ----
+    import pandas as _pd
+    base_rows = pf.get("positions") or [{"ticker": "", "side": "long", "qty": 0.0, "avg": 0.0}]
+    edited = st.data_editor(
+        _pd.DataFrame(base_rows), num_rows="dynamic", use_container_width=True, key="pf_editor",
+        column_config={
+            "ticker": st.column_config.TextColumn("טיקר", help="כפי שמופיע ב-yfinance (למשל NVDA, SMH, BTC-USD)"),
+            "side": st.column_config.SelectboxColumn("כיוון", options=["long", "short"], default="long"),
+            "qty": st.column_config.NumberColumn("כמות", min_value=0.0, step=0.0001, format="%.4f"),
+            "avg": st.column_config.NumberColumn("מחיר ממוצע $", min_value=0.0, step=0.01,
+                                                 help="קנייה ללונג / מכירה לשורט"),
+        })
+    cash = st.number_input("💵 מזומן פנוי ($)", min_value=0.0,
+                           value=float(pf.get("cash", 0.0)), step=500.0, key="pf_cash")
+    # סנכרון לזיכרון (שורות תקינות בלבד; שגויות מדווחות)
+    new_pos, _bad = [], []
+    for _, row in edited.iterrows():
+        t = str(row.get("ticker") or "").strip().upper()
+        if not t:
+            continue
+        try:
+            q, a = float(row.get("qty") or 0), float(row.get("avg") or 0)
+            s = str(row.get("side") or "long").lower()
+            if q > 0 and a > 0 and s in ("long", "short"):
+                new_pos.append({"ticker": t, "side": s, "qty": q, "avg": a})
+            else:
+                _bad.append(t)
+        except Exception:
+            _bad.append(t)
+    pf["positions"], pf["cash"] = new_pos, float(cash)
+    st.session_state["portfolio"] = pf
+    if _bad:
+        st.warning("שורות לא תקינות (כמות/מחיר חיוביים? כיוון long/short?): " + ", ".join(_bad))
+
+    # ---- הורדה / העלאה / איפוס ----
+    import json as _json
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        st.download_button("⬇️ הורד את התיק", data=_json.dumps(pf, ensure_ascii=False, indent=1).encode("utf-8"),
+                           file_name="codex_portfolio.json", mime="application/json",
+                           use_container_width=True, key="pf_dl")
+    with b2:
+        up = st.file_uploader("⬆️ העלה תיק", type=["json"], key="pf_up", label_visibility="collapsed")
+        if up is not None and st.session_state.get("pf_up_done") != up.name + str(up.size):
+            try:
+                obj = _json.loads(up.read().decode("utf-8"))
+                newpf, errs = _pf_validate(obj)
+                if errs:
+                    for e in errs:
+                        st.error(e)
+                else:
+                    st.session_state["portfolio"] = newpf
+                    st.session_state["pf_up_done"] = up.name + str(up.size)
+                    st.success(f"התיק נטען: {len(newpf['positions'])} פוזיציות · מזומן ${int(newpf['cash']):,}")
+                    st.rerun()
+            except Exception:
+                st.error("קובץ לא קריא — ודא שזה קובץ התיק שהורדת מהמערכת.")
+    with b3:
+        if st.button("↺ אפס תיק", use_container_width=True, key="pf_reset"):
+            st.session_state["portfolio"] = {"ver": 1, "cash": 0.0, "positions": []}
+            st.session_state.pop("pf_up_done", None)
+            st.success("התיק אופס — תוכניות התקיפה יהיו אובייקטיביות. הקובץ אצלך נשמר.")
+            st.rerun()
+
+    if not pf["positions"]:
+        st.info("הזן פוזיציות (או העלה קובץ) — ואז יופיע כאן ניתוח התיק המלא.")
+        return
+
+    # ---- ניתוח התיק ----
+    enr = _pf_enrich(pf)
+    st.markdown("---")
+    lens = st.radio("עדשת הניתוח", ["⚡ טווח קצר (מבני)", "🏛️ טווח ארוך (פונדמנטלי)"],
+                    horizontal=True, key="pf_lens")
+    lens_k = "short" if "קצר" in lens else "long"
+
+    st.markdown(_H(f"""<div class='story-box'>
+        <div class='story-row'><span class='story-k'>שווי התיק</span>
+        <span class='story-v'><b>${int(enr['equity']):,}</b> · מזומן {enr['cash_pct']}%
+        (${int(enr['cash']):,}) · לונגים ${int(enr['long_val']):,}
+        · חשיפת שורט ${int(enr['short_expo']):,} · רוה\"פ שורטים ${int(enr['short_pnl']):,}</span></div></div>"""),
+        unsafe_allow_html=True)
+    if enr["cash_pct"] < 5:
+        st.caption("⚠️ מזומן נמוך (<5%) — מרחב תמרון מוגבל לתוכניות חדשות.")
+
+    # שכבה 1+3: פוזיציות + תווית פעולה לפי העדשה
+    st.markdown("<div class='section-label'>📒 הפוזיציות + תווית פעולה</div>", unsafe_allow_html=True)
+    _sect_hits = {}
+    for r in enr["rows"]:
+        qs = {}
+        try:
+            qs = _quick_structural_state(r["ticker"]) or {}
+        except Exception:
+            pass
+        grade, valuation = "—", ""
+        if lens_k == "long":
+            try:
+                fdp = get_fundamental_data(r["ticker"]) or {}
+                valuation = fdp.get("valuation", "")
+                grade = _quality_adjusted(fdp, compute_durability(r["ticker"])).get("grade", "—")
+            except Exception:
+                pass
+        em, lbl, col = _pf_action_label(lens_k, r, qs, grade, valuation)
+        if r.get("sector"):
+            _sect_hits.setdefault(r["sector"], qs)
+        _side = "🔻שורט" if r["side"] == "short" else "לונג"
+        _pxs = f"${r['px']}" if r.get("px") else "—"
+        _pnl = f"{r['pnl_pct']:+.1f}%" if r.get("pnl_pct") is not None else "—"
+        _pcol = "#22c55e" if (r.get("pnl_pct") or 0) >= 0 else "#ef4444"
+        _w = f"{r['weight']}%" if r.get("weight") is not None else "—"
+        c1, c2 = st.columns([4.4, 0.8])
+        with c1:
+            st.markdown(_H(f"""<div class='sector-row' style='border-right:4px solid {col};'>
+                <div class='sector-head'><b>{r['ticker']}</b> · {_side} · {r['qty']:g} יח' @ ${r['avg']:g}
+                · שוק {_pxs} · <span style='color:{_pcol}; font-weight:800;'>{_pnl}</span>
+                · משקל {_w}{(' · ' + r['sector']) if r.get('sector') else ''}</div>
+                <div class='sector-sub'>{qs.get('phase_he','—')} · {em} <b style='color:{col};'>{lbl}</b></div></div>"""),
+                unsafe_allow_html=True)
+        with c2:
+            if st.button("⚔️", key=f"pf_atk_{r['ticker']}", use_container_width=True):
+                go_to_screen("⚔️ תוכנית תקיפה", r["ticker"])
+
+    # שכבה 2: חשיפות סקטוריאליות מול חום-הסקטור
+    expo = _pf_sector_exposure(enr)
+    if expo:
+        st.markdown("<div class='section-label'>🏭 חשיפות סקטוריאליות מול הרדאר</div>", unsafe_allow_html=True)
+        emap = _etf_sector_map()
+        rev = {v: k for k, v in emap.items()}
+        for sec, pct in sorted(expo.items(), key=lambda x: -x[1]):
+            heat_he, hemoji = "", ""
+            try:
+                etf = rev.get(sec)
+                sqs = _quick_structural_state(etf) if etf else {}
+                if sqs.get("phase_he"):
+                    h = _sector_heat(sqs.get("state", ""), bool(sqs.get("caution")))
+                    heat_he, hemoji = h["he"], h["emoji"]
+            except Exception:
+                pass
+            warn = " · ⚠️ מעל סף הקיצוץ (25%) — הקצאות חדשות בסקטור יקוצצו" if pct >= 25 else ""
+            st.markdown(_H(f"""<div class='sector-row'><div class='sector-head'>
+                <b>{sec}</b> — {pct}% מהתיק{(' · ' + hemoji + ' ' + heat_he) if heat_he else ''}{warn}
+                </div></div>"""), unsafe_allow_html=True)
+
+    # שכבה 4: כיוון-על לפי העדשה
+    tot = sum(r["val"] for r in enr["rows"] if r.get("val") and r["side"] == "long") or 1
+    if lens_k == "short":
+        acc = sum(r["val"] for r in enr["rows"] if r.get("val") and r["side"] == "long"
+                  and (_quick_structural_state(r["ticker"]) or {}).get("state", "")
+                  in ("ACC_SPRING", "ACC_CONFIRM", "ACC_BASE", "MARKUP"))
+        dst = tot - acc
+        tilt = ("שורית — רוב הלונגים במבני איסוף/עלייה" if acc / tot >= 0.6 else
+                "דובית — משקל כבד במבני הפצה/ירידה; שקול מימושים והגדלת מזומן" if dst / tot >= 0.5 else
+                "מעורבת — בחן פוזיציה-פוזיציה")
+        st.markdown(f"<div class='section-label'>🧭 נטיית התיק (מבני): {round(acc/tot*100)}% איסוף/עלייה "
+                    f"מול {round(dst/tot*100)}% הפצה/ירידה — <b>{tilt}</b> · מזומן {enr['cash_pct']}%</div>",
+                    unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='section-label'>🧭 עדשה ארוכה: התוויות לעיל נגזרות איכות+תמחור; "
+                    "מבני הפצה מסומנים כטקטיים בלבד היכן שהתזה חזקה.</div>", unsafe_allow_html=True)
+    st.caption("⚠️ כלי עזר אנליטי — אינו ייעוץ השקעות; אין הוראות מכירה כמותיות בניתוח (רק בתקיפה, לבקשתך).")
+
+
 def screen_trade_strategy() -> None:
     _render_screen_nav("strategy", st.session_state.get("handoff_ticker") or "")
     st.markdown("### ⚔️ תוכנית תקיפה — שלוש תוכניות, שלושה טווחים")
@@ -5808,6 +6295,25 @@ def screen_trade_strategy() -> None:
     except Exception:
         pass
     valuation = fd.get("valuation", "")
+    # === V35.0: הקשר-תיק + מתג אובייקטיבי ===
+    _pfc = _pf_ctx(tkr)
+    _pf_eff = bool(_pfc.get("loaded"))
+    if _pfc.get("loaded"):
+        _hh = _pfc.get("held")
+        _p1 = ""
+        if _hh:
+            _p1 = f" · מחזיק {_hh['qty']:g} יח' @ ${_hh['avg']:g}"
+            if _hh.get("pnl_pct") is not None:
+                _p1 += f" ({_hh['pnl_pct']:+.1f}%)"
+        _p2 = (f" · חשיפת {_pfc['sector']}: {_pfc['sector_pct']}%"
+               if _pfc.get("sector_pct") is not None else "")
+        st.markdown(_H(f"<div class='story-box' style='border-right:3px solid #b08d4a;'>"
+                       f"<div class='story-row'><span class='story-k'>💼 מסונכרן לתיק</span>"
+                       f"<span class='story-v'>שווי ${int(_pfc['equity']):,} · "
+                       f"מזומן ${int(_pfc['cash']):,}{_p1}{_p2} — לתוכנית אובייקטיבית: "
+                       f"אפס את התיק או השתמש במתג</span></div></div>"), unsafe_allow_html=True)
+        if st.checkbox("🔓 התעלם מהתיק לתוכנית זו", key="strat_ignore_pf"):
+            _pf_eff = False
     _sctx = _sector_context_gate(tkr)
     try:
         _edays = _next_earnings_days(tkr)
@@ -5831,6 +6337,8 @@ def screen_trade_strategy() -> None:
     if _ctx_bits:
         st.caption(" · ".join(_ctx_bits))
 
+    if _pf_eff and "strat_capital" not in st.session_state:
+        st.session_state["strat_capital"] = max(1000, int(_pfc["equity"]))
     c1, c2, c3 = st.columns([1.4, 1, 1])
     with c1:
         capital = st.number_input("הון לתכנון ($)", min_value=1000, value=100000,
@@ -5854,6 +6362,16 @@ def screen_trade_strategy() -> None:
     _alloc = _capital_allocation(f["fit"], ws.get("confidence"), grade, valuation,
                                  sector_bear=bool(_sctx.get("bearish")), earn_days=_edays,
                                  side=f.get("side", "long"))
+    if _pf_eff:
+        if _pfc.get("sector_pct") is not None:
+            _newp, _cchip = _pf_sector_cut(_alloc["pct"], _pfc["sector_pct"])
+            if _cchip:
+                _alloc["pct"] = _newp
+                _alloc["chips"].append(_cchip)
+                _alloc["he"] = f"עד {_newp}% מהתיק (המלצה בלבד)"
+        if _pfc.get("held") and _pfc["held"].get("weight") is not None:
+            _alloc["chips"].append(
+                f"כבר מחזיק {_pfc['held']['weight']}% בשם — ללא תקרת-שם (העדפתך)")
     _achips = " · ".join(_alloc["chips"])
     st.markdown(f"<div class='story-box'><div class='story-row'>"
                 f"<span class='story-k'>💼 הקצאת הון</span>"
@@ -5861,10 +6379,47 @@ def screen_trade_strategy() -> None:
                 f"<span style='color:#8f8d85; font-size:0.82rem;'>{_achips}</span></span>"
                 f"</div></div>", unsafe_allow_html=True)
 
+    # === V35.0: מנוע-קונפליקטים — הכרעת המשתמש: לא שורט/לונג נגד עצמך ===
+    _held = _pfc.get("held") if _pf_eff else None
+    _st_bear = ws.get("state") in ("DIST_WARNING", "DIST_ACTIVE", "MARKDOWN")
+    _st_bull = ws.get("state") in ("ACC_SPRING", "ACC_BASE", "ACC_CONFIRM", "MARKUP")
+    if _held and _held.get("side") == "long" and _st_bear and hz == "short":
+        st.markdown("<div class='section-label'>🟠 מחזיק לונג במבנה שלילי — "
+                    "תוכנית מימוש לפוזיציה הקיימת (לא שורט נגד עצמך)</div>",
+                    unsafe_allow_html=True)
+        _xe, _xc, _xw = _pf_exit_plan(ws, lv, _held)
+        if not _xe:
+            st.info(_xw)
+        else:
+            for _xi, _xen in enumerate(_xe, 1):
+                _render_close_card(_xen, _xi)
+            st.caption(f"❌ {_xc}")
+        return
+    if _held and _held.get("side") == "long" and _st_bear and hz == "mid":
+        st.info("מחזיק לונג במבנה הפצה — לטווח בינוני אין תוספת; שקול מימוש בטווח "
+                "הקצר. לטווח ארוך — עדשת הפונדמנטל (איכות חזקה עשויה להצדיק החזקה).")
+        return
+    if _held and _held.get("side") == "short" and _st_bull and hz == "short":
+        st.markdown("<div class='section-label'>🔵 מחזיק שורט במבנה שורי — תוכנית כיסוי</div>",
+                    unsafe_allow_html=True)
+        _ce_, _cc_, _cw_ = _pf_cover_plan(ws, lv, _held)
+        if not _ce_:
+            st.info(_cw_)
+        else:
+            for _xi, _xen in enumerate(_ce_, 1):
+                _render_close_card(_xen, _xi)
+        return
+
     if hz == "long":
         pack, why_none = _long_tranches(ws, lv, grade, valuation)
         if not pack:
-            st.info(why_none)
+            if (_held and _held.get("side") == "long"
+                    and (grade or "—")[:1].upper() in ("A", "B")
+                    and "יקר" not in (valuation or "")):
+                st.info(f"מחזיק באיכות {(grade or '—')[:1]} — ההפצה טקטית ואינה שוברת "
+                        "את התזה הארוכה; המשך החזקה סביר, אין תוספת עד בסיס חדש.")
+            else:
+                st.info(why_none)
             return
         alloc_cash = capital * long_alloc / 100.0
         rows = ""
@@ -5894,6 +6449,10 @@ def screen_trade_strategy() -> None:
         st.info(why_none or "אין כניסות זמינות בתנאים הנוכחיים.")
         return
     _apply_sizing(entries, capital, risk_pct)
+    if _pf_eff and entries and entries[0].get("side", "long") == "long":
+        if _pf_cash_cap(entries, _pfc.get("cash")):
+            st.caption(f"💵 מוגבל-מזומן: הכמויות הוקטנו לתקרת המזומן הפנוי "
+                       f"(${int(_pfc['cash']):,}).")
     st.markdown("<div class='section-label'>🌳 עץ התרחישים</div>", unsafe_allow_html=True)
     tree = "".join(f"<div class='story-row'><span class='story-k'>{i+1}.</span>"
                    f"<span class='story-v'>{ln}</span></div>"
@@ -6969,6 +7528,25 @@ def screen_home() -> None:
             unsafe_allow_html=True,
         )
 
+        # === V35.0: THE LEDGER — כרטיס התיק (ראשון, רחב, מעל הארכיונים) ===
+        if _pf_loaded():
+            try:
+                _e = _pf_enrich(_pf_get())
+                _pfstat = (f"טעון: ${int(_e['equity']):,} · {len(_e['rows'])} פוזיציות · "
+                           f"מזומן {_e['cash_pct']}%")
+            except Exception:
+                _pfstat = "טעון"
+        else:
+            _pfstat = "לא נטען — הזן פוזיציות או העלה את הקובץ מהשימוש הקודם"
+        _ll, _lc, _lr = st.columns([0.35, 5.3, 0.35])
+        with _lc:
+            st.markdown("<div class='codex-card codex-ledger'>"
+                        "<div class='codex-num'>THE LEDGER · MS. 00</div>", unsafe_allow_html=True)
+            if st.button("💼\nהתיק שלי", key="orb_portfolio_btn"):
+                go_to_screen("💼 התיק שלי")
+            st.markdown(f"<div class='codex-desc'>{_pfstat}</div>"
+                        f"<div class='codex-tab'>OPEN LEDGER →</div></div>", unsafe_allow_html=True)
+
         # ארבעה כרטיסי מודיעין (השמות על הכפתורים — ללא שינוי)
         _cards = [
             ("ARCHIVE I&ensp;·&ensp;MS. 01", "🔍\nתבדוק לי", "orb_check_btn", "check", False,
@@ -7099,6 +7677,12 @@ def screen_home() -> None:
             else:
                 st.markdown(f"<div class='section-label'>🌐 {len(rows)} סקטורים · ממוין מהחם לקר</div>",
                             unsafe_allow_html=True)
+                _pf_expo_map = {}
+                if _pf_loaded():
+                    try:
+                        _pf_expo_map = _pf_sector_exposure(_pf_enrich(_pf_get()))
+                    except Exception:
+                        _pf_expo_map = {}
                 for r in rows:
                     h = r["heat"]
                     rd = r.get("readiness") or {}
@@ -7108,6 +7692,8 @@ def screen_home() -> None:
                     _val = (f" · תמחור: <b>{r['valuation']}</b> (לפי {r['val_src']})"
                             if r.get("valuation") else "")
                     _note = f"<div class='sector-note'>💡 {h['note']}</div>" if h.get("note") else ""
+                    _hp = _pf_expo_map.get(r.get("sector"))
+                    _hold = f" · 💼 אחזקתך: {_hp}%" if _hp else ""
                     c1, c2 = st.columns([4.2, 1])
                     with c1:
                         st.markdown(
@@ -7115,7 +7701,7 @@ def screen_home() -> None:
                             f"<div class='sector-head'>{h['emoji']} <b>{r['sector']}</b> "
                             f"<span class='sector-etf'>({r['etf']})</span> — "
                             f"<span style='color:{h['color']}; font-weight:800;'>{h['he']}</span></div>"
-                            f"<div class='sector-sub'>{r['phase_he']} · {r['days']} ימים בפאזה{_rdy}{_val}</div>"
+                            f"<div class='sector-sub'>{r['phase_he']} · {r['days']} ימים בפאזה{_rdy}{_val}{_hold}</div>"
                             f"{_note}</div>",
                             unsafe_allow_html=True)
                     with c2:
@@ -8819,6 +9405,7 @@ def main() -> None:
     page = st.session_state.get("current_page", "🏠 בית")
     router = {
         "🏠 בית": screen_home,
+        "💼 התיק שלי": screen_portfolio,
         "⚔️ תוכנית תקיפה": screen_trade_strategy,
         "📊 ניתוח פונדמנטלי": screen_fundamental,
         "📈 Trading Scout": screen_trading_scout,
@@ -8868,3 +9455,4 @@ if __name__ == "__main__":
 # V33.2 – תוקן: HTML מודלף בכרטיסיות ({hot_html} ריק ⇒ שורה ריקה ⇒ CommonMark סוגר בלוק). _H() מחטא + כל 5 האתרים עטופים + סורק מאמת אפס חשיפה.
 # V33.3 – פונדמנטלי אין-האוס: P/E/שוליים/צמיחה/FCF/ROE/שווי-שוק מחושבים מהדוחות הגולמיים כשה-info חסר; לעולם לא דורס ליבה; הפסדית=בלי מכפיל מומצא; שקיפות מקור.
 # V34.0 – מודול שורט (קצר בלבד): כניסות-ראי (LPSY/שבירה/ריטסט-קרח/אישור), סטופ מעל, RR מהטריגר, הקצאה מוקטנת, ריפליי דו-כיווני. לונג ביט-זהה.
+# V35.0 – התיק שלי: LEDGER בבית, מסך תיק (JSON הורדה/העלאה, ניתוח דו-עדשתי 4-שכבות), סנכרון-תקיפה (קיצוץ-סקטור 25%, תקרת-מזומן, מתג-אובייקטיבי), מנוע-קונפליקטים (מימוש/כיסוי), נקודות-מגע.
