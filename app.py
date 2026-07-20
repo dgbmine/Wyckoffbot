@@ -1,8 +1,25 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V35.1 (Ledger Form Entry)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V36.0 (Institutional Redesign)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V36.0 — Institutional Redesign (הנחיות ה-Art Director; אפס שינוי לוגיקה):
+  שלב א — הסרה (≥20% למסך): לשוניות OPEN ARCHIVE/LEDGER המתות, שורת הפוליו,
+        CTA כפול ברצועת-הטווחים, hr מסיים בחדר-המלחמה, כיתוב-הסבר ברדאר,
+        שורת-הנחות RDCF (→מטא זעיר), מיזוג שני כיתובי-ההקשר בתקיפה לאחד,
+        אימוג'ים דקורטיביים (כרטיסי-הבית, כותרות-סקציה, 💡→'הערה', 📊,
+        מספור-עץ→▸). עיטורי-הפינה ירדו עם מערכת-הכרטיס החדשה.
+  שלב ב — היררכיה: עומק מ-3 שכבות (רקע גרפיט → פאנלים בצל+אור-עליון → מידע
+        קריטי) במקום גבולות; מסגרות-שיער בלבד וקצה-כרטיס כמעט בלתי-נראה;
+        פוקוס יחיד למסך (Hero / טיקר 1.35rem / focal-line / שווי-התיק);
+        כפתורים כפקודות (שטוח, hover איטי 0.5-0.6s); קלטים ומגירות
+        דה-סטרימליט; MainMenu/footer/header מוסתרים. ברונזה נדירה: 43→~20
+        מופעים (≈-53%). ריווח נדיב (padding-top 2.2rem, מרג'ינים גדולים).
+  חתימה ויזואלית: פס-סיווג ברונזה אנכי (block-container) בכל מסך + תג ▎
+        בכותרות-סקציה. מיקרו-מטא-דאטה: FILE // SOURCE VERIFIED (חדר-מלחמה),
+        DOSSIER · CLASSIFIED (תקיפה), LEDGER // PRIVATE (תיק), ARCHIVE·MS (בית).
+  אפס לוגיקה: כל המפתחות, הקולבקים והזרימה — ללא שינוי (מוכח בבדיקות).
 
 V35.1 — הזנת התיק שוכתבה לטופס (בקשת המשתמש): רובריקות טיקר/מחיר-ממוצע/
         כמות/לונג-שורט → "✅ אישור והוסף" מזין לרשימה והשדות מתנקים אוטומטית
@@ -1686,101 +1703,124 @@ def inject_css() -> None:
         font-weight: 700; background: rgba(59,130,246,0.14); color: #bfdbfe;
         border: 1px solid rgba(59,130,246,0.3); margin-top: 4px; }
     .lens-current { font-weight: 800; color: #cbd5e1; font-size: 0.95rem; padding: 8px 2px; }
-    /* ===== V31.0 — CODEX ALPHA: Legacy Edition ===== */
-    /* קאנבס שחור-שכבתי (לא שטוח) — ארכיון, לא דשבורד */
+    /* ===== V36.0 — CODEX ALPHA: Institutional Redesign ===== */
+    /* עקרונות: פחות זה תמיד יותר · עומק משכבות (צל/ריווח), לא מגבולות ·
+       ברונזה נדירה · חתימה: פס-סיווג אנכי · אפס סממני-Streamlit */
+    #MainMenu, footer, header { visibility: hidden; }
     .stApp { background:
-        radial-gradient(1400px 700px at 50% -12%, #111114 0%, #0a0a0c 52%, #070708 100%) !important; }
-    h1, h2, h3 { font-weight: 600 !important; letter-spacing: 0.01em; }
-    hr { border: none !important; height: 1px !important;
-        background: linear-gradient(90deg, transparent, var(--gold-soft), transparent) !important; }
+        radial-gradient(1400px 700px at 50% -12%, #131316 0%, #0c0c0e 52%, #09090b 100%) !important; }
+    h1, h2, h3 { font-weight: 600 !important; letter-spacing: 0.01em; color: #ece9e1; }
+    hr { border: none !important; height: 1px !important; margin: 22px 0 !important;
+        background: rgba(255,255,255,0.06) !important; }
+    /* החתימה: פס-סיווג ברונזה אנכי + נשימה גלובלית */
+    section.main .block-container, .block-container {
+        border-right: 1px solid rgba(166,132,72,0.22);
+        padding-right: 26px !important; padding-top: 2.2rem !important;
+        padding-bottom: 4rem !important; max-width: 1180px; }
+    .doc-meta { font-size: 0.6rem; font-weight: 500; letter-spacing: 0.34em;
+        color: #6d6a60; }
+    .section-label { font-size: 0.72rem !important; font-weight: 600 !important;
+        letter-spacing: 0.22em; color: #8f8d85 !important; margin: 26px 0 10px !important; }
+    .section-label::before { content: '▎'; color: rgba(166,132,72,0.75); margin-left: 6px; }
+    .focal-line { font-size: 1.18rem; font-weight: 600; color: #ece9e1; letter-spacing: 0.01em; }
 
-    /* Hero — חקוק, דק, ואז שקט */
-    .codex-hero { text-align: center; padding: 46px 0 8px; animation: premiumFadeIn 0.9s ease; }
-    .codex-title { font-family: 'Cormorant Garamond', serif; font-size: 4.8rem; font-weight: 400;
-        letter-spacing: 0.34em; color: #ede9df; margin-right: 0.34em;
-        text-shadow: 0 1px 0 #000, 0 2px 5px rgba(0,0,0,0.6); }
-    .codex-tagline { font-family: 'Cormorant Garamond', serif; font-style: italic; font-weight: 400;
-        font-size: 1.16rem; color: #b3934f; letter-spacing: 0.36em; margin-top: 8px; }
-    .codex-divider { width: 230px; height: 1px; margin: 24px auto 16px; position: relative;
-        background: linear-gradient(90deg, transparent, rgba(166,132,72,0.18) 16%,
-            rgba(206,176,116,0.8) 50%, rgba(166,132,72,0.18) 84%, transparent); }
-    .codex-divider::after { content: '◆'; position: absolute; top: 50%; left: 50%;
-        transform: translate(-50%, -54%); font-size: 7px; color: rgba(206,176,116,0.9); }
-    .codex-class { font-size: 0.64rem; font-weight: 500; letter-spacing: 0.62em; color: #776132;
-        margin-bottom: 52px; }
-
-    /* כרטיסי ארכיון — פוליו מחקר על שולחן קריאה: נייר-ארכיון כהה, מסגרת כפולה, פינות דפוס */
-    .codex-card { background-color: #101013;
-        background-image:
-            radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,0.014), transparent 58%),
-            repeating-linear-gradient(45deg, rgba(255,255,255,0.007) 0 2px, transparent 2px 6px);
-        border: 1px solid rgba(166,132,72,0.32); border-radius: 4px;
-        padding: 32px 26px 24px; min-height: 252px; margin-bottom: 12px; position: relative;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.42), inset 0 0 52px rgba(0,0,0,0.32);
-        transition: transform .6s ease, border-color .6s ease, box-shadow .6s ease; }
-    .codex-card::before { content: ''; position: absolute; inset: 10px;
-        border: 1px solid rgba(166,132,72,0.12); border-radius: 2px; pointer-events: none; }
-    .codex-card::after { content: ''; position: absolute; inset: 10px; pointer-events: none;
-        background:
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) top left / 12px 1px,
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) top left / 1px 12px,
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) top right / 12px 1px,
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) top right / 1px 12px,
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) bottom left / 12px 1px,
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) bottom left / 1px 12px,
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) bottom right / 12px 1px,
-            linear-gradient(rgba(166,132,72,0.3), rgba(166,132,72,0.3)) bottom right / 1px 12px;
-        background-repeat: no-repeat; }
-    .codex-card:hover { transform: translateY(-2px); border-color: rgba(190,158,96,0.5);
-        box-shadow: 0 12px 30px rgba(0,0,0,0.48), inset 0 0 52px rgba(0,0,0,0.32); }
-    .codex-num { font-family: 'Cormorant Garamond', serif; font-size: 0.7rem; font-weight: 600;
-        letter-spacing: 0.55em; color: rgba(176,141,74,0.88); margin: 2px 0 14px; }
-    .codex-card .stButton > button { width: 100% !important; background: transparent !important;
-        border: none !important; box-shadow: none !important; color: #ede9df !important;
-        font-weight: 600 !important; font-size: 1.32rem !important; line-height: 1.6 !important;
-        white-space: pre-line !important; letter-spacing: 0.02em; padding: 4px 0 10px !important;
-        transition: color .6s ease !important; }
-    .codex-card .stButton > button:hover { color: #d5bd85 !important; background: transparent !important;
+    /* דה-סטרימליט: קלטים, כפתורים, מגירות — פקודות, לא ווידג'טים */
+    .stButton > button { background: #131316 !important; color: #c9c6bd !important;
+        border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 3px !important;
+        font-weight: 500 !important; letter-spacing: 0.06em;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.35) !important;
+        transition: color .5s ease, border-color .5s ease, background .5s ease !important; }
+    .stButton > button:hover { color: #d5bd85 !important;
+        border-color: rgba(166,132,72,0.45) !important; background: #16161a !important;
         transform: none !important; }
-    .codex-desc { color: #8e8d85; font-size: 0.86rem; font-weight: 400; line-height: 1.95;
-        min-height: 58px; }
-    .codex-tab { display: inline-block; margin-top: 16px; padding: 7px 18px;
-        border: 1px solid rgba(166,132,72,0.3); border-radius: 2px; color: #b3934f;
-        font-size: 0.62rem; font-weight: 500; letter-spacing: 0.36em; pointer-events: none;
-        transition: border-color .6s ease, color .6s ease; }
-    .codex-card:hover .codex-tab { border-color: rgba(206,176,116,0.55); color: #d5bd85; }
-    .codex-ledger { min-height: 0; padding: 18px 26px 14px; margin-bottom: 18px; }
+    .stButton > button[kind="primary"] { background: #1a1a1f !important; color: #ece9e1 !important;
+        border: 1px solid rgba(166,132,72,0.4) !important; letter-spacing: 0.1em; }
+    .stTextInput input, .stNumberInput input, .stSelectbox > div > div, .stFileUploader {
+        background: #101013 !important; border: 1px solid rgba(255,255,255,0.07) !important;
+        border-radius: 3px !important; color: #ece9e1 !important; }
+    div[data-testid="stExpander"] { background: #101013; border: none !important;
+        border-radius: 4px; box-shadow: 0 4px 14px rgba(0,0,0,0.3),
+        inset 0 1px 0 rgba(255,255,255,0.02); }
+    div[data-testid="stExpander"] summary { font-size: 0.8rem; letter-spacing: 0.1em;
+        color: #a6a49b; }
+    div[data-testid="stMetric"] { background: transparent; }
+
+    /* שכבה 2 — פאנלים: מסמכים מסווגים. כמעט ללא מסגרת; עומק מצל ואור-עליון */
+    .story-box, .codex-panel { background: linear-gradient(180deg, #131316, #101013);
+        border: none; border-radius: 4px; padding: 16px 18px;
+        box-shadow: 0 8px 22px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.03);
+        margin-bottom: 10px; }
+    .codex-panel { max-width: 640px; margin: 8px auto 12px; }
+    .sector-row { background: linear-gradient(180deg, #121215, #0f0f12);
+        border-radius: 4px; padding: 12px 16px; margin-bottom: 8px;
+        box-shadow: 0 5px 16px rgba(0,0,0,0.32), inset 0 1px 0 rgba(255,255,255,0.02);
+        border-right-width: 2px !important; }
+    .sector-note { color: #a6a08e; font-size: 0.8rem; margin-top: 4px; }
+
+    /* Hero — הפוקוס היחיד של מסך הבית */
+    .codex-hero { text-align: center; padding: 54px 0 10px; animation: premiumFadeIn 1s ease; }
+    .codex-title { font-family: 'Cormorant Garamond', serif; font-size: 5rem; font-weight: 400;
+        letter-spacing: 0.34em; color: #ece9e1; margin-right: 0.34em;
+        text-shadow: 0 1px 0 #000, 0 2px 5px rgba(0,0,0,0.55); }
+    .codex-tagline { font-family: 'Cormorant Garamond', serif; font-style: italic; font-weight: 400;
+        font-size: 1.12rem; color: #a08a55; letter-spacing: 0.36em; margin-top: 8px; }
+    .codex-divider { width: 210px; height: 1px; margin: 26px auto 16px; position: relative;
+        background: linear-gradient(90deg, transparent, rgba(166,132,72,0.55), transparent); }
+    .codex-divider::after { content: '◆'; position: absolute; top: 50%; left: 50%;
+        transform: translate(-50%, -54%); font-size: 6px; color: rgba(186,156,96,0.8); }
+    .codex-class { font-size: 0.62rem; font-weight: 500; letter-spacing: 0.64em; color: #6d6046;
+        margin-bottom: 58px; }
+
+    /* כרטיסי הארכיון — דף ממגירה: קצה כמעט בלתי-נראה, עומק מאור-עליון וצל */
+    .codex-card { background:
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent 40%),
+        linear-gradient(180deg, #131316, #0e0e11);
+        border: 1px solid rgba(255,255,255,0.05); border-radius: 4px;
+        padding: 34px 26px 26px; min-height: 232px; margin-bottom: 12px;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+        transition: transform .6s ease, border-color .6s ease, box-shadow .6s ease; }
+    .codex-card:hover { transform: translateY(-2px);
+        border-color: rgba(166,132,72,0.3);
+        box-shadow: 0 16px 36px rgba(0,0,0,0.52); }
+    .codex-num { font-family: 'Cormorant Garamond', serif; font-size: 0.66rem; font-weight: 600;
+        letter-spacing: 0.55em; color: rgba(166,132,72,0.62); margin: 2px 0 16px; }
+    .codex-card .stButton > button { width: 100% !important; background: transparent !important;
+        border: none !important; box-shadow: none !important; color: #ece9e1 !important;
+        font-weight: 600 !important; font-size: 1.34rem !important; line-height: 1.55 !important;
+        white-space: pre-line !important; letter-spacing: 0.03em; padding: 4px 0 10px !important;
+        transition: color .6s ease !important; }
+    .codex-card .stButton > button:hover { color: #d5bd85 !important; background: transparent !important; }
+    .codex-desc { color: #8b897f; font-size: 0.85rem; font-weight: 400; line-height: 1.95;
+        min-height: 52px; }
+    .codex-ledger { min-height: 0; padding: 22px 28px 16px; margin-bottom: 22px; }
     .codex-ledger .stButton > button { font-size: 1.24rem !important; padding: 2px 0 6px !important; }
     .codex-ledger .codex-desc { min-height: 0; }
-    .codex-folio { text-align: center; margin: 30px 0 4px; color: #6f6a5b;
-        font-size: 0.6rem; font-weight: 500; letter-spacing: 0.5em; }
 
     .codex-mini .stButton > button { background: transparent !important;
-        border: 1px solid rgba(166,132,72,0.3) !important; color: #b3934f !important;
-        font-size: 0.78rem !important; font-weight: 500 !important; padding: 5px 16px !important;
-        border-radius: 3px !important; letter-spacing: 0.16em; box-shadow: none !important;
-        transition: border-color .6s ease, color .6s ease !important; }
-    .codex-mini .stButton > button:hover { border-color: rgba(206,176,116,0.55) !important;
+        border: 1px solid rgba(255,255,255,0.1) !important; color: #a6a49b !important;
+        font-size: 0.76rem !important; font-weight: 500 !important; padding: 5px 16px !important;
+        border-radius: 3px !important; letter-spacing: 0.14em; box-shadow: none !important;
+        transition: border-color .5s ease, color .5s ease !important; }
+    .codex-mini .stButton > button:hover { border-color: rgba(166,132,72,0.45) !important;
         color: #d5bd85 !important; background: transparent !important; transform: none !important; }
-    .codex-panel { background: #0e0e11; border: 1px solid rgba(166,132,72,0.22);
-        border-radius: 4px; padding: 16px 20px 12px; margin: 8px auto 12px; max-width: 640px; }
 
-    /* Responsive — מובייל כספר מודפס: אוויר, גובה, נוחות קריאה */
+    /* Responsive — נשימה גם במובייל */
     @media (max-width: 900px) {
         div[data-testid="stHorizontalBlock"] { flex-wrap: wrap; row-gap: 16px; }
         div[data-testid="column"] { flex: 1 1 calc(50% - 12px) !important;
             min-width: calc(50% - 12px) !important; }
-        .codex-title { font-size: 2.85rem; letter-spacing: 0.24em; }
-        .codex-card { min-height: 232px; }
+        .codex-title { font-size: 2.9rem; letter-spacing: 0.24em; }
+        .codex-card { min-height: 212px; }
+        .block-container { padding-right: 18px !important; }
     }
     @media (max-width: 560px) {
         div[data-testid="stHorizontalBlock"] { row-gap: 20px; }
         div[data-testid="column"] { flex-basis: 100% !important; min-width: 100% !important; }
-        .codex-hero { padding: 34px 0 6px; }
-        .codex-title { font-size: 2.15rem; letter-spacing: 0.18em; }
+        .codex-hero { padding: 38px 0 8px; }
+        .codex-title { font-size: 2.2rem; letter-spacing: 0.18em; }
         .codex-tagline { letter-spacing: 0.26em; font-size: 1.0rem; }
-        .codex-class { margin-bottom: 36px; }
-        .codex-card { min-height: 0; padding: 34px 22px 26px; }
+        .codex-class { margin-bottom: 40px; }
+        .codex-card { min-height: 0; padding: 30px 22px 22px; }
         .codex-card .stButton > button { font-size: 1.2rem !important; min-height: 62px; }
         .codex-desc { min-height: 0; }
         .codex-mini .stButton > button { padding: 12px 18px !important; font-size: 0.85rem !important;
@@ -5229,10 +5269,10 @@ def _scenario_lines(entries: list, cancel_all: str, horizon: str) -> list:
 def _strategy_expectation(ws: dict) -> str:
     rel = ws.get("reliability") or {}
     if rel.get("valid") and rel.get("summary"):
-        return f"📊 היסטורית במניה זו: {rel['summary']}"
+        return f"היסטורית במניה זו: {rel['summary']}"
     p = _STATE_FT.get(ws.get("state", ""), None)
     if p:
-        return f"📊 שיעור המשכיות היסטורי כלל-מנוע למצב זה: ~{p}% (סטטיסטיקה, לא הבטחה)"
+        return f"שיעור המשכיות היסטורי כלל-מנוע למצב זה: ~{p}% (סטטיסטיקה, לא הבטחה)"
     return ""
 
 
@@ -5541,10 +5581,11 @@ def _render_war_room(ticker: str, result: dict, fd: dict) -> None:
     st.markdown(
         f"<div class='codex-panel' style='max-width:100%; margin:4px 0 10px;'>"
         f"<div class='story-row'><span class='story-k'>⚔️ חדר מלחמה</span>"
-        f"<span class='story-v'><b style='font-size:1.15rem;'>{ticker}</b>"
+        f"<span class='story-v'><b style='font-size:1.35rem;'>{ticker}</b>"
         f" · ${last} · {ws.get('phase_he','')} · "
         f"<span style='color:{tcol}; font-weight:700;'>{tag}</span>"
-        f"{(' (' + val + ')') if val else ''}</span></div></div>",
+        f"{(' (' + val + ')') if val else ''} "
+        f"<span class='doc-meta'>· FILE {ticker} · SOURCE VERIFIED</span></span></div></div>",
         unsafe_allow_html=True)
     _wpc = _pf_ctx(ticker)
     if _wpc.get("loaded") and _wpc.get("held"):
@@ -5592,8 +5633,7 @@ def _render_war_room(ticker: str, result: dict, fd: dict) -> None:
                 f"<div class='story-row'><span class='story-k'>מרווח ביטחון</span>"
                 f"<span class='story-v' style='color:{_mos_col};'><b>{int(rd['mos6'])}%</b> "
                 f"בהנחת צמיחה שמרנית 6%</span></div>"
-                f"<div class='story-row'><span class='story-k'>הנחות</span>"
-                f"<span class='story-v'>{rd['assump']} — גלוי, לא קופסה שחורה</span></div></div>",
+                f"<span class='doc-meta'>{rd['assump']}</span></div>",
                 unsafe_allow_html=True)
         else:
             st.caption("🔮 Reverse-DCF: לא ניתן לחשב — אין FCF חיובי/נתון (עדיף כנות ממספר מומצא).")
@@ -5602,12 +5642,11 @@ def _render_war_room(ticker: str, result: dict, fd: dict) -> None:
     if st.button(f"⚔️ הכן תוכנית תקיפה — {ticker}", key=f"war_attack_{ticker}",
                  type="primary", use_container_width=True):
         go_to_screen("⚔️ תוכנית תקיפה", ticker)
-    with st.expander("📚 ניתוח פונדמנטלי מורחב (הנרטיב המלא)"):
+    with st.expander("ניתוח פונדמנטלי מורחב"):
         try:
             render_invest_lens(ticker, result)
         except Exception:
             st.info("הנרטיב הפונדמנטלי אינו זמין כרגע.")
-    st.markdown("<hr>", unsafe_allow_html=True)
 
 
 # ---------------- מודול האופציות: פילטר ביצוע חכם ----------------
@@ -5700,7 +5739,7 @@ def _render_options_filter(ticker: str, ws: dict, lv: dict, last: float) -> None
         return
     if state not in ("ACC_SPRING", "ACC_BASE"):
         return
-    st.markdown("<div class='section-label'>🎛️ פילטר ביצוע חכם — אלטרנטיבת אופציות</div>",
+    st.markdown("<div class='section-label'>פילטר ביצוע חכם — אופציות</div>",
                 unsafe_allow_html=True)
     rows = _fetch_put_chain(ticker)
     if not rows:
@@ -5776,13 +5815,6 @@ def _render_horizon_strip(ticker: str, ws: dict, fd: dict) -> None:
             _ctx_bits.append(f"📅 דוח בעוד {_edays} ימים")
         if _ctx_bits:
             st.caption(" · ".join(_ctx_bits))
-        _s1, _s2, _s3 = st.columns([1.1, 2.2, 1.1])
-        with _s2:
-            st.markdown("<div class='codex-mini' style='text-align:center;'>", unsafe_allow_html=True)
-            if st.button("⚔️ תוכנית תקיפה — 3 טווחים", key=f"strat_cta_{ticker}",
-                         use_container_width=True):
-                go_to_screen("⚔️ תוכנית תקיפה", ticker)
-            st.markdown("</div>", unsafe_allow_html=True)
     except Exception:
         pass
 
@@ -5794,7 +5826,7 @@ def _render_entry_card(e: dict, idx: int) -> None:
     _brd = "border-right:3px solid #ef4444; " if _sh else ""
     t2 = f" · יעד 2: ${e['t2']}" if e.get("t2") else ""
     cond = f"<div class='story-row'><span class='story-k'>תנאי</span><span class='story-v'>{e['cond']}</span></div>" if e.get("cond") else ""
-    note = f"<div class='story-row'><span class='story-k'>💡</span><span class='story-v'>{e['note']}</span></div>" if e.get("note") else ""
+    note = f"<div class='story-row'><span class='story-k'>הערה</span><span class='story-v'>{e['note']}</span></div>" if e.get("note") else ""
     qty = ""
     if e.get("qty"):
         qty = (f"<div class='story-row'><span class='story-k'>גודל</span>"
@@ -6065,7 +6097,7 @@ def _render_close_card(e: dict, idx: int) -> None:
         <div class='story-row'><span class='story-k'>תוקף</span>
         <span class='story-v'>~{e['valid']} ימי מסחר</span></div>
         {_cx}
-        <div class='story-row'><span class='story-k'>💡</span>
+        <div class='story-row'><span class='story-k'>הערה</span>
         <span class='story-v'>{e['note']}</span></div></div>"""), unsafe_allow_html=True)
 
 
@@ -6109,6 +6141,8 @@ def _pf_action_label(lens: str, r: dict, qs: dict, grade: str, valuation: str):
 def screen_portfolio() -> None:
     _render_screen_nav("misc")
     st.markdown("### 💼 התיק שלי — THE LEDGER")
+    st.markdown("<span class='doc-meta'>LEDGER // PRIVATE · SESSION ONLY</span>",
+                unsafe_allow_html=True)
     st.caption("התיק חי בזיכרון הסשן בלבד: בסוף השימוש הורד את הקובץ, ובשימוש הבא העלה אותו. "
                "רוה\"פ מחושב מול הממוצע שהזנת ומחירי yfinance (עיכוב קל) — ללא עמלות/מס/דיבידנדים.")
     pf = _pf_get()
@@ -6120,7 +6154,7 @@ def screen_portfolio() -> None:
         st.session_state["pf_draft"] = _copy.deepcopy(pf)      # זריעה מהתיק הפעיל (אם הועלה)
     draft = st.session_state["pf_draft"]
 
-    st.markdown("<div class='section-label'>➕ הזנת פוזיציה</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>הזנת פוזיציה</div>", unsafe_allow_html=True)
     with st.form("pf_add_form", clear_on_submit=True):
         f1, f2, f3, f4 = st.columns([1.4, 1.1, 1.1, 1.1])
         with f1:
@@ -6155,7 +6189,7 @@ def screen_portfolio() -> None:
 
     # רשימת ההזנות + מחיקה
     if draft["positions"]:
-        st.markdown("<div class='section-label'>📒 הפוזיציות שהוזנו</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-label'>הפוזיציות שהוזנו</div>", unsafe_allow_html=True)
         for _i, _p in enumerate(list(draft["positions"])):
             c1, c2 = st.columns([5, 0.6])
             with c1:
@@ -6244,7 +6278,7 @@ def screen_portfolio() -> None:
         st.caption("⚠️ מזומן נמוך (<5%) — מרחב תמרון מוגבל לתוכניות חדשות.")
 
     # שכבה 1+3: פוזיציות + תווית פעולה לפי העדשה
-    st.markdown("<div class='section-label'>📒 הפוזיציות + תווית פעולה</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>הפוזיציות + תווית פעולה</div>", unsafe_allow_html=True)
     _sect_hits = {}
     for r in enr["rows"]:
         qs = {}
@@ -6283,7 +6317,7 @@ def screen_portfolio() -> None:
     # שכבה 2: חשיפות סקטוריאליות מול חום-הסקטור
     expo = _pf_sector_exposure(enr)
     if expo:
-        st.markdown("<div class='section-label'>🏭 חשיפות סקטוריאליות מול הרדאר</div>", unsafe_allow_html=True)
+        st.markdown("<div class='section-label'>חשיפות סקטוריאליות מול הרדאר</div>", unsafe_allow_html=True)
         emap = _etf_sector_map()
         rev = {v: k for k, v in emap.items()}
         for sec, pct in sorted(expo.items(), key=lambda x: -x[1]):
@@ -6376,19 +6410,22 @@ def screen_trade_strategy() -> None:
                         sector_bear=bool(_sctx.get("bearish")), earn_days=_edays)
     lv = _levels_dict(ws, last)
 
-    st.markdown(f"<div class='section-label'>{tkr} · {ws.get('phase_he','')} · "
-                f"מחיר ${round(last,2)} · <b>{fits['headline']}</b></div>", unsafe_allow_html=True)
+    st.markdown(_H(f"<div class='focal-line'>{tkr} · {ws.get('phase_he','')} · "
+                   f"מחיר ${round(last,2)}</div>"
+                   f"<div class='section-label'>{fits['headline']} "
+                   f"<span class='doc-meta'>· DOSSIER {tkr} · CLASSIFIED</span></div>"),
+                unsafe_allow_html=True)
+    _meta_bits = []
     _exp = _strategy_expectation(ws)
     if _exp:
-        st.caption(_exp)
-    _ctx_bits = []
+        _meta_bits.append(_exp)
     if _sctx.get("found"):
-        _ctx_bits.append(f"🏭 הקשר סקטוריאלי: {_sctx['sector']} ({_sctx['etf']}) — "
-                         f"{_sctx.get('emoji','')} {_sctx.get('heat_he','')}")
+        _meta_bits.append(f"הקשר סקטוריאלי: {_sctx['sector']} ({_sctx['etf']}) — "
+                          f"{_sctx.get('emoji','')} {_sctx.get('heat_he','')}")
     if _edays is not None and _edays <= 10:
-        _ctx_bits.append(f"📅 דוח קרוב: בעוד {_edays} ימים")
-    if _ctx_bits:
-        st.caption(" · ".join(_ctx_bits))
+        _meta_bits.append(f"דוח קרוב: בעוד {_edays} ימים")
+    if _meta_bits:
+        st.caption(" · ".join(_meta_bits))
 
     if _pf_eff and "strat_capital" not in st.session_state:
         st.session_state["strat_capital"] = max(1000, int(_pfc["equity"]))
@@ -6491,7 +6528,7 @@ def screen_trade_strategy() -> None:
             f"<span class='story-v'><b>{pack['stop_he']}</b></span></div>"
             f"<div class='story-row'><span class='story-k'>🎯 יעד</span>"
             f"<span class='story-v'>${pack['target']} (סיבה-ותוצאה) · ניהול המשך לפי איכות ותמחור</span></div>"
-            f"<div class='story-row'><span class='story-k'>💡</span>"
+            f"<div class='story-row'><span class='story-k'>הערה</span>"
             f"<span class='story-v'>{pack['note']}</span></div></div>",
             unsafe_allow_html=True)
         _render_options_filter(tkr, ws, lv, last)
@@ -6506,19 +6543,19 @@ def screen_trade_strategy() -> None:
         if _pf_cash_cap(entries, _pfc.get("cash")):
             st.caption(f"💵 מוגבל-מזומן: הכמויות הוקטנו לתקרת המזומן הפנוי "
                        f"(${int(_pfc['cash']):,}).")
-    st.markdown("<div class='section-label'>🌳 עץ התרחישים</div>", unsafe_allow_html=True)
-    tree = "".join(f"<div class='story-row'><span class='story-k'>{i+1}.</span>"
+    st.markdown("<div class='section-label'>עץ התרחישים</div>", unsafe_allow_html=True)
+    tree = "".join(f"<div class='story-row'><span class='story-k'>▸</span>"
                    f"<span class='story-v'>{ln}</span></div>"
                    for i, ln in enumerate(_scenario_lines(entries, cancel_all, hz)))
     st.markdown(f"<div class='story-box'>{tree}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-label'>🎯 הכניסות המותנות</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>הכניסות המותנות</div>", unsafe_allow_html=True)
     for i, e in enumerate(entries, 1):
         _render_entry_card(e, i)
     if entries and entries[0].get("side") == "short":
         st.caption("🔻 שורט מחייב חשבון מרג'ין וזמינות השאלה — ודא מול הברוקר. "
                    "סיכון א-סימטרי: בגאפ-פתיחה הסטופ אינו ערובה למחיר הביצוע.")
     _render_options_filter(tkr, ws, lv, last)
-    with st.expander("🕰️ ריפליי-רמות היסטורי (בדיקה נאיבית של הטריגרים)"):
+    with st.expander("ריפליי-רמות היסטורי (בדיקה נאיבית)"):
         st.caption("בודק על ~250 ימי המסחר האחרונים: כמה פעמים הטריגר הנוכחי היה נורה, "
                    "והאם יעד-1 הושג לפני הסטופ בתוך חלון התוקף. זו בדיקת *רמות* על מחירי "
                    "עבר — לא בקטסט מבני מלא; אינדיקציה, לא הבטחה.")
@@ -7595,20 +7632,19 @@ def screen_home() -> None:
         with _lc:
             st.markdown("<div class='codex-card codex-ledger'>"
                         "<div class='codex-num'>THE LEDGER · MS. 00</div>", unsafe_allow_html=True)
-            if st.button("💼\nהתיק שלי", key="orb_portfolio_btn"):
+            if st.button("התיק שלי", key="orb_portfolio_btn"):
                 go_to_screen("💼 התיק שלי")
-            st.markdown(f"<div class='codex-desc'>{_pfstat}</div>"
-                        f"<div class='codex-tab'>OPEN LEDGER →</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='codex-desc'>{_pfstat}</div></div>", unsafe_allow_html=True)
 
         # ארבעה כרטיסי מודיעין (השמות על הכפתורים — ללא שינוי)
         _cards = [
-            ("ARCHIVE I&ensp;·&ensp;MS. 01", "🔍\nתבדוק לי", "orb_check_btn", "check", False,
+            ("ARCHIVE I&ensp;·&ensp;MS. 01", "תבדוק לי", "orb_check_btn", "check", False,
              "הזן טיקר וקבל ניתוח Wyckoff + פונדמנטלי מלא"),
-            ("ARCHIVE II&ensp;·&ensp;MS. 02", "💰\nתמצא לי", "orb_find_btn", "results", True,
+            ("ARCHIVE II&ensp;·&ensp;MS. 02", "תמצא לי", "orb_find_btn", "results", True,
              "סריקת שוק מלאה - המערכת תמצא עבורך את ההזדמנויות"),
-            ("ARCHIVE III&ensp;·&ensp;MS. 03", "🎯\nסריקה ממוקדת", "orb_focus_btn", "focused", False,
+            ("ARCHIVE III&ensp;·&ensp;MS. 03", "סריקה ממוקדת", "orb_focus_btn", "focused", False,
              "שלב פאזה · איכות · תמחור · סקטור — כל אחד 'הכל' או ספציפי"),
-            ("ARCHIVE IV&ensp;·&ensp;MS. 04", "🌐\nרדאר סקטורים", "orb_sectors_btn", "sectors", False,
+            ("ARCHIVE IV&ensp;·&ensp;MS. 04", "רדאר סקטורים", "orb_sectors_btn", "sectors", False,
              "מי מתפוצץ, מי חוטף אש, מי רדום — Wyckoff + ערך לכל סקטור"),
         ]
         _cols = st.columns(4, gap="medium")
@@ -7621,12 +7657,8 @@ def screen_home() -> None:
                     if _is_find:
                         st.session_state.run_find_scan = True
                     st.rerun()
-                st.markdown(f"<div class='codex-desc'>{_desc}</div>"
-                            f"<div class='codex-tab'>OPEN ARCHIVE →</div></div>",
-                            unsafe_allow_html=True)
+                st.markdown(f"<div class='codex-desc'>{_desc}</div></div>", unsafe_allow_html=True)
 
-        st.markdown("<div class='codex-folio'>PRIVATE ARCHIVE · FOLIOS I–IV · MMXXVI</div>",
-                    unsafe_allow_html=True)
 
         return
 
@@ -7766,9 +7798,6 @@ def screen_home() -> None:
                             for k in ("sector_scan_results", "sector_scan_for", "sector_scan_err"):
                                 st.session_state.pop(k, None)
                             st.rerun()
-                st.caption("לחיצה על '🔍 סרוק מניות' מריצה סריקת Wyckoff + פונדמנטלי מלאה על "
-                           "מניות הסקטור מתוך היקום הכולל, ומציגה את המובילות בכרטיסיות. "
-                           "לניתוח סקטוריאלי כמכלול — שורת הלוח עצמה (ETF מייצג).")
         return
 
     # ===================== מצב סריקה ממוקדת (V25.4) =====================
@@ -9510,3 +9539,4 @@ if __name__ == "__main__":
 # V34.0 – מודול שורט (קצר בלבד): כניסות-ראי (LPSY/שבירה/ריטסט-קרח/אישור), סטופ מעל, RR מהטריגר, הקצאה מוקטנת, ריפליי דו-כיווני. לונג ביט-זהה.
 # V35.0 – התיק שלי: LEDGER בבית, מסך תיק (JSON הורדה/העלאה, ניתוח דו-עדשתי 4-שכבות), סנכרון-תקיפה (קיצוץ-סקטור 25%, תקרת-מזומן, מתג-אובייקטיבי), מנוע-קונפליקטים (מימוש/כיסוי), נקודות-מגע.
 # V35.1 – הזנה טופסית: אישור→ניקוי-שדות→הבא; אותו-טיקר=עדכון; ❌ מחיקה; 'שמור וטען' מקבע ומסנכרן; הורדה אחרי שמירה.
+# V36.0 – רדיזיין מוסדי: הסרת ≥20% אלמנטים/מסך, עומק-שכבות במקום גבולות, ברונזה −53%, חתימת פס-סיווג אנכי, פקודות במקום כפתורים, דה-סטרימליט. אפס לוגיקה.
