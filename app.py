@@ -1,8 +1,24 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V36.1 (Scan Turbo)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.0 (Dual Doctrine · Elessar)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V37.0 — תיקון הסורק + "תמצא לי" דו-מנועי עם אבן האיחוד (ELESSAR):
+  תיקון (הדיווח "לא נמצאו שילובים"): שני פגמי V36.1 —
+  (א) קריסת-thread במנוע-בלוק נבלעה בשקט (except→[]) והפכה ל"אין תוצאות";
+      כעת: שגיאות נרשמות, מוצגות בשקיפות, ונפילה-אוטומטית לריצה סדרתית
+      (התנהגות V36.0 המוכחת) — הסורק לא יכול עוד להחזיר אפס-שקרי.
+  (ב) חימום-פונדמנטלי ב-10 ערוצים × דוחות-מלאים = סופת-קריאות ליאהו (429).
+      השלב הוסר (הליבה מושכת אינליין, ≤4 זרמים עדינים) + סמפור(3) גלובלי
+      על כל משיכת-פונדמנטלי — הוכח: שיא-מקביליות-רשת = 3. הודעת-ריק מציגה
+      כעת מספרים (הורדו/נסרקו/נוקדו) ושגיאות. פריסה מנקה מטמון מורעל.
+  חדש — שני מנועים, שני ברים: מנוע Wyckoff (מבני, בלוקים) ומנוע-ערך
+      (פונדמנטלי: ניקוד 0-15 שקוף — FCF/מכפיל/צמיחה/שוליים/ROE/תמחור, סף ≥6)
+      רצים במקביל אחרי שליפה משותפת; שני progress-bars + שעונים חד-כיווניים.
+      בסיום: שתי קרוסלות (מבני / ערך) ומתחתן ◆ אבן האיחוד — כפתור אמרלד
+      (ELESSAR PROTOCOL) שמציג את חיתוך שתי הדוקטרינות: חזקות גם מבנית וגם
+      ערכית (המנוע המקורי של "תמצא לי"); אין חפיפה ⇒ הודעה כנה עם המספרים.
 
 V36.1 — Scan Turbo: שני הפערים שדווחו (שעון מתנדנד 1:30↔0:30; "30ש' ל-50%
         ואז דקות ארוכות") נפתרו מהשורש. אבחנה: ה-prefetch חימם רק מחירים;
@@ -1823,6 +1839,21 @@ def inject_css() -> None:
     .codex-mini .stButton > button:hover { border-color: rgba(166,132,72,0.45) !important;
         color: #d5bd85 !important; background: transparent !important; transform: none !important; }
 
+    /* ELESSAR — אבן האיחוד (בקשת המשתמש: אמרלד בסגנון שר-הטבעות, מאופק) */
+    .elessar-wrap .stButton > button { background: linear-gradient(180deg, #0e3a2a, #0a2b1f) !important;
+        border: 1px solid rgba(74,189,138,0.5) !important; color: #d9efe2 !important;
+        font-weight: 600 !important; letter-spacing: 0.12em; border-radius: 4px !important;
+        box-shadow: inset 0 1px 0 rgba(120,220,170,0.18), 0 8px 22px rgba(0,0,0,0.45),
+                    0 0 18px rgba(46,125,91,0.15) !important;
+        transition: box-shadow .6s ease, border-color .6s ease, color .6s ease !important; }
+    .elessar-wrap .stButton > button:hover { border-color: rgba(110,220,170,0.8) !important;
+        color: #eafff4 !important; background: linear-gradient(180deg, #114630, #0c3325) !important;
+        box-shadow: inset 0 1px 0 rgba(140,235,185,0.25), 0 8px 24px rgba(0,0,0,0.5),
+                    0 0 26px rgba(52,160,110,0.28) !important; }
+    .vscore-pill { display: inline-block; background: rgba(46,125,91,0.16); color: #9fe3c0;
+        border: 1px solid rgba(74,189,138,0.35); border-radius: 3px; padding: 2px 10px;
+        font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; }
+
     /* Responsive — נשימה גם במובייל */
     @media (max-width: 900px) {
         div[data-testid="stHorizontalBlock"] { flex-wrap: wrap; row-gap: 16px; }
@@ -3338,16 +3369,19 @@ def _enrich_fundamentals_inhouse(ticker: str, fd: dict) -> dict:
 
 
 _core_get_fundamental_data = get_fundamental_data
+_FUND_SEM = threading.Semaphore(3)   # V37.0: תקרת-קצב גלובלית מול yfinance (מגן 429)
 
 
 @st.cache_data(ttl=21600, max_entries=512, show_spinner=False)
 def get_fundamental_data(ticker: str) -> dict:
-    """V33.3 — עטיפת האפליקציה: פלט הליבה + השלמה אין-האוס של כל שדה חסר."""
-    try:
-        base = _core_get_fundamental_data(ticker) or {}
-    except Exception:
-        base = {}
-    return _enrich_fundamentals_inhouse(ticker, base)
+    """V33.3 — עטיפת האפליקציה: פלט הליבה + השלמה אין-האוס של כל שדה חסר.
+    V37.0: כל משיכת-רשת עוברת סמפור(3) — מנועים מרובים לא מציפים את יאהו."""
+    with _FUND_SEM:
+        try:
+            base = _core_get_fundamental_data(ticker) or {}
+        except Exception:
+            base = {}
+        return _enrich_fundamentals_inhouse(ticker, base)
 
 
 def assess_data_freshness(df: pd.DataFrame, fund_data: dict = None) -> dict:
@@ -4703,6 +4737,12 @@ def init_session_state() -> None:
         st.session_state.home_mode = "landing"   # landing (שני כפתורים) / check (סריקה ידנית) / results (קרוסלה)
     if "home_scan_results" not in st.session_state:
         st.session_state.home_scan_results = None  # תוצאות "תמצא לי" לשמירה בין ריצות
+    if "dual_scan_results" not in st.session_state:
+        st.session_state.dual_scan_results = {}
+    if "val_card_index" not in st.session_state:
+        st.session_state.val_card_index = 0
+    if "elessar_idx" not in st.session_state:
+        st.session_state.elessar_idx = 0
     if "run_find_scan" not in st.session_state:
         st.session_state.run_find_scan = False     # טריגר חד-פעמי להפעלת סריקת "תמצא לי"
 
@@ -7378,7 +7418,7 @@ _STAGE_HE = {"fetch": "מוריד מחירים במקביל (12 ערוצים)",
              "fund": "מחמם נתונים פונדמנטליים במקביל (10 ערוצים)",
              "scan": "מנועי Wyckoff מקביליים על בלוקים",
              "filter": "מסנן לפי הצירים שבחרת"}
-_STAGE_UNIT_DEFAULT = {"fetch": 0.06, "fund": 0.16, "scan": 0.10, "filter": 0.02}
+_STAGE_UNIT_DEFAULT = {"fetch": 0.06, "fund": 0.16, "scan": 0.45, "filter": 0.02}
 
 
 def _stage_unit_est(status: dict, stage: str) -> float:
@@ -7595,7 +7635,9 @@ def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> l
                                  universe=sl, top_n=min(len(sl), max(int(top_n), 5)),
                                  progress_callback=_cb)
             return (out or {}).get("results", []) or []
-        except Exception:
+        except Exception as exc:
+            with lock:
+                status.setdefault("shard_errors", []).append(f"{type(exc).__name__}: {exc}")
             return []
 
     if len(slices) == 1:
@@ -7610,6 +7652,11 @@ def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> l
                     merged.extend(fut.result() or [])
                 except Exception:
                     pass
+    if not merged and pruned and len(slices) > 1:
+        # רשת-ביטחון: המנועים המקביליים כשלו/החזירו אפס — ריצה בודדת (התנהגות V36.0)
+        status["engine_note"] = "fallback: parallel→sequential"
+        status["scan_done"] = 0
+        merged = _scan_slice(99, pruned)
     try:
         merged.sort(key=lambda r: float(r.get("composite", 0) or 0), reverse=True)
     except Exception:
@@ -7627,10 +7674,6 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
         pruned = _parallel_prefetch(universe, status, workers=12)
         _stage_end(status, "fetch")
 
-        _stage_begin(status, "fund", len(pruned))
-        _prefetch_fundamentals(pruned, status, workers=10)
-        _stage_end(status, "fund")
-
         _stage_begin(status, "scan", len(pruned))
         results = _sharded_core_scan(pruned, top_n, status)
         _stage_end(status, "scan")
@@ -7647,6 +7690,10 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
     except Exception as exc:
         box["error"] = str(exc)
     finally:
+        box["stats"] = {"fetched": int(status.get("fetch_total", 0) or 0),
+                        "scanned": int(status.get("scan_total", 0) or 0),
+                        "errors": list(status.get("shard_errors", []) or []),
+                        "note": status.get("engine_note", "")}
         box["done"] = True
 
 
@@ -7657,10 +7704,9 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
     progress משוקלל-משכים, ותצוגת-שלב. weights נשמר לתאימות-חתימה (המנוע
     החדש מכייל משכים חיים במקומו). חוסם עד סיום — אין תוצאות חלקיות.
     """
-    stage_order = ["fetch", "fund", "scan"] + (["filter"] if do_filter is not None else [])
+    stage_order = ["fetch", "scan"] + (["filter"] if do_filter is not None else [])
     status = {"start_ts": _time.time(), "stage_order": stage_order, "stage": "fetch",
               "fetch_total": len(universe), "fetch_done": 0,
-              "fund_total": 0, "fund_done": 0,
               "scan_total": 0, "scan_done": 0, "passed": 0, "ticker": ""}
     box = {"done": False}
     th = threading.Thread(target=_scan_job, args=(universe, top_n, status, box, do_filter),
@@ -7698,11 +7744,162 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
     return box
 
 
+
+
+def _value_score(fd: dict):
+    """
+    V37.0 — ניקוד-ערך שקוף (0-15): FCF, מכפיל, צמיחה, שוליים, ROE, תווית-תמחור.
+    טהור; מחזיר (ניקוד, צ'יפים-מסבירים). סף הזדמנות: ≥6.
+    """
+    pts, chips = 0, []
+    def _num(v):
+        try:
+            f = float(v)
+            return f if f == f else None
+        except Exception:
+            return None
+    fy = _num(fd.get("fcf_yield"))
+    pe = _num(fd.get("pe_trailing") if fd.get("pe_trailing") not in (None, "", "N/A") else fd.get("pe"))
+    gr = _num(fd.get("rev_growth"))
+    om = _num(fd.get("op_margin") if fd.get("op_margin") not in (None, "", "N/A") else fd.get("operating_margin"))
+    roe = _num(fd.get("roe"))
+    val = fd.get("valuation", "") or ""
+    if fy is not None:
+        add = 3 if fy >= 8 else 2 if fy >= 5 else 1 if fy >= 3 else 0
+        if add: pts += add; chips.append(f"FCF {fy:g}%")
+    if pe is not None and pe > 0:
+        add = 3 if pe <= 12 else 2 if pe <= 16 else 1 if pe <= 22 else 0
+        if add: pts += add; chips.append(f"P/E {pe:g}")
+    if gr is not None:
+        add = 2 if gr >= 15 else 1 if gr >= 7 else 0
+        if add: pts += add; chips.append(f"צמיחה {gr:g}%")
+    if om is not None:
+        add = 2 if om >= 25 else 1 if om >= 15 else 0
+        if add: pts += add; chips.append(f"שוליים {om:g}%")
+    if roe is not None:
+        add = 2 if roe >= 20 else 1 if roe >= 12 else 0
+        if add: pts += add; chips.append(f"ROE {roe:g}%")
+    if "זול" in val: pts += 2; chips.append("זול")
+    elif "הוגן" in val: pts += 1
+    if fd.get("pe_note"):
+        pts -= 2; chips.append("הפסדית")
+    return max(0, pts), chips
+
+
+def _dual_find_job(universe: list, stT: dict, stV: dict, box: dict) -> None:
+    """
+    V37.0 — אורקסטרטור שני-המנועים (thread רקע): שליפת-מחירים משותפת אחת →
+    מנוע Wyckoff (בלוקים מקביליים) ומנוע-ערך (פונדמנטלי, 3 ערוצים תחת הסמפור)
+    רצים בו-זמנית. box: {"tech", "value", "stats"}.
+    """
+    try:
+        _stage_begin(stT, "fetch", len(universe))
+        _stage_begin(stV, "fetch", len(universe))
+        pruned = _parallel_prefetch(universe, stT, workers=12)
+        _stage_end(stT, "fetch")
+        stV["fetch_done"] = stV["fetch_total"]
+        _stage_end(stV, "fetch")
+
+        def _tech():
+            _stage_begin(stT, "scan", len(pruned))
+            box["tech"] = _sharded_core_scan(pruned, 20, stT)
+            _stage_end(stT, "scan")
+
+        def _value():
+            _stage_begin(stV, "value", len(pruned))
+            items = []
+            def _one(tk):
+                try:
+                    fd = get_fundamental_data(tk) or {}
+                    sc, chips = _value_score(fd)
+                    return {"ticker": tk, "vscore": sc, "chips": chips,
+                            "valuation": fd.get("valuation", ""),
+                            "fcf_yield": fd.get("fcf_yield"), "pe": fd.get("pe_trailing") or fd.get("pe"),
+                            "rev_growth": fd.get("rev_growth"),
+                            "op_margin": fd.get("op_margin") or fd.get("operating_margin"),
+                            "roe": fd.get("roe"), "sector_he": _pf_sector_of(tk) or "—"}
+                except Exception:
+                    return None
+            try:
+                with ThreadPoolExecutor(max_workers=3,
+                                        initializer=_attach_ctx_initializer()) as ex:
+                    futs = [ex.submit(_one, tk) for tk in pruned]
+                    for fut in as_completed(futs):
+                        stV["value_done"] = int(stV.get("value_done", 0)) + 1
+                        try:
+                            it = fut.result()
+                        except Exception:
+                            it = None
+                        if it:
+                            stV["ticker"] = it["ticker"]
+                            if it["vscore"] >= 6:
+                                items.append(it)
+            except Exception as exc:
+                stV.setdefault("errors", []).append(str(exc))
+            items.sort(key=lambda r: r["vscore"], reverse=True)
+            box["value"] = items[:10]
+            _stage_end(stV, "value")
+
+        thT = threading.Thread(target=_tech, daemon=True)
+        thV = threading.Thread(target=_value, daemon=True)
+        thT.start(); thV.start()
+        thT.join(); thV.join()
+    except Exception as exc:
+        box["error"] = str(exc)
+    finally:
+        box["stats"] = {"fetched": int(stT.get("fetch_total", 0) or 0),
+                        "scanned": int(stT.get("scan_total", 0) or 0),
+                        "valued": int(stV.get("value_total", 0) or 0),
+                        "errors": list(stT.get("shard_errors", []) or []) +
+                                  list(stV.get("errors", []) or []),
+                        "note": stT.get("engine_note", "")}
+        box["done"] = True
+
+
+def _render_value_cards(items: list) -> None:
+    """V37.0 — קרוסלת הזדמנויות-הערך: כרטיס מודגש + דפדוף. עיצוב codex, ‎_H מוגן."""
+    if not items:
+        return
+    idx = int(st.session_state.get("val_card_index", 0) or 0) % len(items)
+    p = items[idx]
+    n1, n2, n3 = st.columns([0.7, 4.6, 0.7])
+    with n1:
+        if st.button("‹", key="valc_prev", use_container_width=True):
+            st.session_state["val_card_index"] = (idx - 1) % len(items)
+            st.rerun()
+    with n3:
+        if st.button("›", key="valc_next", use_container_width=True):
+            st.session_state["val_card_index"] = (idx + 1) % len(items)
+            st.rerun()
+    with n2:
+        _vc = "#16a34a" if "זול" in (p.get("valuation") or "") else "#eab308"
+        _m = " · ".join(x for x in (
+            f"FCF: {p['fcf_yield']}%" if p.get("fcf_yield") not in (None, "", "N/A") else "",
+            f"P/E: {p['pe']}" if p.get("pe") not in (None, "", "N/A") else "",
+            f"צמיחה: {p['rev_growth']}%" if p.get("rev_growth") not in (None, "", "N/A") else "",
+            f"שוליים: {p['op_margin']}%" if p.get("op_margin") not in (None, "", "N/A") else "",
+            f"ROE: {p['roe']}%" if p.get("roe") not in (None, "", "N/A") else "") if x)
+        st.markdown(_H(f"""<div class='pick-card carousel-pick-card' style='border-right:5px solid {_vc}; border-top:none;'>
+            <div style='display:flex; align-items:center; gap:14px; flex-wrap:wrap;'>
+                <span class='pick-rank'>#{idx + 1}</span>
+                <span class='pick-ticker' style='font-size:1.6rem;'>{p['ticker']}</span>
+                <span>{render_price_inline(p['ticker'])}</span>
+                <span class='vscore-pill'>ציון ערך: {p['vscore']}/15</span>
+            </div>
+            <div class='pick-meta'>תמחור: <b style='color:{_vc}'>{p.get('valuation') or '—'}</b>
+                · {_m} · {p.get('sector_he', '—')}</div>
+            <div class='pick-meta' style='margin-top:4px;'>{" · ".join(p.get('chips') or [])}</div>
+        </div>"""), unsafe_allow_html=True)
+        if st.button(f"ניתוח מלא — {p['ticker']}", key=f"valc_full_{p['ticker']}",
+                     use_container_width=True):
+            go_to_screen("📈 Trading Scout", p["ticker"])
+    st.caption(f"כרטיס {idx + 1} מתוך {len(items)} · מנוע הערך (סף ≥6/15)")
+
+
 def _run_find_scan() -> None:
     """
-    V27.1 — סריקת "תמצא לי": מנוע מקבילי (prefetch ב-10 ערוצים + Early Pruning)
-    ברקע, בזמן שהמשתמש רואה הודעה גדולה + שעון ספירה לאחור מתעדכן כל שנייה +
-    progress באחוזים. אין תוצאות חלקיות — הכרטיסיות מופיעות רק בסיום המלא.
+    V37.0 — "תמצא לי" דו-מנועי: שליפה משותפת, ואז שני ברים רצים במקביל —
+    מנוע Wyckoff (מבני, בלוקים) ומנוע-ערך (פונדמנטלי). שעונים חד-כיווניים לכל בר.
     """
     _render_universe_status()
     universe = _build_market_universe()
@@ -7711,14 +7908,63 @@ def _run_find_scan() -> None:
         st.session_state.home_scan_results = []
         return
     st.session_state["scan_busy"] = True
-    box = _run_scan_with_countdown(universe, top_n=20, headline="מבצע סריקת שוק מלאה...")
+    stT = {"start_ts": _time.time(), "stage_order": ["fetch", "scan"], "stage": "fetch",
+           "fetch_total": len(universe), "fetch_done": 0, "scan_total": 0, "scan_done": 0,
+           "passed": 0, "ticker": ""}
+    stV = {"start_ts": _time.time(), "stage_order": ["fetch", "value"], "stage": "fetch",
+           "fetch_total": len(universe), "fetch_done": 0, "value_total": 0, "value_done": 0,
+           "ticker": ""}
+    box = {"done": False}
+    th = threading.Thread(target=_dual_find_job, args=(universe, stT, stV, box), daemon=True)
+    th.start()
+
+    st.markdown(_H("""<div style='text-align:center; padding:12px 8px 2px;'>
+        <div style='font-size:1.3rem; font-weight:800;'>שני מנועים סורקים את היקום במקביל</div>
+        <div style='color:#94a3b8; margin-top:3px;'>מבני (Wyckoff) ✕ ערך (פונדמנטלי) — התוצאות בסיום שניהם.</div>
+        </div>"""), unsafe_allow_html=True)
+    lT = st.empty(); bT = st.progress(0.0)
+    lV = st.empty(); bV = st.progress(0.0)
+    shownT, shownV, last_t = None, None, _time.time()
+    while not box.get("done"):
+        now = _time.time()
+        dt, last_t = max(0.05, now - last_t), now
+        if stT.get("stage") == "fetch":                      # שלב משותף — שני הברים בתנועה
+            stV["fetch_done"] = stT.get("fetch_done", 0)
+        shownT = _eta_display_step(shownT, _scan_eta(stT), dt)
+        shownV = _eta_display_step(shownV, _scan_eta(stV), dt)
+        fT, fV = _scan_progress_frac(stT), _scan_progress_frac(stV)
+        lT.markdown(_H(f"<div style='display:flex; justify-content:space-between; margin-top:6px;'>"
+                       f"<span><b>מנוע Wyckoff</b> · {_STAGE_HE.get(stT.get('stage',''), '')}"
+                       f" · {stT.get('ticker','')}</span>"
+                       f"<span style='font-variant-numeric:tabular-nums;'>{_fmt_mmss(shownT)}</span></div>"),
+                    unsafe_allow_html=True)
+        lV.markdown(_H(f"<div style='display:flex; justify-content:space-between; margin-top:6px;'>"
+                       f"<span><b>מנוע הערך</b> · "
+                       f"{'שליפה משותפת' if stV.get('stage') == 'fetch' else 'ניקוד פונדמנטלי (3 ערוצים)'}"
+                       f" · {stV.get('ticker','')}</span>"
+                       f"<span style='font-variant-numeric:tabular-nums;'>{_fmt_mmss(shownV)}</span></div>"),
+                    unsafe_allow_html=True)
+        try:
+            bT.progress(fT, text=f"{int(fT * 100)}%")
+            bV.progress(fV, text=f"{int(fV * 100)}%")
+        except TypeError:
+            bT.progress(fT); bV.progress(fV)
+        _time.sleep(0.5)
+    th.join(timeout=5)
+    lT.empty(); bT.empty(); lV.empty(); bV.empty()
     st.session_state["scan_busy"] = False
     if box.get("error"):
         st.session_state.home_scan_results = []
+        st.session_state["dual_scan_results"] = {}
         st.error(f"⚠️ שגיאה בסריקה: {box['error']}")
         return
-    st.session_state.home_scan_results = box.get("results", [])
+    st.session_state["dual_scan_results"] = {"tech": box.get("tech", []) or [],
+                                             "value": box.get("value", []) or []}
+    st.session_state.home_scan_results = box.get("tech", []) or []
+    st.session_state["find_scan_stats"] = box.get("stats", {})
     st.session_state.scan_card_index = 0
+    st.session_state["val_card_index"] = 0
+    st.session_state["elessar_open"] = False
 
 
 def screen_home() -> None:
@@ -8133,16 +8379,62 @@ def screen_home() -> None:
             _run_find_scan()
             st.rerun()  # הסריקה הסתיימה - ריצה מחדש נקייה שתציג את הקרוסלה
 
+        dual = st.session_state.get("dual_scan_results") or {}
         results = st.session_state.get("home_scan_results")
-        st.markdown("<div class='home-landing-title' style='text-align:center;'>🌟 ההזדמנויות שנמצאו עבורך</div>", unsafe_allow_html=True)
-        if results is None:
+        tech = dual.get("tech") if dual else (results or [])
+        value = dual.get("value") or []
+        if results is None and not dual:
             st.info("טוען...")
-        elif not results:
-            st.warning("לא נמצאו כרגע שילובים איכותיים (איסוף מוסדי + פונדמנטל חזק). נסה שוב מאוחר יותר.")
+        elif not tech and not value:
+            st.warning("שני המנועים לא מצאו כרגע מועמדות. נסה שוב מאוחר יותר.")
+            _fst = st.session_state.get("find_scan_stats") or {}
+            if _fst:
+                st.caption(f"שקיפות: הורדו {_fst.get('fetched', 0)} · נסרקו מבנית {_fst.get('scanned', 0)}"
+                           f" · נוקדו ערכית {_fst.get('valued', 0)}"
+                           + (f" · {_fst.get('note')}" if _fst.get("note") else ""))
+                for _er in (_fst.get("errors") or [])[:2]:
+                    st.caption(f"⚠️ מנוע: {_er}")
         else:
-            st.caption(f"נמצאו {len(results)} מניות איכותיות. דפדף בין הכרטיסים ולחץ 'ניתוח מלא' למעבר לתוכנית מסחר.")
-            # לחיצה על כרטיס -> Trading Scout (ניתוח Wyckoff + פונדמנטלי + תוכנית מסחר)
-            _render_card_carousel(results, key_prefix="find_scan", index_key="scan_card_index", dest_page="📈 Trading Scout")
+            if tech:
+                st.markdown(f"<div class='section-label'>המנוע המבני — Wyckoff "
+                            f"({len(tech)})</div>", unsafe_allow_html=True)
+                _render_card_carousel(tech, key_prefix="find_scan",
+                                      index_key="scan_card_index",
+                                      dest_page="📈 Trading Scout")
+            else:
+                st.info("המנוע המבני לא מצא מועמדות כרגע.")
+            if value:
+                st.markdown(f"<div class='section-label'>מנוע הערך — פונדמנטלי "
+                            f"({len(value)})</div>", unsafe_allow_html=True)
+                _render_value_cards(value)
+            else:
+                st.info("מנוע הערך לא מצא הזדמנויות מובהקות (סף ≥6/15).")
+
+            # --- אבן האיחוד (ELESSAR): חיתוך שתי הדוקטרינות ---
+            st.markdown("<div class='doc-meta' style='display:block; text-align:center; "
+                        "margin-top:22px;'>ELESSAR PROTOCOL // DUAL-DOCTRINE SYNTHESIS</div>",
+                        unsafe_allow_html=True)
+            _e1, _e2, _e3 = st.columns([1.2, 2.6, 1.2])
+            with _e2:
+                st.markdown("<div class='elessar-wrap'>", unsafe_allow_html=True)
+                if st.button("◆ אבן האיחוד — Wyckoff ✕ ערך", key="elessar_btn",
+                             use_container_width=True):
+                    st.session_state["elessar_open"] = not st.session_state.get("elessar_open", False)
+                st.markdown("</div>", unsafe_allow_html=True)
+            if st.session_state.get("elessar_open"):
+                _vset = {v["ticker"] for v in value}
+                _union = [p for p in (tech or []) if p.get("ticker") in _vset]
+                if _union:
+                    st.markdown(f"<div class='section-label'>האיחוד: חזקות גם מבנית וגם "
+                                f"ערכית ({len(_union)})</div>", unsafe_allow_html=True)
+                    st.caption("השילוב שהמערכת נולדה למצוא — איסוף מוסדי על עסק זול ואיכותי.")
+                    _render_card_carousel(_union, key_prefix="elessar",
+                                          index_key="elessar_idx",
+                                          dest_page="📈 Trading Scout")
+                else:
+                    st.info(f"אין כרגע חפיפה בין הדוקטרינות: מבנית {len(tech or [])} · "
+                            f"ערכית {len(value)} · משותפות 0. רוב הזמן השוק לא נותן את "
+                            f"שניהם יחד — כשייתן, האבן תדע.")
         return
 
     # ===================== מצב בדיקה ידנית (הזרימה המקורית המלאה) =====================
@@ -9709,3 +10001,4 @@ if __name__ == "__main__":
 # V35.1 – הזנה טופסית: אישור→ניקוי-שדות→הבא; אותו-טיקר=עדכון; ❌ מחיקה; 'שמור וטען' מקבע ומסנכרן; הורדה אחרי שמירה.
 # V36.0 – רדיזיין מוסדי: הסרת ≥20% אלמנטים/מסך, עומק-שכבות במקום גבולות, ברונזה −53%, חתימת פס-סיווג אנכי, פקודות במקום כפתורים, דה-סטרימליט. אפס לוגיקה.
 # V36.1 – Scan Turbo: 3 שלבים מקביליים (מחירים 12ch → פונדמנטלי 10ch → מנועי-ליבה על בלוקים 4x) + ETA מבוסס-קצב + שעון חד-כיווני. חתימות ללא שינוי.
+# V37.0 – תיקון אפס-שקרי (שגיאות גלויות+fallback סדרתי) + סמפור-429 + תמצא-לי דו-מנועי (Wyckoff ∥ ערך, 2 ברים) + ◆ אבן האיחוד (ELESSAR) לחיתוך הדוקטרינות.
