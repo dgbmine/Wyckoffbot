@@ -1,8 +1,27 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V36.0 (Institutional Redesign)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V36.1 (Scan Turbo)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V36.1 — Scan Turbo: שני הפערים שדווחו (שעון מתנדנד 1:30↔0:30; "30ש' ל-50%
+        ואז דקות ארוכות") נפתרו מהשורש. אבחנה: ה-prefetch חימם רק מחירים;
+        הליבה רצה סדרתית ומשכה פונדמנטלי קר מהרשת פר-טיקר — הדקות הארוכות.
+        וה-ETA (elapsed/frac משוקלל-קבוע) התנפח בכל מעבר-שלב — הנדנוד.
+  • צנרת חדשה ב-3 שלבים מקביליים: מחירים (12 ערוצים, Early-Pruning) →
+    חימום-פונדמנטלי (10 ערוצים; נמדד פי~10 מול סדרתי) → מנועי-ליבה מקביליים:
+    היקום נחתך לבלוקים רציפים (4/2/1 לפי גודל) וכל בלוק נסרק ע"י MarketScanner
+    משלו ב-thread (הליבה לא שונתה — מורצת במקביל על מטמון חם); התקדמות
+    גלובלית (delta+lock) ומיזוג ממוין לפי composite. Top-N זהה דטרמיניסטית.
+  • ETA מבוסס-קצב: שארית השלב הנוכחי לפי קצב-חי (EMA) + שלבים עתידיים לפי
+    כיול-בפועל משלבים שהסתיימו. progress משוקלל לפי משכים אמיתיים (הפס כבר
+    לא קופץ ל-55% אחרי המחירים).
+  • שעון חד-כיווני (_eta_display_step): לעולם לא עולה — מקדים ⇒ יורד חלקית
+    לעבר האומדן; מפגר ⇒ ממשיך לרדת ברבע-קצב עד שהמציאות מתיישרת. סטייה של
+    שניות בודדות — כפי שאושר; קפיצות — בלתי-אפשריות (מוכח בסימולציה).
+  • חתימות ללא שינוי: _run_scan_with_countdown/_parallel_prefetch — כל שלושת
+    אתרי-הקריאה (תמצא-לי/סקטורים/ממוקדת) עובדים כמות-שהם; weights נשמר
+    לתאימות (המנוע מכייל חי במקומו).
 
 V36.0 — Institutional Redesign (הנחיות ה-Art Director; אפס שינוי לוגיקה):
   שלב א — הסרה (≥20% למסך): לשוניות OPEN ARCHIVE/LEDGER המתות, שורת הפוליו,
@@ -7355,58 +7374,101 @@ def _fmt_mmss(sec: float) -> str:
         return "--:--"
 
 
+_STAGE_HE = {"fetch": "מוריד מחירים במקביל (12 ערוצים)",
+             "fund": "מחמם נתונים פונדמנטליים במקביל (10 ערוצים)",
+             "scan": "מנועי Wyckoff מקביליים על בלוקים",
+             "filter": "מסנן לפי הצירים שבחרת"}
+_STAGE_UNIT_DEFAULT = {"fetch": 0.06, "fund": 0.16, "scan": 0.10, "filter": 0.02}
+
+
+def _stage_unit_est(status: dict, stage: str) -> float:
+    """אומדן שניות-ליחידה לשלב: כיול-בפועל אם השלב הסתיים, אחרת ברירת-מחדל."""
+    try:
+        v = status.get(f"{stage}_unit")
+        return float(v) if v else _STAGE_UNIT_DEFAULT.get(stage, 0.1)
+    except Exception:
+        return 0.1
+
+
+def _stage_begin(status: dict, stage: str, total: int) -> None:
+    status["stage"] = stage
+    status[f"{stage}_total"] = int(max(0, total))
+    status[f"{stage}_done"] = 0
+    status[f"{stage}_ts"] = _time.time()
+
+
+def _stage_end(status: dict, stage: str) -> None:
+    tot = max(1, int(status.get(f"{stage}_total", 1) or 1))
+    dur = max(0.001, _time.time() - float(status.get(f"{stage}_ts", _time.time())))
+    status[f"{stage}_unit"] = dur / tot          # כיול חי לשלבים הבאים
+    status[f"{stage}_done"] = int(status.get(f"{stage}_total", tot) or tot)
+
+
 def _scan_eta(status: dict) -> float:
     """
-    זמן משוער שנותר (שניות) לפי התקדמות משוקללת בין השלבים:
-    fetch (מקבילי) / scan (ליבה) / filter (אופציונלי). חישוב טהור וניתן לבדיקה.
+    V36.1 — אומדן-גלם מבוסס-קצב: שארית השלב הנוכחי לפי קצב חי (EMA מוחלק),
+    + השלבים העתידיים לפי כיול-בפועל (או ברירת-מחדל). בלי elapsed/frac —
+    מעבר-שלב כבר לא מנפח את השעון.
     """
     try:
-        w = status.get("weights") or {"fetch": 0.55, "scan": 0.45}
-        frac = 0.0
-        for stage, weight in w.items():
-            tot = max(1, int(status.get(f"{stage}_total", 0) or 0))
-            done = min(tot, int(status.get(f"{stage}_done", 0) or 0))
-            frac += weight * (done / tot)
-        frac = max(0.0, min(1.0, frac))
-        elapsed = max(0.001, _time.time() - float(status.get("start_ts", _time.time())))
-        if frac < 0.02:
-            # אין עדיין מדגם — אומדן שמרני לפי גודל היקום (~0.35ש' לשליפה במקביל)
-            tot = max(1, int(status.get("fetch_total", 200) or 200))
-            return max(20.0, tot * 0.35)
-        est_total = elapsed / frac
-        return max(0.0, est_total - elapsed)
+        order = status.get("stage_order") or ["fetch", "scan"]
+        cur = status.get("stage") or order[0]
+        now = _time.time()
+        rem, seen_cur = 0.0, False
+        for s in order:
+            tot = int(status.get(f"{s}_total", 0) or 0)
+            done = min(tot, int(status.get(f"{s}_done", 0) or 0))
+            if s == cur:
+                seen_cur = True
+                left = max(0, tot - done)
+                ts = float(status.get(f"{s}_ts", now) or now)
+                el = max(0.001, now - ts)
+                if done >= max(3, int(tot * 0.02)):
+                    rate = done / el
+                    ema = status.get(f"{s}_rate_ema")
+                    rate = rate if not ema else (0.75 * float(ema) + 0.25 * rate)
+                    status[f"{s}_rate_ema"] = rate
+                    rem += left / max(rate, 1e-6)
+                else:
+                    rem += left * _stage_unit_est(status, s)
+            elif seen_cur and tot > 0:
+                rem += tot * _stage_unit_est(status, s)
+        return max(0.0, rem)
     except Exception:
         return 60.0
 
 
+def _eta_display_step(shown, raw: float, dt: float) -> float:
+    """
+    שעון חד-כיווני: לעולם לא עולה. מקדים? יורד מהר חלקית לעבר האומדן.
+    מפגר (האומדן קפץ)? ממשיך לרדת לאט (רבע-קצב) עד שהמציאות מתיישרת.
+    """
+    if shown is None:
+        return max(0.0, raw)
+    if raw < shown:
+        return max(raw, shown - max(dt, (shown - raw) * 0.35))
+    return max(0.0, shown - dt * (0.25 if raw > shown + 5 else 1.0))
+
+
 def _scan_progress_frac(status: dict) -> float:
-    """שבר ההתקדמות הכולל (0..1) לפי אותם משקלים."""
+    """שבר התקדמות משוקלל לפי משך-משוער אמיתי של כל שלב (יחידות × כיול)."""
     try:
-        w = status.get("weights") or {"fetch": 0.55, "scan": 0.45}
-        frac = 0.0
-        for stage, weight in w.items():
-            tot = max(1, int(status.get(f"{stage}_total", 0) or 0))
-            done = min(tot, int(status.get(f"{stage}_done", 0) or 0))
-            frac += weight * (done / tot)
-        return max(0.0, min(1.0, frac))
+        order = status.get("stage_order") or ["fetch", "scan"]
+        total_est, done_est = 0.0, 0.0
+        for s in order:
+            tot = int(status.get(f"{s}_total", 0) or 0)
+            if tot <= 0:
+                continue
+            u = _stage_unit_est(status, s)
+            total_est += tot * u
+            done_est += min(tot, int(status.get(f"{s}_done", 0) or 0)) * u
+        return max(0.0, min(1.0, done_est / total_est)) if total_est > 0 else 0.0
     except Exception:
         return 0.0
 
 
-def _parallel_prefetch(universe: list, status: dict, fetch_fn=None, workers: int = 10) -> list:
-    """
-    שלב 1 — חימום מטמון מקבילי + Early Pruning:
-    ThreadPoolExecutor (ברירת מחדל 10 workers) מושך את הנתונים לכל טיקר במקביל
-    (get_cached_data — נשמר במטמון, כך שהסריקה שאחריו פוגעת במטמון חם), ופוסל
-    מוקדם טיקרים בלי נתונים תקינים (df ריק / <60 ברים) לפני ניתוח Wyckoff מלא.
-    מחזיר את היקום המקוצץ. עמיד-כשל: טיקר שנכשל — מדולג.
-    """
-    ff = fetch_fn or get_cached_data
-    status["fetch_total"] = len(universe)
-    status["fetch_done"] = 0
-    survivors = []
-
-    # הצמדת ScriptRunContext ל-workers (מונע אזהרות Streamlit מתוך threads)
+def _attach_ctx_initializer():
+    """מצמיד ScriptRunContext ל-threads (מונע אזהרות Streamlit). מחזיר initializer."""
     try:
         from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
         _ctx = get_script_run_ctx()
@@ -7419,6 +7481,18 @@ def _parallel_prefetch(universe: list, status: dict, fetch_fn=None, workers: int
                 add_script_run_ctx(threading.current_thread(), _ctx)
             except Exception:
                 pass
+    return _init
+
+
+def _parallel_prefetch(universe: list, status: dict, fetch_fn=None, workers: int = 12) -> list:
+    """
+    שלב 1 — חימום מטמון מחירים מקבילי + Early Pruning (12 ערוצים): פוסל מוקדם
+    טיקרים בלי נתונים תקינים. מחזיר יקום מקוצץ בסדר המקורי. עמיד-כשל.
+    """
+    ff = fetch_fn or get_cached_data
+    status["fetch_total"] = len(universe)
+    status["fetch_done"] = int(status.get("fetch_done", 0) or 0)
+    survivors = []
 
     def _one(tk):
         try:
@@ -7429,7 +7503,8 @@ def _parallel_prefetch(universe: list, status: dict, fetch_fn=None, workers: int
         return tk, ok
 
     try:
-        with ThreadPoolExecutor(max_workers=max(2, workers), initializer=_init) as ex:
+        with ThreadPoolExecutor(max_workers=max(2, workers),
+                                initializer=_attach_ctx_initializer()) as ex:
             futs = {ex.submit(_one, tk): tk for tk in universe}
             for fut in as_completed(futs):
                 try:
@@ -7441,40 +7516,130 @@ def _parallel_prefetch(universe: list, status: dict, fetch_fn=None, workers: int
                 if ok:
                     survivors.append(tk)
     except Exception:
-        # נפילה חיננית: בלי מקביליות — היקום המלא ימשיך לסורק (מטמון קר)
         status["fetch_done"] = status["fetch_total"]
         return list(universe)
-    # שמירת הסדר המקורי (דטרminיזם מול הסורק)
     keep = set(survivors)
     return [t for t in universe if t in keep]
 
 
-def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=None) -> None:
+def _prefetch_fundamentals(tickers: list, status: dict, fund_fn=None, workers: int = 10) -> None:
     """
-    עבודת הסריקה המלאה (רצה ב-thread רקע): prefetch מקבילי → MarketScanner (ליבה,
-    מטמון חם) → סינון אופציונלי (סריקה ממוקדת). התוצאה/שגיאה נכתבת ל-box; ה-main
-    thread מציג בינתיים שעון ספירה לאחור. אין נגיעה ב-UI מכאן (thread-safe).
+    V36.1, שלב 1.5 — חימום מטמון פונדמנטלי במקביל. זה היה מקור "הדקות הארוכות":
+    הליבה מושכת פונדמנטלי פר-טיקר; קר = רשת סדרתית. אחרי החימום — פגיעת-מטמון.
     """
+    fn = fund_fn or get_fundamental_data
+
+    def _one(tk):
+        try:
+            fn(tk)
+        except Exception:
+            pass
+        return tk
+
     try:
-        pruned = _parallel_prefetch(universe, status, workers=10)
-        status["scan_total"] = max(1, min(len(pruned), int(status.get("scan_cap", len(pruned)))))
+        with ThreadPoolExecutor(max_workers=max(2, workers),
+                                initializer=_attach_ctx_initializer()) as ex:
+            futs = [ex.submit(_one, tk) for tk in tickers]
+            for fut in as_completed(futs):
+                try:
+                    status["ticker"] = fut.result()
+                except Exception:
+                    pass
+                status["fund_done"] = int(status.get("fund_done", 0)) + 1
+    except Exception:
+        status["fund_done"] = int(status.get("fund_total", 0) or 0)
+
+
+def _shard_slices(items: list, shards: int) -> list:
+    """חיתוך לבלוקים רציפים מאוזנים, שומרי-סדר, זרים ומכסים-הכל. טהור."""
+    n = len(items)
+    shards = max(1, min(int(shards), n or 1))
+    base, extra = divmod(n, shards)
+    out, i = [], 0
+    for k in range(shards):
+        size = base + (1 if k < extra else 0)
+        out.append(items[i:i + size])
+        i += size
+    return [s for s in out if s]
+
+
+def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> list:
+    """
+    V36.1, שלב 2 — מנועי-סריקה מקביליים: היקום נחתך לבלוקים, כל בלוק נסרק ע"י
+    MarketScanner משלו ב-thread (הליבה לא שונתה — מורצת מספר פעמים במקביל על
+    מטמון חם). התקדמות מצטברת גלובלית (delta+lock); מיזוג לפי הציון המשוקלל.
+    """
+    n = len(pruned)
+    if shards is None:
+        shards = 4 if n >= 80 else (2 if n >= 24 else 1)
+    slices = _shard_slices(pruned, shards)
+    lock = threading.Lock()
+    passed_by = {}
+
+    def _scan_slice(idx, sl):
+        last = {"d": 0}
 
         def _cb(done, total, ticker, stats):
-            status["scan_total"] = max(1, int(total or 1))
-            status["scan_done"] = int(done or 0)
-            status["ticker"] = ticker
-            try:
-                status["passed"] = int(stats.get("passed", 0))
-            except Exception:
-                pass
+            with lock:
+                status["scan_done"] = int(status.get("scan_done", 0)) +                     max(0, int(done or 0) - last["d"])
+                last["d"] = int(done or 0)
+                status["ticker"] = ticker
+                try:
+                    passed_by[idx] = int((stats or {}).get("passed", 0) or 0)
+                    status["passed"] = sum(passed_by.values())
+                except Exception:
+                    pass
+        try:
+            sc = MarketScanner(_sc_module)
+            out = sc.scan_market(mode="balanced", max_tickers=len(sl) or 1,
+                                 universe=sl, top_n=min(len(sl), max(int(top_n), 5)),
+                                 progress_callback=_cb)
+            return (out or {}).get("results", []) or []
+        except Exception:
+            return []
 
-        scanner = MarketScanner(_sc_module)
-        out = scanner.scan_market(mode="balanced", max_tickers=len(pruned) or 1,
-                                  universe=pruned, top_n=top_n, progress_callback=_cb)
-        results = (out or {}).get("results", []) or []
-        status["scan_done"] = status.get("scan_total", 1)
+    if len(slices) == 1:
+        merged = _scan_slice(0, slices[0])
+    else:
+        merged = []
+        with ThreadPoolExecutor(max_workers=len(slices),
+                                initializer=_attach_ctx_initializer()) as ex:
+            futs = [ex.submit(_scan_slice, i, sl) for i, sl in enumerate(slices)]
+            for fut in as_completed(futs):
+                try:
+                    merged.extend(fut.result() or [])
+                except Exception:
+                    pass
+    try:
+        merged.sort(key=lambda r: float(r.get("composite", 0) or 0), reverse=True)
+    except Exception:
+        pass
+    return merged[:int(top_n)]
+
+
+def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=None) -> None:
+    """
+    V36.1 — צנרת הסריקה (thread רקע): מחירים-מקביל → פונדמנטלי-מקביל →
+    מנועי-ליבה מקביליים על בלוקים → סינון אופציונלי. כל שלב מכויל חי ל-ETA.
+    """
+    try:
+        _stage_begin(status, "fetch", len(universe))
+        pruned = _parallel_prefetch(universe, status, workers=12)
+        _stage_end(status, "fetch")
+
+        _stage_begin(status, "fund", len(pruned))
+        _prefetch_fundamentals(pruned, status, workers=10)
+        _stage_end(status, "fund")
+
+        _stage_begin(status, "scan", len(pruned))
+        results = _sharded_core_scan(pruned, top_n, status)
+        _stage_end(status, "scan")
+
         if do_filter is not None:
+            _stage_begin(status, "filter",
+                         int(status.get("filter_total", len(results)) or len(results)))
             filtered = do_filter(results, status)
+            _stage_end(status, "filter")
             box["results"] = results
             box["filtered"] = filtered
         else:
@@ -7488,14 +7653,15 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
 def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
                              weights: dict = None, do_filter=None) -> dict:
     """
-    מריץ סריקה מלאה ברקע ומציג בזמן אמת: הודעה גדולה, שעון "זמן משוער שנותר: M:SS"
-    שמתעדכן כל שנייה, ו-progress bar באחוזים. חוסם עד סיום מלא — אין תוצאות חלקיות.
-    מחזיר box: {"results":[...], "filtered":[...]? , "error":str?}.
+    מריץ סריקה ברקע עם שעון חד-כיווני (לעולם לא עולה — _eta_display_step),
+    progress משוקלל-משכים, ותצוגת-שלב. weights נשמר לתאימות-חתימה (המנוע
+    החדש מכייל משכים חיים במקומו). חוסם עד סיום — אין תוצאות חלקיות.
     """
-    status = {"start_ts": _time.time(),
-              "weights": weights or {"fetch": 0.55, "scan": 0.45},
+    stage_order = ["fetch", "fund", "scan"] + (["filter"] if do_filter is not None else [])
+    status = {"start_ts": _time.time(), "stage_order": stage_order, "stage": "fetch",
               "fetch_total": len(universe), "fetch_done": 0,
-              "scan_total": 1, "scan_done": 0, "passed": 0, "ticker": ""}
+              "fund_total": 0, "fund_done": 0,
+              "scan_total": 0, "scan_done": 0, "passed": 0, "ticker": ""}
     box = {"done": False}
     th = threading.Thread(target=_scan_job, args=(universe, top_n, status, box, do_filter),
                           daemon=True)
@@ -7507,23 +7673,25 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
     _sub = st.empty()
     _msg.markdown(
         f"<div style='text-align:center; padding:14px 8px 4px;'>"
-        f"<div style='font-size:1.35rem; font-weight:800;'>🔎 {headline}</div>"
-        f"<div style='color:#94a3b8; margin-top:4px;'>זה עלול לקחת 1-3 דקות — התוצאות יוצגו רק בסיום המלא.</div>"
+        f"<div style='font-size:1.35rem; font-weight:800;'>{headline}</div>"
+        f"<div style='color:#94a3b8; margin-top:4px;'>התוצאות יוצגו רק בסיום המלא.</div>"
         f"</div>", unsafe_allow_html=True)
+    shown, last_t = None, _time.time()
     while not box.get("done"):
+        now = _time.time()
+        dt, last_t = max(0.05, now - last_t), now
+        shown = _eta_display_step(shown, _scan_eta(status), dt)
         frac = _scan_progress_frac(status)
-        eta = _scan_eta(status)
         _clock.markdown(
             f"<div style='text-align:center; font-size:1.6rem; font-weight:800; "
             f"font-variant-numeric: tabular-nums; margin:2px 0 6px;'>"
-            f"⏳ זמן משוער שנותר: {_fmt_mmss(eta)}</div>", unsafe_allow_html=True)
+            f"זמן משוער שנותר: {_fmt_mmss(shown)}</div>", unsafe_allow_html=True)
         try:
             _bar.progress(frac, text=f"{int(frac * 100)}%")
         except TypeError:
             _bar.progress(frac)
-        stage_he = "מוריד נתונים במקביל (10 ערוצים)" if status.get("fetch_done", 0) < status.get("fetch_total", 0) \
-            else "ניתוח Wyckoff + פונדמנטלי"
-        _sub.caption(f"{stage_he} · {status.get('ticker','')} · עברו סינון: {status.get('passed', 0)}")
+        _sub.caption(f"{_STAGE_HE.get(status.get('stage', ''), 'עובד')} · "
+                     f"{status.get('ticker', '')} · עברו סינון: {status.get('passed', 0)}")
         _time.sleep(0.5)
     th.join(timeout=5)
     _msg.empty(); _clock.empty(); _bar.empty(); _sub.empty()
@@ -9540,3 +9708,4 @@ if __name__ == "__main__":
 # V35.0 – התיק שלי: LEDGER בבית, מסך תיק (JSON הורדה/העלאה, ניתוח דו-עדשתי 4-שכבות), סנכרון-תקיפה (קיצוץ-סקטור 25%, תקרת-מזומן, מתג-אובייקטיבי), מנוע-קונפליקטים (מימוש/כיסוי), נקודות-מגע.
 # V35.1 – הזנה טופסית: אישור→ניקוי-שדות→הבא; אותו-טיקר=עדכון; ❌ מחיקה; 'שמור וטען' מקבע ומסנכרן; הורדה אחרי שמירה.
 # V36.0 – רדיזיין מוסדי: הסרת ≥20% אלמנטים/מסך, עומק-שכבות במקום גבולות, ברונזה −53%, חתימת פס-סיווג אנכי, פקודות במקום כפתורים, דה-סטרימליט. אפס לוגיקה.
+# V36.1 – Scan Turbo: 3 שלבים מקביליים (מחירים 12ch → פונדמנטלי 10ch → מנועי-ליבה על בלוקים 4x) + ETA מבוסס-קצב + שעון חד-כיווני. חתימות ללא שינוי.
