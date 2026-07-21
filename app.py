@@ -1,8 +1,20 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.0 (Pulse Scan)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.1 (Cache Depth · Value Parsing)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V38.1 — שלושה באגים שנחשפו מהריצה בשדה (מטמון 65/500 · מבני=0 · "12.5%%"):
+  • 🔴 מטמון-המחירים היה max_entries=64 מול יקום של ~500 — 87% מהטיקרים
+    נזרקו מיד אחרי ה-prefetch, והליבה הורידה אותם שוב. זו הייתה האיטיות
+    האמיתית (וגם "מחיר לא זמין" בכרטיסים). הורחב ל-700 (~35MB בשיא).
+  • 🔴 ניקוד-הערך בלע בשקט שדות שהגיעו כמחרוזות ("12.5%") — float() נכשל
+    ⇒ 0 נקודות. ACN קיבל 6/15 במקום 11/15 (בדיוק FCF+ROE שאבדו). נוסף
+    _fnum סלחני (מסיר %/,/$) בניקוד ובאיסוף — גם ה-"%%" הכפול נעלם.
+    משמעות: מועמדות שנפסלו מתחת לסף 6 יופיעו כעת בצדק.
+  • היומן איבד את שורות-הפעימות: לא בוצע flush ל-session_state לפני
+    ה-rerun. תוקן. בנוסף: שקיפות-הליבה מוצגת כעת גם כשרק המנוע המבני ריק
+    (עד כה רק כששניהם), ומונה-רשת מטעה הוסר מכותרת היומן.
 
 V38.0 — סריקת-פעימות (בקשת המשתמש) + ביטול ההורדה הכפולה:
   אבחנה כנה: פעימות לבדן אינן מקצרות זמן — אותה עבודה בדיוק. הבזבוז האמיתי
@@ -1975,7 +1987,10 @@ def inject_css() -> None:
     </script>
     """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=3600, max_entries=64, show_spinner=False)
+# V38.1: max_entries 64→700. עם יקום של ~500, מטמון של 64 נשמר עם 13% בלבד
+# (נמדד בשדה: 65/500) — כל השאר פונה מהמטמון והליבה הורידה מחדש. ההרחבה
+# מבטלת סופית את ההורדה הכפולה. ~50KB לטיקר ⇒ ~35MB בשיא, בטוח ל-Cloud Run.
+@st.cache_data(ttl=3600, max_entries=700, show_spinner=False)
 def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = None, end: Optional[str] = None):
     return get_data(ticker, period, start, end) if SCOUT_CORE_AVAILABLE else None
 
@@ -7557,7 +7572,7 @@ def _render_debug_logs() -> None:
             lines = [f"{t} [{th}] {m}" for t, th, m in keep[-240:]]
             st.code("\n".join(lines) if lines else "(היומן ריק — טרם בוצעה פעולה)",
                     language=None)
-            st.caption(f"קריאות-רשת בסשן: {_NET_SEEN['n']} · שורות ביומן: {len(keep)}"
+            st.caption(f"שורות ביומן: {len(keep)}"
                        + (f" · מטמון-ליבה אחרון: {st.session_state.get('_last_proxy_cache')}"
                           if st.session_state.get("_last_proxy_cache") else ""))
             _c1, _c2 = st.columns(2)
@@ -8080,18 +8095,30 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
 
 
 
+def _fnum(v):
+    """
+    V38.1 — המרה סלחנית למספר: yfinance/הליבה מחזירים לעיתים מחרוזות
+    ("12.5%", "1,234", "$45"). float() נכשל עליהן והשדה נבלע בשקט — כך ACN
+    קיבל 6/15 במקום 11/15 (FCF ו-ROE ירדו לאיבוד). מחזיר None רק כשאין ערך.
+    """
+    try:
+        if isinstance(v, str):
+            v = v.replace("%", "").replace(",", "").replace("$", "").strip()
+            if not v or v.upper() in ("N/A", "NA", "—", "-", "NONE"):
+                return None
+        f = float(v)
+        return f if f == f else None            # NaN ⇒ None
+    except Exception:
+        return None
+
+
 def _value_score(fd: dict):
     """
     V37.0 — ניקוד-ערך שקוף (0-15): FCF, מכפיל, צמיחה, שוליים, ROE, תווית-תמחור.
     טהור; מחזיר (ניקוד, צ'יפים-מסבירים). סף הזדמנות: ≥6.
     """
     pts, chips = 0, []
-    def _num(v):
-        try:
-            f = float(v)
-            return f if f == f else None
-        except Exception:
-            return None
+    _num = _fnum
     fy = _num(fd.get("fcf_yield"))
     pe = _num(fd.get("pe_trailing") if fd.get("pe_trailing") not in (None, "", "N/A") else fd.get("pe"))
     gr = _num(fd.get("rev_growth"))
@@ -8149,10 +8176,12 @@ def _dual_find_job(universe: list, stT: dict, stV: dict, box: dict) -> None:
                     sc, chips = _value_score(fd)
                     return {"ticker": tk, "vscore": sc, "chips": chips,
                             "valuation": fd.get("valuation", ""),
-                            "fcf_yield": fd.get("fcf_yield"), "pe": fd.get("pe_trailing") or fd.get("pe"),
-                            "rev_growth": fd.get("rev_growth"),
-                            "op_margin": fd.get("op_margin") or fd.get("operating_margin"),
-                            "roe": fd.get("roe"), "sector_he": _pf_sector_of(tk) or "—"}
+                            "fcf_yield": _fnum(fd.get("fcf_yield")),
+                            "pe": _fnum(fd.get("pe_trailing") or fd.get("pe")),
+                            "rev_growth": _fnum(fd.get("rev_growth")),
+                            "op_margin": _fnum(fd.get("op_margin") or fd.get("operating_margin")),
+                            "roe": _fnum(fd.get("roe")),
+                            "sector_he": _pf_sector_of(tk) or "—"}
                 except Exception:
                     return None
             try:
@@ -8316,7 +8345,9 @@ def _run_find_scan() -> None:
     st.session_state.scan_card_index = 0
     st.session_state["val_card_index"] = 0
     st.session_state["elessar_open"] = False
-    _dbg(f"dual end: tech={len(box.get('tech') or [])} · value={len(box.get('value') or [])}")
+    _dbg(f"dual end: tech={len(box.get('tech') or [])} · value={len(box.get('value') or [])} "
+         f"· מטמון-ליבה {(box.get('stats', {}) or {}).get('cache', '')}")
+    _dbg_flush()          # V38.1: לקבע ליומן המתמיד לפני ה-rerun (אחרת הפעימות אובדות)
 
 
 def screen_home() -> None:
@@ -8762,6 +8793,13 @@ def screen_home() -> None:
                                       dest_page="📈 Trading Scout")
             else:
                 st.info("המנוע המבני לא מצא מועמדות כרגע.")
+                _fs2 = st.session_state.get("find_scan_stats") or {}
+                _cs2 = _fs2.get("core") or {}
+                if _cs2:
+                    st.caption("🔬 שקיפות הליבה: " +
+                               " · ".join(f"{_k}={_v}" for _k, _v in _cs2.items() if _v)
+                               + (f" · מטמון-ליבה {_fs2.get('cache', '')}"
+                                  if _fs2.get("cache") else ""))
             if value:
                 st.markdown(f"<div class='section-label'>מנוע הערך — פונדמנטלי "
                             f"({len(value)})</div>", unsafe_allow_html=True)
@@ -10369,3 +10407,4 @@ if __name__ == "__main__":
 # V37.3 – מקליט-טיסה: timeout-רשת קשיח 25ש' על כל fetch (כולל תבדוק-לי), 🩺 בדיקת-מערכת (גרסאות+SPY מדוד), מקליט-rerun/check, יומן בכל מסך.
 # V37.4 – כריתת השים (הותקן מחדש בכל rerun ⇒ שרשרת שכבות ⇒ סמפור נגמר ⇒ קיפאון נצחי). המסלול חזר ל-V33.3 המוכח; יומן שורד-reruns; הגנת פילוח-ריק.
 # V38.0 – סריקת-פעימות (מנות של 10, מנוע יחיד, קצב-מסתגל, תוצאות-חלקיות שורדות) + _CoreProxy שמגיש מטמון לליבה במקום הורדה כפולה (ללא monkey-patch).
+# V38.1 – מטמון-מחירים 64→700 (סוף ההורדה הכפולה), _fnum סלחני בניקוד-הערך (מחרוזות עם % נבלעו), flush ליומן, שקיפות כשהמבני ריק.
