@@ -1,8 +1,36 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.2 (Watchdog · Engine Log)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.4 (Unshimmed — Deadlock Fix)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V37.4 — 🔴 תיקון-השורש: קיפאון-מוחלט (הכל נתקע: בדיקת-מניה + כל הסורקים).
+  האבחנה (אושרה בשחזור-מעבדה): שים-הנתונים של V37.1 הותקן מחדש בכל rerun
+  של Streamlit — הסקריפט רץ מהתחלה בכל אינטראקציה, אך מודול הליבה נשאר
+  בזיכרון-התהליך, ולכן כל התקנה עטפה את הקודמת. נוצרה שרשרת שכבות, וכל
+  שכבה תפסה permit מסמפור-הרשת הלא-ריאנטרני (3). אחרי ~4 אינטראקציות
+  הסמפור נגמר, שכבה המתינה ל-permit שהיא עצמה מחזיקה — ⇒ קיפאון נצחי בכל
+  משיכת-נתונים. משם: הבר לא זז, שום סורק לא התחיל, והיומן נשאר ריק.
+  • השים נכרת כליל. get_cached_data → get_data ישירות — המסלול המדויק של
+    V33.3, הגרסה שהמשתמש אישר כעובדת. אין יותר monkey-patch על הליבה.
+  • היומן שורד reruns: הרינג המודולרי משמש רק לכתיבה מ-threads, ו-_dbg_flush
+    מעביר אותו ל-session_state (שם הוא נשמר בין ריצות) — לכן הוא היה ריק.
+  • 🩺 בדיקת-מערכת בודקת כעת גם את מסלול-האפליקציה עצמו, לא רק את הרשת.
+  • הגנה: פילוח-ריק אינו מפיל את מנוע-הבלוקים (max_workers=0 בעבר).
+
+V37.3 — מקליט-טיסה (בעקבות: גם "תבדוק לי" לא עובד + יומן ריק ⇒ הכשל
+        קודם לכל קוד מנוטר — בשכבת-הרשת עצמה או בסביבה):
+  • שומר-הרשת: *כל* משיכת-yfinance (get_cached_data — כולל תבדוק-לי,
+    prefetch, והשים) רצה ב-thread עם timeout קשיח 25ש'. תלייה ⇒ None +
+    "NET ⏱️TIMEOUT" ביומן. אף לחיצה לא יכולה עוד להקפיא את האפליקציה.
+  • 🩺 בדיקת-מערכת (כפתור ביומן): מדפיס גרסאות python/streamlit/yfinance
+    ומושך SPY מדוד — שורה אחת שמכריעה: "✅ הרשת חיה" או "❌ שבורה" + הסיבה
+    המדויקת (TIMEOUT=חסימת-IP · חריגה=ספרייה שבורה · rows=0=שינוי-API).
+  • מקליט מחזור-חיים: כל rerun של הבית (mode), כל חישוב-check, כל fetch
+    (מדוגם 1/25; כשלים — תמיד). היומן זמין כעת גם במסך תבדוק-לי.
+  אבחנת-רקע: "לפני 4 קבצים עבד" עשוי שלא להיות הקוד — כל פריסה מתקינה
+  תלויות מחדש; אם yfinance אינו נעול ב-requirements, גרסה חדשה/שבורה מסבירה
+  את הכל. ה-🩺 יכריע.
 
 V37.2 — שני חוקי-ברזל חדשים: אסור-להיתקע, אסור-לשתוק (בעקבות דיווח
         "טוען ולא קורה כלום, הבר לא מתמלא"):
@@ -598,6 +626,7 @@ import time
 import time as _time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 import traceback
 import gc
 from dataclasses import dataclass
@@ -1936,6 +1965,7 @@ def get_cached_data(ticker: str, period: str = "2y", start: Optional[str] = None
     return get_data(ticker, period, start, end) if SCOUT_CORE_AVAILABLE else None
 
 def _compute_wyckoff(ticker: str):
+    _dbg(f"check: compute {ticker} — fetch מתחיל")
     df = get_cached_data(ticker)
     if df is None or df.empty:
         return None
@@ -3411,55 +3441,10 @@ def get_fundamental_data(ticker: str) -> dict:
 
 
 # ============================================================
-# V37.1 — שים-הנתונים לליבה: הסורק קורא scout_core.get_data ישירות (רשת
-# גולמית, לא-מוקאש). מכאן: כל קריאה כזו מוגשת קודם מהמטמון-החם של האפליקציה
-# (שה-prefetch כבר מילא); רק החמצה יורדת לרשת — תחת סמפור(3). קבצי הליבה לא
-# נערכו — הזרקת-תלות בזמן-ריצה, עם נסיגה מלאה למקור בכל כשל.
-# ============================================================
-_NET_SEM = threading.Semaphore(3)
-_orig_core_get_data = None
-try:
-    _scm_ref = globals().get("_sc_module")
-    if _scm_ref is not None and hasattr(_scm_ref, "get_data"):
-        _orig_core_get_data = _scm_ref.get_data
-
-        _shim_local = threading.local()
-
-        def _shimmed_get_data(ticker, period="2y", start=None, end=None):
-            if getattr(_shim_local, "busy", False):          # קריאה-מקוננת ⇒ עוקפים ישר למקור
-                _SHIM_STATS["reentry"] += 1
-                try:
-                    with _NET_SEM:
-                        return _orig_core_get_data(ticker, period=period, start=start, end=end)
-                except Exception:
-                    return pd.DataFrame()
-            _shim_local.busy = True
-            try:
-                if start is None and end is None:
-                    try:
-                        _df = get_cached_data(ticker)
-                        if _df is not None and not getattr(_df, "empty", True) and len(_df) >= 60:
-                            _SHIM_STATS["hit"] += 1
-                            if _SHIM_STATS["hit"] % 50 == 1:
-                                _dbg(f"shim: hit#{_SHIM_STATS['hit']} {ticker}")
-                            return _df
-                    except Exception as _e:
-                        _dbg(f"shim: cache-err {ticker}: {type(_e).__name__}")
-                _SHIM_STATS["miss"] += 1
-                try:
-                    with _NET_SEM:
-                        _SHIM_STATS["net"] += 1
-                        _dbg(f"shim: net {ticker} (miss#{_SHIM_STATS['miss']})")
-                        return _orig_core_get_data(ticker, period=period, start=start, end=end)
-                except Exception as _e:
-                    _dbg(f"shim: net-err {ticker}: {type(_e).__name__}")
-                    return pd.DataFrame()
-            finally:
-                _shim_local.busy = False
-
-        _scm_ref.get_data = _shimmed_get_data
-except Exception:
-    pass
+# V37.4: שים-הנתונים הוסר כליל — הוא היה מותקן מחדש בכל rerun של Streamlit
+# (מודול הליבה נשאר בזיכרון), נוצרה שרשרת שכבות, והסמפור הלא-ריאנטרני נגמר
+# אחרי ~4 אינטראקציות ⇒ כל משיכת-נתונים נתקעה לנצח. המסלול חזר לצורתו
+# המוכחת: get_cached_data → get_data (ישיר, ממוקאש ע"י Streamlit בלבד).
 
 
 def assess_data_freshness(df: pd.DataFrame, fund_data: dict = None) -> dict:
@@ -7479,10 +7464,13 @@ def _fmt_mmss(sec: float) -> str:
 _DBG_LOCK = threading.Lock()
 _DBG_RING = []          # [(ts_str, thread, msg)]
 _DBG_MAX = 400
-_SHIM_STATS = {"hit": 0, "miss": 0, "net": 0, "reentry": 0}
 
 
 def _dbg(msg: str) -> None:
+    """
+    V37.4 — כתיבה בטוחה-threads לרינג המודולרי. הרינג נמחק בכל rerun (טבע
+    Streamlit), ולכן _dbg_flush() מעביר אותו ל-session_state ששורד ריצות.
+    """
     try:
         with _DBG_LOCK:
             _DBG_RING.append((_time.strftime("%H:%M:%S"),
@@ -7493,20 +7481,96 @@ def _dbg(msg: str) -> None:
         pass
 
 
+def _dbg_flush() -> list:
+    """מרוקן את הרינג אל היומן המתמיד (session_state) ומחזיר אותו. מהתהליך הראשי."""
+    try:
+        with _DBG_LOCK:
+            fresh = list(_DBG_RING)
+            _DBG_RING.clear()
+        keep = st.session_state.get("_dbg_log")
+        if not isinstance(keep, list):
+            keep = []
+        keep.extend(fresh)
+        if len(keep) > _DBG_MAX:
+            keep = keep[-_DBG_MAX:]
+        st.session_state["_dbg_log"] = keep
+        return keep
+    except Exception:
+        return []
+
+
+_NET_SEEN = {"n": 0}
+
+
+def _net_fetch_guard(ticker, period="2y", start=None, end=None, timeout=25):
+    """
+    V37.3 — כל משיכת-רשת עוברת כאן: get_data המקורי רץ ב-thread עם timeout
+    קשיח. תלייה ⇒ None אחרי timeout שניות + שורת NET-TIMEOUT ביומן. אף
+    אינטראקציה לא יכולה עוד לקפוא על הרשת.
+    """
+    _NET_SEEN["n"] += 1
+    _n = _NET_SEEN["n"]
+    if _n % 25 == 1:
+        _dbg(f"NET begin #{_n} {ticker}")
+    t0 = _time.time()
+    ex = ThreadPoolExecutor(max_workers=1)
+    try:
+        fut = ex.submit(get_data, ticker, period, start, end)
+        df = fut.result(timeout=timeout)
+        if _n % 25 == 1:
+            _dbg(f"NET ok {ticker} rows={0 if df is None else len(df)} "
+                 f"{_time.time() - t0:.1f}s")
+        return df
+    except FuturesTimeoutError:
+        _dbg(f"NET ⏱️TIMEOUT {ticker} ({timeout}s) — הרשת תלויה/חסומה")
+        return None
+    except Exception as e:
+        _dbg(f"NET 💥ERR {ticker}: {type(e).__name__}: {str(e)[:90]}")
+        return None
+    finally:
+        try:
+            ex.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+
+
 def _render_debug_logs() -> None:
     """תיבת-לוגים סמויה: כפתור/מגירה זעירה בתחתית מסכי-הסריקה (בקשת המשתמש)."""
     try:
+        keep = _dbg_flush()
         with st.expander("⚙ יומן מנוע — הצצה מתחת למכסה", expanded=False):
-            with _DBG_LOCK:
-                lines = [f"{t} [{th}] {m}" for t, th, m in _DBG_RING[-220:]]
-            st.code("\n".join(lines) if lines else "(היומן ריק — טרם רצה סריקה)",
+            lines = [f"{t} [{th}] {m}" for t, th, m in keep[-240:]]
+            st.code("\n".join(lines) if lines else "(היומן ריק — טרם בוצעה פעולה)",
                     language=None)
-            st.caption(f"שים: hit={_SHIM_STATS['hit']} · miss={_SHIM_STATS['miss']} · "
-                       f"רשת={_SHIM_STATS['net']} · re-entry={_SHIM_STATS['reentry']}")
-            if st.button("נקה יומן", key="dbg_clear"):
-                with _DBG_LOCK:
-                    _DBG_RING.clear()
-                st.rerun()
+            st.caption(f"קריאות-רשת בסשן: {_NET_SEEN['n']} · שורות ביומן: {len(keep)}")
+            _c1, _c2 = st.columns(2)
+            with _c1:
+                if st.button("🩺 בדיקת-מערכת", key="dbg_selftest", use_container_width=True):
+                    try:
+                        import yfinance as _yf
+                        _dbg(f"SELFTEST: yfinance={getattr(_yf, '__version__', '?')}")
+                    except Exception as _e:
+                        _dbg(f"SELFTEST: yf-import 💥 {type(_e).__name__}: {_e}")
+                    import sys as _sys
+                    _dbg(f"SELFTEST: python={_sys.version.split()[0]} · streamlit={getattr(st, '__version__', '?')}")
+                    _t0 = _time.time()
+                    _df = _net_fetch_guard("SPY", period="6mo", timeout=20)
+                    _dbg(f"SELFTEST: SPY → rows={0 if _df is None else len(_df)} "
+                         f"תוך {_time.time() - _t0:.1f}s "
+                         f"{'✅ הרשת חיה' if _df is not None and len(_df) > 30 else '❌ הרשת/הספרייה שבורה'}")
+                    _t1 = _time.time()
+                    try:
+                        _d2 = get_cached_data("SPY")
+                        _dbg(f"SELFTEST: מסלול-האפליקציה get_cached_data(SPY) → "
+                             f"rows={0 if _d2 is None else len(_d2)} תוך {_time.time() - _t1:.1f}s")
+                    except Exception as _e:
+                        _dbg(f"SELFTEST: מסלול-האפליקציה 💥 {type(_e).__name__}: {str(_e)[:90]}")
+                    st.rerun()
+            with _c2:
+                if st.button("נקה יומן", key="dbg_clear", use_container_width=True):
+                    with _DBG_LOCK:
+                        _DBG_RING.clear()
+                    st.rerun()
     except Exception:
         pass
 
@@ -7531,7 +7595,7 @@ _STAGE_HE = {"fetch": "מוריד מחירים במקביל (8 ערוצים)",
              "fund": "מחמם נתונים פונדמנטליים במקביל (10 ערוצים)",
              "scan": "מנועי Wyckoff מקביליים על בלוקים",
              "filter": "מסנן לפי הצירים שבחרת"}
-_STAGE_UNIT_DEFAULT = {"fetch": 0.06, "fund": 0.16, "scan": 0.45, "filter": 0.02}
+_STAGE_UNIT_DEFAULT = {"fetch": 0.06, "fund": 0.16, "scan": 0.85, "filter": 0.02}
 
 
 def _stage_unit_est(status: dict, stage: str) -> float:
@@ -7724,8 +7788,14 @@ def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> l
     """
     n = len(pruned)
     if shards is None:
-        shards = 4 if n >= 80 else (2 if n >= 24 else 1)
+        # V37.4: מנוע יחיד סדרתי — בדיוק כמו הגרסה המוכחת. מנועים מקבילים
+        # מבצעים הורדות-רשת גולמיות בו-זמנית (הליבה אינה ממוקאשת) ⇒ חנק-קצב
+        # ⇒ תוצאות ריקות. הקוד נשמר ומופעל רק בהעברת shards מפורשת.
+        shards = 1
     slices = _shard_slices(pruned, shards)
+    if not slices:
+        _dbg("shard: יקום ריק אחרי הסינון המוקדם — אין מה לסרוק")
+        return []
     lock = threading.Lock()
     passed_by = {}
 
@@ -7797,6 +7867,8 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
         pruned = _parallel_prefetch(universe, status, workers=8)
         _stage_end(status, "fetch")
         _dbg(f"fetch end: שרדו {len(pruned)}/{len(universe)}")
+        if not pruned:
+            _dbg("⚠️ אפס טיקרים שרדו את השליפה — בדוק רשת/חסימה (🩺 בדיקת-מערכת)")
 
         _stage_begin(status, "scan", len(pruned))
         results = _sharded_core_scan(pruned, top_n, status)
@@ -7967,7 +8039,7 @@ def _dual_find_job(universe: list, stT: dict, stV: dict, box: dict) -> None:
                 except Exception:
                     return None
             try:
-                with ThreadPoolExecutor(max_workers=3,
+                with ThreadPoolExecutor(max_workers=2,
                                         initializer=_attach_ctx_initializer()) as ex:
                     futs = [ex.submit(_one, tk) for tk in pruned]
                     for fut in as_completed(futs):
@@ -8129,6 +8201,7 @@ def _run_find_scan() -> None:
 
 
 def screen_home() -> None:
+    _dbg(f"RUN home · mode={st.session_state.get('home_mode', '?')}")
     mode = st.session_state.get("home_mode", "landing")
 
     # ===================== מצב נחיתה: CODEX ALPHA (V28.0) =====================
@@ -8787,6 +8860,8 @@ def screen_home() -> None:
         render_explain_score(result["df"], result["current_phase"], result["current_cis"], expanded=False)
 
 
+
+    _render_debug_logs()
 
 def _map_sectors_dict() -> dict:
     """
@@ -10170,3 +10245,5 @@ if __name__ == "__main__":
 # V37.0 – תיקון אפס-שקרי (שגיאות גלויות+fallback סדרתי) + סמפור-429 + תמצא-לי דו-מנועי (Wyckoff ∥ ערך, 2 ברים) + ◆ אבן האיחוד (ELESSAR) לחיתוך הדוקטרינות.
 # V37.1 – שים-נתונים: המטמון-החם מוזרם ל-scout_core.get_data (סריקה=CPU-בלבד, רשת רק בהחמצה+סמפור); שקיפות מוני-הליבה בכל סורק ריק; 12→8 ערוצים; קוד-מת נמחק.
 # V37.2 – כלב-שמירה (קיפאון-120ש'/דדליין-8ד' ⇒ עצירה מאובחנת) + יומן-מנוע סמוי בכל מסכי-הסריקה + מגן-כניסה-חוזרת ומוני-שים. תקיעה אילמת = בלתי-אפשרית.
+# V37.3 – מקליט-טיסה: timeout-רשת קשיח 25ש' על כל fetch (כולל תבדוק-לי), 🩺 בדיקת-מערכת (גרסאות+SPY מדוד), מקליט-rerun/check, יומן בכל מסך.
+# V37.4 – כריתת השים (הותקן מחדש בכל rerun ⇒ שרשרת שכבות ⇒ סמפור נגמר ⇒ קיפאון נצחי). המסלול חזר ל-V33.3 המוכח; יומן שורד-reruns; הגנת פילוח-ריק.
