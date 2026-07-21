@@ -1,8 +1,25 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.1 (Cache Depth · Value Parsing)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.2 (Backtesting: 3 Lenses + 7-Block JSON Export System)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V38.2 — Backtesting: 3 Lenses + 7-Block JSON Export System.
+  מטרת-העל: להחליף את ההערכות שבתוכנית התקיפה בראיות מדודות. המנוע מריץ
+  את *אותה* תוכנית תקיפה על העבר, נקודה-נקודה, ללא הצצה קדימה.
+  • 3 עדשות (טאבים): Wyckoff Phase Accuracy (האם התווית חוזה כיוון — תשואה
+    קדימה +10/+20/+60 ודיוק-כיווני פר-מצב) · Trading Execution (הכניסה
+    הראשית מ-_conditional_entries: % הצתה בתוך חלון-התוקף, % הצלחה, תוחלת
+    ב-R, R מתוכנן מול בפועל — פר מצב × סוג-כניסה × כיוון) · Risk & Portfolio
+    (תוחלת, פקטור-רווח, שפל מצטבר ב-R, רצף-הפסדים, ברים ממוצע).
+  • 7 בלוקים × 4 מניות × 4 טווחים (1y/2y/5y/max) + "הרץ הכל", עם התקדמות
+    חיה. זמן-ריצה קבוע לכל טווח (חלון-הזנה 420 ברים, עד 80 נקודות-הערכה)
+    — "max" לא מפוצץ את הזמן. ~0.5 דק' לבלוק.
+  • ייצוא JSON פר-בלוק + "◆ אחד את כל קבצי ה-JSON" (העלאת כמה קבצים ⇒
+    קובץ-על). כל המדדים נשמרים כמוני-גלם (סכומים/ספירות) ולא כממוצעים,
+    ולכן האיחוד מדויק מתמטית ולא "ממוצע של ממוצעים" (מוכח בבדיקה).
+  • אפס נגיעה בלוגיקה: הסימולציה הקלאסית (run_wyckoff_anchored_backtest)
+    נשמרה בשלמותה ועברה למגירה בתחתית המסך.
 
 V38.1 — שלושה באגים שנחשפו מהריצה בשדה (מטמון 65/500 · מבני=0 · "12.5%%"):
   • 🔴 מטמון-המחירים היה max_entries=64 מול יקום של ~500 — 87% מהטיקרים
@@ -10063,10 +10080,534 @@ def screen_trading_scout() -> None:
                 if st.button(f"📊 פירוט פונדמנטלי מלא ל-{tkr}", key=f"scout_to_fund_{tkr}", use_container_width=True):
                     go_to_screen("📊 ניתוח פונדמנטלי", tkr)
 
+# ============================================================
+# V38.2 — מנוע Backtesting: 3 עדשות + 7 בלוקים + ייצוא/איחוד JSON.
+# שכבה חדשה לחלוטין מעל המנוע הקיים — אפס שינוי בלוגיקה. כל המדדים נשמרים
+# כמוני-גלם (סכומים וספירות) ולא כממוצעים, כדי שאיחוד קבצים יהיה מדויק
+# מתמטית ולא "ממוצע של ממוצעים".
+# ============================================================
+
+_BT_BLOCKS = {
+    1: ["NVDA", "AAPL", "MSFT", "AMZN"],
+    2: ["TSLA", "META", "GOOGL", "AVGO"],
+    3: ["JPM", "BAC", "COST", "LLY"],
+    4: ["UNH", "XOM", "CVX", "GLD"],
+    5: ["AMD", "CRM", "NFLX", "ADBE"],
+    6: ["HD", "WMT", "PG", "JNJ"],
+    7: ["CAT", "GE", "BA", "SLV"],
+}
+_BT_TIMEFRAMES = ["1y", "2y", "5y", "max"]
+_BT_HORIZONS = (10, 20, 60)          # ברים קדימה למדידת דיוק-הפאזה
+_BT_WINDOW = 420                     # חלון-הזנה למנוע (זמן-ריצה קבוע לכל טווח)
+_BT_MAX_POINTS = 80                  # תקרת נקודות-הערכה לכל טיקר/טווח
+_BT_TRADE_MAX_BARS = 60              # תקרת החזקה לסימולציית העסקה
+
+
+def _bt_eval_points(n_bars: int, warmup: int = 130, tail: int = 60,
+                    max_points: int = _BT_MAX_POINTS) -> list:
+    """אינדקסים לדגימה אחידה בין החימום לזנב. טהור — נבדק."""
+    lo, hi = int(warmup), int(n_bars) - int(tail) - 1
+    if hi <= lo:
+        return []
+    span = hi - lo
+    k = min(int(max_points), span)
+    if k <= 0:
+        return []
+    if k == 1:
+        return [hi]
+    step = span / float(k - 1)
+    return sorted({int(round(lo + i * step)) for i in range(k)})
+
+
+def _bt_state_at(df, i: int) -> dict:
+    """
+    מצב וויקוף כפי שהמערכת הייתה רואה אותו בבר i (ללא הצצה קדימה):
+    מריץ את אותו צינור מבני על החלון שקדם לבר, ומחזיר ws בפורמט שהמנועים
+    הקיימים (_horizon_fit / _levels_dict / _conditional_entries) מצפים לו.
+    """
+    try:
+        sub = df.iloc[max(0, i - _BT_WINDOW):i + 1]
+        if len(sub) < 80:
+            return {}
+        tr = detect_trading_range(sub)
+        events = detect_wyckoff_events(sub, tr)
+        vsa = classify_vsa_bars(sub, 15)
+        wc = assess_weekly_context(_to_weekly(sub))
+        so = classify_wyckoff_state(sub, tr, events, vsa, wc)
+        meta = _WSTATES.get(so["state"], _WSTATES["UNDETERMINED"])
+        caution = bool(so.get("caution")) and meta["track"] == "bull"
+        days = _compute_days_in_phase(sub, tr, meta["track"] == "bull",
+                                      state=so["state"], events=events)
+        try:
+            ce = wyckoff_cause_effect_targets(sub, tr) or {}
+        except Exception:
+            ce = {}
+        return {"state": so["state"], "caution": caution, "days_in_phase": days,
+                "tr": tr, "events": events, "weekly": wc, "reliability": {},
+                "plan": {"t2": ce.get("t2"), "t3": ce.get("t3")},
+                "phase_he": meta["he"], "track": meta["track"]}
+    except Exception:
+        return {}
+
+
+def _bt_fire_and_outcome(highs, lows, closes, start: int, e: dict,
+                         max_bars: int = _BT_TRADE_MAX_BARS) -> dict:
+    """
+    סימולציית כניסה מותנית אחת (ללא הצצה קדימה):
+    (1) האם הטריגר נורה בתוך חלון-התוקף? (2) אם כן — יעד או סטופ קודם?
+    מחזיר {fired, result: win|loss|open, R, bars}. R = מכפיל-סיכון בפועל.
+    """
+    side = e.get("side", "long")
+    kind = e.get("kind", "touch")
+    trig, stop, t1 = float(e["trig"]), float(e["stop"]), float(e["t1"])
+    risk = (stop - trig) if side == "short" else (trig - stop)
+    if risk <= 0:
+        return {"fired": False, "result": "invalid", "R": 0.0, "bars": 0}
+    rr = ((trig - t1) / risk) if side == "short" else ((t1 - trig) / risk)
+    n = len(closes)
+    valid = int(e.get("valid", 15) or 15)
+    fire_idx = None
+    for j in range(start + 1, min(n, start + 1 + valid)):
+        if side == "short":
+            hit = (lows[j] <= trig) if kind in ("breakdown", "confirm") else (highs[j] >= trig)
+        else:
+            hit = (highs[j] >= trig) if kind in ("breakout", "confirm") else (lows[j] <= trig)
+        if hit:
+            fire_idx = j
+            break
+    if fire_idx is None:
+        return {"fired": False, "result": "no_trigger", "R": 0.0, "bars": 0}
+    for k in range(fire_idx, min(n, fire_idx + max_bars)):
+        if side == "short":
+            hit_stop, hit_t1 = highs[k] >= stop, lows[k] <= t1
+        else:
+            hit_stop, hit_t1 = lows[k] <= stop, highs[k] >= t1
+        if hit_stop and hit_t1:                     # שמרנות: אותו בר ⇒ נרשם כהפסד
+            return {"fired": True, "result": "loss", "R": -1.0, "bars": k - fire_idx}
+        if hit_stop:
+            return {"fired": True, "result": "loss", "R": -1.0, "bars": k - fire_idx}
+        if hit_t1:
+            return {"fired": True, "result": "win", "R": round(rr, 2), "bars": k - fire_idx}
+    last = min(n - 1, fire_idx + max_bars - 1)
+    mtm = ((trig - closes[last]) if side == "short" else (closes[last] - trig)) / risk
+    return {"fired": True, "result": "open", "R": round(float(mtm), 2),
+            "bars": last - fire_idx}
+
+
+def _bt_blank_phase():
+    return {"n": 0, **{f"sum_{h}": 0.0 for h in _BT_HORIZONS},
+            **{f"dir_ok_{h}": 0 for h in _BT_HORIZONS},
+            **{f"pos_{h}": 0 for h in _BT_HORIZONS}}
+
+
+def _bt_blank_exec():
+    return {"signals": 0, "fired": 0, "wins": 0, "losses": 0, "open": 0,
+            "sum_R": 0.0, "sum_bars": 0, "sum_rr_planned": 0.0}
+
+
+def _bt_run_one(ticker: str, period: str, progress_cb=None) -> dict:
+    """
+    מריץ את שלוש העדשות על טיקר/טווח יחיד. מחזיר מוני-גלם בלבד (ניתנים לאיחוד).
+    """
+    out = {"bars": 0, "points": 0, "phase": {}, "exec": {}, "trades": [],
+           "error": ""}
+    try:
+        df = get_cached_data(ticker, period=period)
+    except Exception as exc:
+        out["error"] = f"fetch: {type(exc).__name__}"
+        return out
+    if df is None or getattr(df, "empty", True) or len(df) < 220:
+        out["error"] = "אין מספיק היסטוריה"
+        return out
+    highs = df["High"].astype(float).values
+    lows = df["Low"].astype(float).values
+    closes = df["Close"].astype(float).values
+    n = len(closes)
+    out["bars"] = int(n)
+    pts = _bt_eval_points(n)
+    out["points"] = len(pts)
+    for pi, i in enumerate(pts):
+        ws = _bt_state_at(df, i)
+        if not ws or not ws.get("state"):
+            continue
+        state = ws["state"]
+        # --- עדשה 1: דיוק הפאזה (תשואה קדימה מול כיוון הפאזה) ---
+        ph = out["phase"].setdefault(state, _bt_blank_phase())
+        ph["n"] += 1
+        bull = ws.get("track") == "bull"
+        for h in _BT_HORIZONS:
+            j = i + h
+            if j < n:
+                ret = float(closes[j] / closes[i] - 1.0) * 100.0
+                ph[f"sum_{h}"] += ret
+                if ret > 0:
+                    ph[f"pos_{h}"] += 1
+                if (ret > 0) == bull:
+                    ph[f"dir_ok_{h}"] += 1
+        # --- עדשה 2: ביצוע בפועל לפי תוכנית התקיפה ---
+        try:
+            last = float(closes[i])
+            lv = _levels_dict(ws, last)
+            if not lv.get("ok"):
+                continue
+            entries, _cancel, _why = _conditional_entries(ws, lv, last, "short")
+            if not entries:
+                continue
+            e = entries[0]
+            key = f"{state}|{e.get('kind', '?')}|{e.get('side', 'long')}"
+            ex = out["exec"].setdefault(key, _bt_blank_exec())
+            ex["signals"] += 1
+            ex["sum_rr_planned"] += float(e.get("rr", 0) or 0)
+            res = _bt_fire_and_outcome(highs, lows, closes, i, e)
+            if res["fired"]:
+                ex["fired"] += 1
+                ex["sum_R"] += float(res["R"])
+                ex["sum_bars"] += int(res["bars"])
+                if res["result"] == "win":
+                    ex["wins"] += 1
+                elif res["result"] == "loss":
+                    ex["losses"] += 1
+                else:
+                    ex["open"] += 1
+                out["trades"].append({"i": int(i), "state": state,
+                                      "kind": e.get("kind"), "side": e.get("side", "long"),
+                                      "R": float(res["R"]), "bars": int(res["bars"]),
+                                      "result": res["result"],
+                                      "rr_planned": float(e.get("rr", 0) or 0)})
+        except Exception:
+            continue
+        if progress_cb and (pi % 5 == 0):
+            progress_cb(pi + 1, len(pts), ticker, period)
+    return out
+
+
+def _bt_risk_from_trades(trades: list) -> dict:
+    """עדשה 3 — סיכון ותיק: תוחלת ב-R, פקטור רווח, רצפי הפסד, שפל מצטבר."""
+    seq = [float(t["R"]) for t in trades]
+    n = len(seq)
+    if n == 0:
+        return {"trades": 0}
+    wins = [r for r in seq if r > 0]
+    losses = [r for r in seq if r <= 0]
+    cum, peak, mdd, streak, worst_streak = 0.0, 0.0, 0.0, 0, 0
+    for r in seq:
+        cum += r
+        peak = max(peak, cum)
+        mdd = min(mdd, cum - peak)
+        if r <= 0:
+            streak += 1
+            worst_streak = max(worst_streak, streak)
+        else:
+            streak = 0
+    gross_w = sum(wins)
+    gross_l = abs(sum(losses))
+    return {"trades": n,
+            "expectancy_R": round(sum(seq) / n, 3),
+            "total_R": round(sum(seq), 2),
+            "win_rate": round(len(wins) / n * 100, 1),
+            "profit_factor": round(gross_w / gross_l, 2) if gross_l > 0 else None,
+            "max_drawdown_R": round(mdd, 2),
+            "max_losing_streak": int(worst_streak),
+            "avg_bars": round(sum(t["bars"] for t in trades) / n, 1),
+            "avg_R_win": round(sum(wins) / len(wins), 2) if wins else 0.0}
+
+
+def _bt_merge_counters(dst: dict, src: dict) -> dict:
+    """איחוד מוני-גלם (סכומים/ספירות) — הבסיס לאיחוד מדויק בין קבצים."""
+    for k, v in (src or {}).items():
+        if isinstance(v, dict):
+            _bt_merge_counters(dst.setdefault(k, {}), v)
+        elif isinstance(v, (int, float)) and not isinstance(v, bool):
+            dst[k] = dst.get(k, 0) + v
+    return dst
+
+
+def _bt_phase_view(counters: dict) -> list:
+    """מוני-פאזה ⇒ שורות תצוגה (ממוצע ודיוק-כיווני מחושבים מהגלם)."""
+    rows = []
+    for state, c in sorted(counters.items(), key=lambda x: -x[1].get("n", 0)):
+        n = max(1, int(c.get("n", 0)))
+        row = {"מצב": _WSTATES.get(state, {}).get("he", state), "מדגמים": int(c.get("n", 0))}
+        for h in _BT_HORIZONS:
+            row[f"תשואה +{h}"] = f"{c.get(f'sum_{h}', 0.0) / n:+.2f}%"
+            row[f"דיוק כיווני +{h}"] = f"{c.get(f'dir_ok_{h}', 0) / n * 100:.0f}%"
+        rows.append(row)
+    return rows
+
+
+_BT_KIND_HE = {"touch": "נגיעה (LPS/LPSY)", "breakout": "פריצה", "confirm": "אישור",
+               "breakdown": "שבירה", "watch": "מעקב"}
+
+
+def _bt_exec_view(counters: dict) -> list:
+    """מוני-ביצוע ⇒ שורות: אחוז-הצתה, אחוז-הצלחה, תוחלת ב-R, R מתוכנן מול בפועל."""
+    rows = []
+    for key, c in sorted(counters.items(), key=lambda x: -x[1].get("signals", 0)):
+        parts = key.split("|")
+        state, kind, side = (parts + ["?", "?", "?"])[:3]
+        sig = max(1, int(c.get("signals", 0)))
+        fired = int(c.get("fired", 0))
+        closed = int(c.get("wins", 0)) + int(c.get("losses", 0))
+        rows.append({
+            "מצב": _WSTATES.get(state, {}).get("he", state),
+            "סוג כניסה": _BT_KIND_HE.get(kind, kind),
+            "כיוון": "שורט" if side == "short" else "לונג",
+            "איתותים": int(c.get("signals", 0)),
+            "% הצתה": f"{fired / sig * 100:.0f}%",
+            "% הצלחה": f"{int(c.get('wins', 0)) / closed * 100:.0f}%" if closed else "—",
+            "תוחלת (R)": f"{c.get('sum_R', 0.0) / fired:+.2f}" if fired else "—",
+            "R מתוכנן": f"{c.get('sum_rr_planned', 0.0) / sig:.2f}",
+            "ברים ממוצע": f"{c.get('sum_bars', 0) / fired:.0f}" if fired else "—",
+        })
+    return rows
+
+
+def _bt_run_block(block_no: int, status_cb=None) -> dict:
+    """מריץ בלוק שלם: כל מניותיו × כל טווחי-הזמן. מחזיר דוח JSON-מוכן."""
+    tickers = _BT_BLOCKS.get(int(block_no), [])
+    rep = {"schema": "codex-alpha-backtest/1",
+           "generated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+           "block": int(block_no), "tickers": tickers,
+           "timeframes": list(_BT_TIMEFRAMES),
+           "config": {"window": _BT_WINDOW, "max_points": _BT_MAX_POINTS,
+                      "horizons": list(_BT_HORIZONS),
+                      "trade_max_bars": _BT_TRADE_MAX_BARS,
+                      "entry_source": "_conditional_entries (תוכנית התקיפה, כניסה ראשית)"},
+           "results": {}, "counters": {"phase": {}, "exec": {}}, "trades": [],
+           "errors": []}
+    total = len(tickers) * len(_BT_TIMEFRAMES)
+    done = 0
+    _dbg(f"backtest: בלוק {block_no} — {len(tickers)} מניות × {len(_BT_TIMEFRAMES)} טווחים")
+    for tk in tickers:
+        rep["results"][tk] = {}
+        for tf in _BT_TIMEFRAMES:
+            t0 = _time.time()
+            one = _bt_run_one(tk, tf)
+            done += 1
+            if status_cb:
+                status_cb(done, total, tk, tf)
+            if one.get("error"):
+                rep["errors"].append(f"{tk}/{tf}: {one['error']}")
+            rep["results"][tk][tf] = {
+                "bars": one["bars"], "points": one["points"],
+                "error": one.get("error", ""),
+                "phase": one["phase"], "exec": one["exec"],
+                "risk": _bt_risk_from_trades(one["trades"]),
+                "trades": len(one["trades"]),
+            }
+            _bt_merge_counters(rep["counters"]["phase"], one["phase"])
+            _bt_merge_counters(rep["counters"]["exec"], one["exec"])
+            for t in one["trades"]:
+                t2 = dict(t); t2["ticker"] = tk; t2["tf"] = tf
+                rep["trades"].append(t2)
+            _dbg(f"backtest: {tk}/{tf} → {one['points']} נקודות · "
+                 f"{len(one['trades'])} עסקאות ({_time.time() - t0:.1f}s)"
+                 + (f" · {one['error']}" if one.get("error") else ""))
+    rep["risk"] = _bt_risk_from_trades(rep["trades"])
+    return rep
+
+
+def _bt_merge_reports(reports: list) -> dict:
+    """מאחד דוחות-בלוקים לקובץ-על אחד: מוני-גלם מסוכמים ⇒ אגרגט מדויק."""
+    merged = {"schema": "codex-alpha-backtest-merged/1",
+              "generated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+              "source_blocks": [], "tickers": [], "timeframes": [],
+              "results": {}, "counters": {"phase": {}, "exec": {}},
+              "trades": [], "errors": []}
+    seen_tf = []
+    for rep in reports:
+        if not isinstance(rep, dict):
+            continue
+        if rep.get("block") is not None:
+            merged["source_blocks"].append(rep.get("block"))
+        elif rep.get("source_blocks"):
+            merged["source_blocks"].extend(rep["source_blocks"])
+        for tf in rep.get("timeframes", []):
+            if tf not in seen_tf:
+                seen_tf.append(tf)
+        for tk, per_tf in (rep.get("results") or {}).items():
+            if tk not in merged["tickers"]:
+                merged["tickers"].append(tk)
+            merged["results"].setdefault(tk, {}).update(per_tf or {})
+        _bt_merge_counters(merged["counters"]["phase"],
+                           (rep.get("counters") or {}).get("phase", {}))
+        _bt_merge_counters(merged["counters"]["exec"],
+                           (rep.get("counters") or {}).get("exec", {}))
+        merged["trades"].extend(rep.get("trades") or [])
+        merged["errors"].extend(rep.get("errors") or [])
+    merged["timeframes"] = seen_tf
+    merged["source_blocks"] = sorted({b for b in merged["source_blocks"] if b is not None})
+    merged["risk"] = _bt_risk_from_trades(merged["trades"])
+    merged["summary"] = {"blocks": len(merged["source_blocks"]),
+                         "tickers": len(merged["tickers"]),
+                         "trades": len(merged["trades"]),
+                         "phase_samples": sum(c.get("n", 0) for c in
+                                              merged["counters"]["phase"].values())}
+    return merged
+
+
+def _bt_render_lenses(counters: dict, risk: dict, title_note: str = "") -> None:
+    """שלוש העדשות — תצוגה משותפת לבלוק בודד ולקובץ המאוחד."""
+    import pandas as _pd
+    t1, t2, t3 = st.tabs(["Wyckoff Phase Accuracy", "Trading Execution", "Risk & Portfolio"])
+    with t1:
+        st.markdown("<div class='section-label'>דיוק הפאזה — האם התווית חוזה כיוון</div>",
+                    unsafe_allow_html=True)
+        rows = _bt_phase_view(counters.get("phase", {}))
+        if rows:
+            st.dataframe(_pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.caption("דיוק כיווני = אחוז המקרים שבהם הכיוון בפועל תאם את מסלול הפאזה "
+                       "(שורי/דובי). 50% = מטבע הוגן; מעל 55% = קצה אמיתי.")
+        else:
+            st.info("אין עדיין מדגמים — הרץ בלוק.")
+    with t2:
+        st.markdown("<div class='section-label'>ביצוע בפועל — לפי תוכנית התקיפה</div>",
+                    unsafe_allow_html=True)
+        rows = _bt_exec_view(counters.get("exec", {}))
+        if rows:
+            st.dataframe(_pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.caption("כל שורה = מצב × סוג-כניסה × כיוון, בדיוק כפי שתוכנית התקיפה "
+                       "הייתה מציעה. 'הצתה' = הטריגר נגע בתוך חלון-התוקף. תוחלת ב-R "
+                       "מודדת רווח ביחידות-סיכון (הפסד = ‎-1R).")
+        else:
+            st.info("אין עדיין איתותים — הרץ בלוק.")
+    with t3:
+        st.markdown("<div class='section-label'>סיכון ותיק — מה זה עושה לעקומת ההון</div>",
+                    unsafe_allow_html=True)
+        if risk and risk.get("trades"):
+            c = st.columns(4)
+            c[0].metric("תוחלת לעסקה", f"{risk['expectancy_R']:+.3f}R")
+            c[1].metric("אחוז הצלחה", f"{risk['win_rate']}%")
+            c[2].metric("פקטור רווח", risk.get("profit_factor") or "—")
+            c[3].metric("שפל מצטבר", f"{risk['max_drawdown_R']}R")
+            c2 = st.columns(4)
+            c2[0].metric("סה\"כ עסקאות", risk["trades"])
+            c2[1].metric("סה\"כ R", f"{risk['total_R']:+.1f}")
+            c2[2].metric("רצף הפסדים ארוך", risk["max_losing_streak"])
+            c2[3].metric("ברים ממוצע", risk["avg_bars"])
+            st.caption("בסיכון 1% לעסקה, תוחלת של +0.20R פירושה ~0.2% תשואה ממוצעת "
+                       "לעסקה לפני עמלות. רצף-הפסדים ושפל מצטבר הם מבחן-הסבילות "
+                       "האמיתי לגודל הפוזיציה.")
+        else:
+            st.info("אין עדיין עסקאות — הרץ בלוק.")
+    if title_note:
+        st.caption(title_note)
+
+
 def screen_backtest() -> None:
+    """V38.2 — 3 עדשות + 7 בלוקים + ייצוא/איחוד JSON."""
     _render_screen_nav("misc")
     if not _require_technician_password("Backtest Engine"):
         return
+    import json as _json
+    st.markdown("### Backtest Engine")
+    st.markdown("<span class='doc-meta'>EVIDENCE VAULT // 3 LENSES · 7 BLOCKS</span>",
+                unsafe_allow_html=True)
+    st.caption("המנוע מריץ את תוכנית התקיפה על העבר — נקודה-נקודה, בלי הצצה קדימה — "
+               "ומודד שלוש שאלות: האם הפאזה חוזה כיוון, האם הכניסות עובדות, ומה זה "
+               "עושה לעקומת ההון. המספרים כאן נועדו להחליף הערכות בהוכחות.")
+
+    if "bt_reports" not in st.session_state:
+        st.session_state["bt_reports"] = {}
+
+    st.markdown("<div class='section-label'>בלוקים</div>", unsafe_allow_html=True)
+    st.caption(f"כל בלוק: 4 מניות × {len(_BT_TIMEFRAMES)} טווחים ({', '.join(_BT_TIMEFRAMES)}). "
+               f"הרצה נמשכת כדקה-שתיים לבלוק.")
+    _run_req = None
+    _rows = [list(range(1, 5)), list(range(5, 8))]
+    for _row in _rows:
+        _cols = st.columns(4)
+        for _ci, _bn in enumerate(_row):
+            with _cols[_ci]:
+                _done = "✓ " if _bn in st.session_state["bt_reports"] else ""
+                if st.button(f"{_done}Block {_bn}\n{' · '.join(_BT_BLOCKS[_bn])}",
+                             key=f"bt_block_{_bn}", use_container_width=True):
+                    _run_req = [_bn]
+    if st.button("▶ הרץ הכל (7 בלוקים)", key="bt_run_all", type="primary",
+                 use_container_width=True):
+        _run_req = list(range(1, 8))
+
+    if _run_req:
+        _bar = st.progress(0.0)
+        _lbl = st.empty()
+        _t0 = _time.time()
+        for _bi, _bn in enumerate(_run_req):
+            def _cb(done, total, tk, tf, _b=_bn, _i=_bi):
+                _frac = (_i + done / max(1, total)) / len(_run_req)
+                try:
+                    _bar.progress(min(1.0, _frac), text=f"{int(_frac * 100)}%")
+                except TypeError:
+                    _bar.progress(min(1.0, _frac))
+                _lbl.caption(f"Block {_b} · {tk} · {tf} · {done}/{total} "
+                             f"· {_time.time() - _t0:.0f}s")
+            st.session_state["bt_reports"][_bn] = _bt_run_block(_bn, status_cb=_cb)
+        _bar.empty(); _lbl.empty()
+        st.success(f"הושלמו {len(_run_req)} בלוקים תוך {_time.time() - _t0:.0f} שניות.")
+        _dbg_flush()
+
+    _reports = st.session_state.get("bt_reports") or {}
+    if _reports:
+        _ready = sorted(_reports.keys())
+        _sel = st.selectbox("הצג תוצאות של:", ["כל הבלוקים שהורצו"] +
+                            [f"Block {b}" for b in _ready], key="bt_view_sel")
+        if _sel.startswith("Block"):
+            _rep = _reports[int(_sel.split()[1])]
+            _counters, _risk = _rep["counters"], _rep.get("risk", {})
+            _note = f"בלוק {_rep['block']} · {', '.join(_rep['tickers'])}"
+        else:
+            _rep = _bt_merge_reports([_reports[b] for b in _ready])
+            _counters, _risk = _rep["counters"], _rep.get("risk", {})
+            _note = f"{len(_ready)} בלוקים · {len(_rep['tickers'])} מניות"
+        _bt_render_lenses(_counters, _risk, _note)
+        if _rep.get("errors"):
+            with st.expander(f"אזהרות נתונים ({len(_rep['errors'])})"):
+                for _er in _rep["errors"][:40]:
+                    st.caption(_er)
+
+        st.markdown("<div class='section-label'>ייצוא</div>", unsafe_allow_html=True)
+        _dl = st.columns(min(4, max(1, len(_ready))))
+        for _i, _b in enumerate(_ready):
+            with _dl[_i % len(_dl)]:
+                st.download_button(
+                    f"⬇️ JSON — Block {_b}",
+                    data=_json.dumps(_reports[_b], ensure_ascii=False, indent=1).encode("utf-8"),
+                    file_name=f"codex_backtest_block{_b}.json", mime="application/json",
+                    use_container_width=True, key=f"bt_dl_{_b}")
+
+    st.markdown("---")
+    st.markdown("<div class='section-label'>איחוד קבצים</div>", unsafe_allow_html=True)
+    _ups = st.file_uploader("העלה קבצי JSON של בלוקים (אפשר כמה יחד)", type=["json"],
+                            accept_multiple_files=True, key="bt_merge_up")
+    if st.button("◆ אחד את כל קבצי ה-JSON", key="bt_merge_btn", type="primary",
+                 use_container_width=True, disabled=not _ups):
+        _loaded, _bad = [], []
+        for _f in _ups or []:
+            try:
+                _loaded.append(_json.loads(_f.read().decode("utf-8")))
+            except Exception:
+                _bad.append(_f.name)
+        if _bad:
+            st.error("קבצים שלא נקראו: " + ", ".join(_bad))
+        if _loaded:
+            st.session_state["bt_merged"] = _bt_merge_reports(_loaded)
+    _mg = st.session_state.get("bt_merged")
+    if _mg:
+        _s = _mg.get("summary", {})
+        st.success(f"אוחדו {_s.get('blocks', 0)} בלוקים · {_s.get('tickers', 0)} מניות · "
+                   f"{_s.get('trades', 0)} עסקאות · {_s.get('phase_samples', 0)} מדגמי-פאזה.")
+        _bt_render_lenses(_mg.get("counters", {}), _mg.get("risk", {}),
+                          "תצוגה מאוחדת — מוני-הגלם סוכמו, לא ממוצעים.")
+        st.download_button("⬇️ הורד את הקובץ המאוחד",
+                           data=_json.dumps(_mg, ensure_ascii=False, indent=1).encode("utf-8"),
+                           file_name="codex_backtest_merged.json", mime="application/json",
+                           use_container_width=True, key="bt_dl_merged")
+
+    with st.expander("סימולציית CIS הקלאסית (המנוע הישן — ללא שינוי)"):
+        _bt_legacy_cis_sim()
+    _render_debug_logs()
+
+
+def _bt_legacy_cis_sim() -> None:
     st.markdown("### 📊 Backtest Engine")
     
     st.info("ℹ️ **מה זה בעצם Backtest (בדיקת עבר)?**\n\nמסך זה מאפשר לך 'לחזור בזמן' ולבדוק איך שיטת Wyckoff הייתה עובדת בפועל על המניה שבחרת. המערכת מריצה סימולציה ממוחשבת שבה היא קונה ומוכרת באופן אוטומטי את המניה בכל פעם שהתנאים של כניסת כסף מוסדי (ציון CIS ופאזות איסוף) מתקיימים.\n\n**התוצאות שתראה כאן יעזרו לך להבין:**\n- האם המניה הזו נוטה 'להקשיב' לכללי Wyckoff לאורך זמן?\n- מה ההסתברות שצבירה מוסדית תניב רווח בפועל בנכס הזה?")
@@ -10408,3 +10949,4 @@ if __name__ == "__main__":
 # V37.4 – כריתת השים (הותקן מחדש בכל rerun ⇒ שרשרת שכבות ⇒ סמפור נגמר ⇒ קיפאון נצחי). המסלול חזר ל-V33.3 המוכח; יומן שורד-reruns; הגנת פילוח-ריק.
 # V38.0 – סריקת-פעימות (מנות של 10, מנוע יחיד, קצב-מסתגל, תוצאות-חלקיות שורדות) + _CoreProxy שמגיש מטמון לליבה במקום הורדה כפולה (ללא monkey-patch).
 # V38.1 – מטמון-מחירים 64→700 (סוף ההורדה הכפולה), _fnum סלחני בניקוד-הערך (מחרוזות עם % נבלעו), flush ליומן, שקיפות כשהמבני ריק.
+# V38.2 – Backtesting: 3 עדשות (דיוק-פאזה / ביצוע-תקיפה / סיכון-תיק), 7 בלוקים × 4 טווחים, ייצוא JSON פר-בלוק + איחוד קבצים על מוני-גלם. הקלאסי נשמר.
