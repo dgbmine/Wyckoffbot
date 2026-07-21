@@ -1,8 +1,22 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.0 (Dual Doctrine · Elessar)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.1 (Core Data Shim)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V37.1 — שורש-השורשים + שקיפות-ליבה מלאה (חקירה עם הליבה האמיתית בקונטיינר):
+  הוכח: המנוע בריא — Phase E מזוהה, השערים פוסלים בצדק, אפס חריגות. הכשל
+  סביבתי: market_scanner קורא scout_core.get_data *ישירות* (רשת גולמית,
+  לא-מוקאש, שורה 319) — V36.1 יצר לראשונה 4 זרמי-הורדה מקבילים בתוך שלב-
+  הסריקה ⇒ חנק-קצב ⇒ נתונים ריקים ⇒ pruned_quick בולע הכל בשקט, בכל הסורקים.
+  • שים-הנתונים: scout_core.get_data מוחלף בזמן-ריצה בעטיפה שמגישה את
+    המטמון-החם של האפליקציה (שה-prefetch מילא) — שלב-הסריקה הופך ל-CPU-בלבד;
+    רק החמצות יורדות לרשת, תחת סמפור(3). קבצי-הליבה לא נערכו; נסיגה מלאה
+    למקור בכל כשל. המקביליות (בלוקים) בטוחה כעת מעצם-הגדרתה.
+  • שקיפות מוני-הליבה: pruned_quick/wyckoff/fundamental/weak/errors נאספים
+    מכל shard ומוצגים בכל סורק שמחזיר ריק ("🔬 שקיפות הליבה: ...") — הריצה
+    הבאה נוקבת בשם השער, לא מנחשת. ערוצי-prefetch רוככו 12→8. קוד-מת
+    (_get_home_scan_pool→SECTOR_MAP) נמחק.
 
 V37.0 — תיקון הסורק + "תמצא לי" דו-מנועי עם אבן האיחוד (ELESSAR):
   תיקון (הדיווח "לא נמצאו שילובים"): שני פגמי V36.1 —
@@ -3384,6 +3398,38 @@ def get_fundamental_data(ticker: str) -> dict:
         return _enrich_fundamentals_inhouse(ticker, base)
 
 
+# ============================================================
+# V37.1 — שים-הנתונים לליבה: הסורק קורא scout_core.get_data ישירות (רשת
+# גולמית, לא-מוקאש). מכאן: כל קריאה כזו מוגשת קודם מהמטמון-החם של האפליקציה
+# (שה-prefetch כבר מילא); רק החמצה יורדת לרשת — תחת סמפור(3). קבצי הליבה לא
+# נערכו — הזרקת-תלות בזמן-ריצה, עם נסיגה מלאה למקור בכל כשל.
+# ============================================================
+_NET_SEM = threading.Semaphore(3)
+_orig_core_get_data = None
+try:
+    _scm_ref = globals().get("_sc_module")
+    if _scm_ref is not None and hasattr(_scm_ref, "get_data"):
+        _orig_core_get_data = _scm_ref.get_data
+
+        def _shimmed_get_data(ticker, period="2y", start=None, end=None):
+            if start is None and end is None:
+                try:
+                    _df = get_cached_data(ticker)
+                    if _df is not None and not getattr(_df, "empty", True) and len(_df) >= 60:
+                        return _df
+                except Exception:
+                    pass
+            try:
+                with _NET_SEM:
+                    return _orig_core_get_data(ticker, period=period, start=start, end=end)
+            except Exception:
+                return pd.DataFrame()
+
+        _scm_ref.get_data = _shimmed_get_data
+except Exception:
+    pass
+
+
 def assess_data_freshness(df: pd.DataFrame, fund_data: dict = None) -> dict:
     """
     בודק טריות נתוני מחיר (מודע לסופ"ש) + איכות נתונים פונדמנטליים.
@@ -6635,27 +6681,7 @@ def screen_trade_strategy() -> None:
                "אין למערכת התראות — נהל לפי התוכנית הכתובה.")
 
 
-def _get_home_scan_pool(width_label: str) -> list:
-    """בונה את יקום הסריקה בפועל לפי רוחב החיפוש שנבחר."""
-    master = SECTOR_MAP.get("הכול (כל השוק האמריקאי)", [])
-    if width_label == "24":
-        return HOME_SCAN_UNIVERSE
-    if width_label == "50":
-        pool = list(HOME_SCAN_UNIVERSE)
-        for t in master:
-            if t not in pool:
-                pool.append(t)
-            if len(pool) >= 50:
-                break
-        return pool
-    # "100+"
-    pool = list(HOME_SCAN_UNIVERSE)
-    for t in master:
-        if t not in pool:
-            pool.append(t)
-    return pool
-
-
+# V37.1: _get_home_scan_pool נמחק (קוד-מת מהזרקור הישן; הפנה ל-SECTOR_MAP שאינו קיים).
 def _render_pick_result_card(p: dict, idx: int, key_prefix: str, dest_page: str = "🏠 בית") -> None:
     """
     רכיב משותף לכרטיס תוצאת סריקה (מניה + Verdict + ציון) - מקור אמת יחיד.
@@ -7414,7 +7440,7 @@ def _fmt_mmss(sec: float) -> str:
         return "--:--"
 
 
-_STAGE_HE = {"fetch": "מוריד מחירים במקביל (12 ערוצים)",
+_STAGE_HE = {"fetch": "מוריד מחירים במקביל (8 ערוצים)",
              "fund": "מחמם נתונים פונדמנטליים במקביל (10 ערוצים)",
              "scan": "מנועי Wyckoff מקביליים על בלוקים",
              "filter": "מסנן לפי הצירים שבחרת"}
@@ -7634,6 +7660,11 @@ def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> l
             out = sc.scan_market(mode="balanced", max_tickers=len(sl) or 1,
                                  universe=sl, top_n=min(len(sl), max(int(top_n), 5)),
                                  progress_callback=_cb)
+            with lock:
+                _cs = status.setdefault("core_stats", {})
+                for _k, _v in ((out or {}).get("stats", {}) or {}).items():
+                    if isinstance(_v, (int, float)):
+                        _cs[_k] = _cs.get(_k, 0) + _v
             return (out or {}).get("results", []) or []
         except Exception as exc:
             with lock:
@@ -7671,7 +7702,7 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
     """
     try:
         _stage_begin(status, "fetch", len(universe))
-        pruned = _parallel_prefetch(universe, status, workers=12)
+        pruned = _parallel_prefetch(universe, status, workers=8)
         _stage_end(status, "fetch")
 
         _stage_begin(status, "scan", len(pruned))
@@ -7693,6 +7724,7 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
         box["stats"] = {"fetched": int(status.get("fetch_total", 0) or 0),
                         "scanned": int(status.get("scan_total", 0) or 0),
                         "errors": list(status.get("shard_errors", []) or []),
+                        "core": dict(status.get("core_stats", {}) or {}),
                         "note": status.get("engine_note", "")}
         box["done"] = True
 
@@ -7741,6 +7773,11 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
         _time.sleep(0.5)
     th.join(timeout=5)
     _msg.empty(); _clock.empty(); _bar.empty(); _sub.empty()
+    if not box.get("error") and not (box.get("results") or box.get("filtered")):
+        _cs = (box.get("stats", {}) or {}).get("core") or {}
+        if _cs:
+            st.caption("🔬 שקיפות הליבה: " +
+                       " · ".join(f"{_k}={_v}" for _k, _v in _cs.items() if _v))
     return box
 
 
@@ -7795,7 +7832,7 @@ def _dual_find_job(universe: list, stT: dict, stV: dict, box: dict) -> None:
     try:
         _stage_begin(stT, "fetch", len(universe))
         _stage_begin(stV, "fetch", len(universe))
-        pruned = _parallel_prefetch(universe, stT, workers=12)
+        pruned = _parallel_prefetch(universe, stT, workers=8)
         _stage_end(stT, "fetch")
         stV["fetch_done"] = stV["fetch_total"]
         _stage_end(stV, "fetch")
@@ -7852,6 +7889,7 @@ def _dual_find_job(universe: list, stT: dict, stV: dict, box: dict) -> None:
                         "valued": int(stV.get("value_total", 0) or 0),
                         "errors": list(stT.get("shard_errors", []) or []) +
                                   list(stV.get("errors", []) or []),
+                        "core": dict(stT.get("core_stats", {}) or {}),
                         "note": stT.get("engine_note", "")}
         box["done"] = True
 
@@ -8394,6 +8432,10 @@ def screen_home() -> None:
                            + (f" · {_fst.get('note')}" if _fst.get("note") else ""))
                 for _er in (_fst.get("errors") or [])[:2]:
                     st.caption(f"⚠️ מנוע: {_er}")
+                _cs = _fst.get("core") or {}
+                if _cs:
+                    st.caption("🔬 שקיפות הליבה: " +
+                               " · ".join(f"{_k}={_v}" for _k, _v in _cs.items() if _v))
         else:
             if tech:
                 st.markdown(f"<div class='section-label'>המנוע המבני — Wyckoff "
@@ -10002,3 +10044,4 @@ if __name__ == "__main__":
 # V36.0 – רדיזיין מוסדי: הסרת ≥20% אלמנטים/מסך, עומק-שכבות במקום גבולות, ברונזה −53%, חתימת פס-סיווג אנכי, פקודות במקום כפתורים, דה-סטרימליט. אפס לוגיקה.
 # V36.1 – Scan Turbo: 3 שלבים מקביליים (מחירים 12ch → פונדמנטלי 10ch → מנועי-ליבה על בלוקים 4x) + ETA מבוסס-קצב + שעון חד-כיווני. חתימות ללא שינוי.
 # V37.0 – תיקון אפס-שקרי (שגיאות גלויות+fallback סדרתי) + סמפור-429 + תמצא-לי דו-מנועי (Wyckoff ∥ ערך, 2 ברים) + ◆ אבן האיחוד (ELESSAR) לחיתוך הדוקטרינות.
+# V37.1 – שים-נתונים: המטמון-החם מוזרם ל-scout_core.get_data (סריקה=CPU-בלבד, רשת רק בהחמצה+סמפור); שקיפות מוני-הליבה בכל סורק ריק; 12→8 ערוצים; קוד-מת נמחק.
