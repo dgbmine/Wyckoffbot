@@ -1,8 +1,23 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.4 (Unshimmed — Deadlock Fix)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.0 (Pulse Scan)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V38.0 — סריקת-פעימות (בקשת המשתמש) + ביטול ההורדה הכפולה:
+  אבחנה כנה: פעימות לבדן אינן מקצרות זמן — אותה עבודה בדיוק. הבזבוז האמיתי
+  היה שכל טיקר ירד *פעמיים*: פעם ב-prefetch המקבילי (8 ערוצים) ופעם שוב ע"י
+  הליבה, שסורקת סדרתית ומורידה בעצמה. הפעימות הן המסגרת לתיקון:
+  • _CoreProxy — אובייקט-פרוקסי שנמסר ל-MarketScanner במקום המודול, ומגיש
+    את המטמון-החם במקום הורדה חוזרת. *אין monkey-patch* (ההבדל הקריטי מ-V37.1
+    שגרם לקיפאון): נוצר בכל סריקה, מת בסופה, שאר התכונות שקופות למודול.
+    התוצאה: שלב הסריקה הופך לחישוב-טהור — הרשת כולה מתבצעת פעם אחת, במקביל.
+  • _pulse_scan — היקום נסרק במנות של 10 עם מנוע-ליבה יחיד (בטוח): תוצאות
+    חלקיות שורדות כשל-מנה; קצב-מסתגל (מנה עם שגיאות ⇒ האטה מוכפלת עד 4ש',
+    מנה נקייה ⇒ חזרה למלוא הקצב); עצירה מוקדמת אחרי 4 מנות כושלות ברצף;
+    יומן פר-פעימה (כמה עברו, כמה זמן, יחס פגיעות-מטמון). למשתמש — סריקה
+    אחת רציפה; מתחת למכסה — פעימות.
+  • יחס פגיעות-המטמון מוצג ביומן ובשקיפות (אימות חי שההורדה הכפולה בוטלה).
 
 V37.4 — 🔴 תיקון-השורש: קיפאון-מוחלט (הכל נתקע: בדיקת-מניה + כל הסורקים).
   האבחנה (אושרה בשחזור-מעבדה): שים-הנתונים של V37.1 הותקן מחדש בכל rerun
@@ -7542,7 +7557,9 @@ def _render_debug_logs() -> None:
             lines = [f"{t} [{th}] {m}" for t, th, m in keep[-240:]]
             st.code("\n".join(lines) if lines else "(היומן ריק — טרם בוצעה פעולה)",
                     language=None)
-            st.caption(f"קריאות-רשת בסשן: {_NET_SEEN['n']} · שורות ביומן: {len(keep)}")
+            st.caption(f"קריאות-רשת בסשן: {_NET_SEEN['n']} · שורות ביומן: {len(keep)}"
+                       + (f" · מטמון-ליבה אחרון: {st.session_state.get('_last_proxy_cache')}"
+                          if st.session_state.get("_last_proxy_cache") else ""))
             _c1, _c2 = st.columns(2)
             with _c1:
                 if st.button("🩺 בדיקת-מערכת", key="dbg_selftest", use_container_width=True):
@@ -7593,9 +7610,9 @@ def _watchdog_check(prog_sig, last_sig, stall_ts, now, deadline,
 
 _STAGE_HE = {"fetch": "מוריד מחירים במקביל (8 ערוצים)",
              "fund": "מחמם נתונים פונדמנטליים במקביל (10 ערוצים)",
-             "scan": "מנועי Wyckoff מקביליים על בלוקים",
+             "scan": "סריקת Wyckoff בפעימות (10 בכל פעימה)",
              "filter": "מסנן לפי הצירים שבחרת"}
-_STAGE_UNIT_DEFAULT = {"fetch": 0.06, "fund": 0.16, "scan": 0.85, "filter": 0.02}
+_STAGE_UNIT_DEFAULT = {"fetch": 0.09, "fund": 0.16, "scan": 0.12, "filter": 0.02}
 
 
 def _stage_unit_est(status: dict, stage: str) -> float:
@@ -7780,12 +7797,109 @@ def _shard_slices(items: list, shards: int) -> list:
     return [s for s in out if s]
 
 
+class _CoreProxy:
+    """
+    V38.0 — פרוקסי-ליבה: נמסר ל-MarketScanner במקום המודול עצמו, ומגיש את
+    המטמון-החם של האפליקציה במקום הורדה חוזרת. *אין* monkey-patch על המודול
+    (זה מה שיצר את שרשרת-השכבות והקיפאון ב-V37.1): האובייקט נוצר מחדש בכל
+    סריקה, מת בסופה, וכל שאר התכונות עוברות שקופות למודול האמיתי.
+    """
+
+    def __init__(self, mod, cache_fn=None):
+        self._mod = mod
+        self._cache_fn = cache_fn or get_cached_data
+        self.hits = 0
+        self.misses = 0
+
+    def __getattr__(self, name):          # כל השאר — שקוף אל הליבה
+        return getattr(self._mod, name)
+
+    def get_data(self, ticker, period="2y", start=None, end=None):
+        if start is None and end is None:
+            try:
+                df = self._cache_fn(ticker)
+                if df is not None and not getattr(df, "empty", True) and len(df) >= 60:
+                    self.hits += 1
+                    return df
+            except Exception:
+                pass
+        self.misses += 1
+        try:
+            return self._mod.get_data(ticker, period, start, end)
+        except Exception:
+            return pd.DataFrame()
+
+
+def _pulse_scan(pruned: list, top_n: int, status: dict, chunk_size: int = 10) -> list:
+    """
+    V38.0 — סריקת-פעימות: היקום נסרק במנות של 10, מנוע-ליבה *יחיד* (בטוח),
+    כשהמחירים כבר במטמון ⇒ הפעימה היא חישוב-טהור. יתרונות: תוצאות חלקיות
+    שורדות כשל-מנה; קצב-מסתגל (מנה בעייתית ⇒ האטה זמנית); יומן פר-פעימה;
+    והקיפאון מזוהה ברזולוציה של מנה. חוויית המשתמש — סריקה אחת רציפה.
+    """
+    results, n = [], len(pruned)
+    if n == 0:
+        return []
+    chunks = [pruned[i:i + chunk_size] for i in range(0, n, chunk_size)]
+    status["scan_total"] = n
+    status.setdefault("scan_done", 0)
+    proxy = _CoreProxy(_sc_module)
+    pause, bad_streak = 0.0, 0
+    _dbg(f"pulse-scan: {n} טיקרים ב-{len(chunks)} פעימות (מנה={chunk_size})")
+    for i, ch in enumerate(chunks, 1):
+        t0 = _time.time()
+        before = len(results)
+        try:
+            sc = MarketScanner(proxy)
+            def _cb(done, total, ticker, stats, _base=status.get("scan_done", 0)):
+                status["scan_done"] = _base + int(done or 0)
+                status["ticker"] = ticker
+            out = sc.scan_market(mode="balanced", max_tickers=len(ch), universe=ch,
+                                 top_n=len(ch), progress_callback=_cb)
+            results.extend((out or {}).get("results", []) or [])
+            cs = status.setdefault("core_stats", {})
+            for k, v in ((out or {}).get("stats", {}) or {}).items():
+                if isinstance(v, (int, float)):
+                    cs[k] = cs.get(k, 0) + v
+            errs = int(((out or {}).get("stats", {}) or {}).get("errors", 0) or 0)
+        except Exception as exc:
+            status.setdefault("shard_errors", []).append(f"{type(exc).__name__}: {exc}")
+            _dbg(f"pulse {i}/{len(chunks)}: 💥 {type(exc).__name__}: {str(exc)[:80]}")
+            errs = len(ch)
+        status["scan_done"] = min(n, i * chunk_size)
+        status["passed"] = len(results)
+        _dbg(f"pulse {i}/{len(chunks)}: {len(ch)} טיקרים → {len(results) - before} עברו "
+             f"({_time.time() - t0:.1f}s · מטמון {proxy.hits}/{proxy.hits + proxy.misses})")
+        if errs:
+            bad_streak += 1
+            pause = min(4.0, (pause or 0.5) * 2)
+            _dbg(f"pulse: קצב-מסתגל — האטה ל-{pause:.1f}s (שגיאות={errs})")
+        else:
+            bad_streak = 0
+            pause = 0.0
+        if bad_streak >= 4:
+            _dbg("pulse: 4 מנות כושלות ברצף — עצירה מוקדמת, מחזיר את מה שנאסף")
+            break
+        if pause:
+            _time.sleep(pause)
+    status["proxy_cache"] = f"{proxy.hits}/{proxy.hits + proxy.misses}"
+    try:
+        results.sort(key=lambda r: float(r.get("composite", 0) or 0), reverse=True)
+    except Exception:
+        pass
+    _dbg(f"pulse-scan end: {len(results)} מועמדות · מטמון-ליבה {proxy.hits} פגיעות / "
+         f"{proxy.misses} החמצות")
+    return results[:int(top_n)]
+
+
 def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> list:
     """
     V36.1, שלב 2 — מנועי-סריקה מקביליים: היקום נחתך לבלוקים, כל בלוק נסרק ע"י
     MarketScanner משלו ב-thread (הליבה לא שונתה — מורצת מספר פעמים במקביל על
     מטמון חם). התקדמות מצטברת גלובלית (delta+lock); מיזוג לפי הציון המשוקלל.
     """
+    if shards in (None, 1):
+        return _pulse_scan(pruned, top_n, status)      # V38.0 — המסלול הרגיל
     n = len(pruned)
     if shards is None:
         # V37.4: מנוע יחיד סדרתי — בדיוק כמו הגרסה המוכחת. מנועים מקבילים
@@ -7890,6 +8004,7 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
                         "scanned": int(status.get("scan_total", 0) or 0),
                         "errors": list(status.get("shard_errors", []) or []),
                         "core": dict(status.get("core_stats", {}) or {}),
+                        "cache": status.get("proxy_cache", ""),
                         "note": status.get("engine_note", "")}
         box["done"] = True
 
@@ -7953,9 +8068,11 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
         st.error(f"⚠️ {box['error']}")
     if not (box.get("results") or box.get("filtered")):
         _cs = (box.get("stats", {}) or {}).get("core") or {}
+        _cache = (box.get("stats", {}) or {}).get("cache") or ""
         if _cs:
             st.caption("🔬 שקיפות הליבה: " +
-                       " · ".join(f"{_k}={_v}" for _k, _v in _cs.items() if _v))
+                       " · ".join(f"{_k}={_v}" for _k, _v in _cs.items() if _v)
+                       + (f" · מטמון-ליבה {_cache}" if _cache else ""))
     _dbg(f"scan end: results={len(box.get('results') or [])} · err={box.get('error','')[:60]}")
     _render_debug_logs()
     return box
@@ -8071,6 +8188,7 @@ def _dual_find_job(universe: list, stT: dict, stV: dict, box: dict) -> None:
                         "errors": list(stT.get("shard_errors", []) or []) +
                                   list(stV.get("errors", []) or []),
                         "core": dict(stT.get("core_stats", {}) or {}),
+                        "cache": stT.get("proxy_cache", ""),
                         "note": stT.get("engine_note", "")}
         box["done"] = True
 
@@ -8194,6 +8312,7 @@ def _run_find_scan() -> None:
                                              "value": box.get("value", []) or []}
     st.session_state.home_scan_results = box.get("tech", []) or []
     st.session_state["find_scan_stats"] = box.get("stats", {})
+    st.session_state["_last_proxy_cache"] = (box.get("stats", {}) or {}).get("cache", "")
     st.session_state.scan_card_index = 0
     st.session_state["val_card_index"] = 0
     st.session_state["elessar_open"] = False
@@ -8631,7 +8750,9 @@ def screen_home() -> None:
                 _cs = _fst.get("core") or {}
                 if _cs:
                     st.caption("🔬 שקיפות הליבה: " +
-                               " · ".join(f"{_k}={_v}" for _k, _v in _cs.items() if _v))
+                               " · ".join(f"{_k}={_v}" for _k, _v in _cs.items() if _v)
+                               + (f" · מטמון-ליבה {_fst.get('cache', '')}"
+                                  if _fst.get("cache") else ""))
         else:
             if tech:
                 st.markdown(f"<div class='section-label'>המנוע המבני — Wyckoff "
@@ -10247,3 +10368,4 @@ if __name__ == "__main__":
 # V37.2 – כלב-שמירה (קיפאון-120ש'/דדליין-8ד' ⇒ עצירה מאובחנת) + יומן-מנוע סמוי בכל מסכי-הסריקה + מגן-כניסה-חוזרת ומוני-שים. תקיעה אילמת = בלתי-אפשרית.
 # V37.3 – מקליט-טיסה: timeout-רשת קשיח 25ש' על כל fetch (כולל תבדוק-לי), 🩺 בדיקת-מערכת (גרסאות+SPY מדוד), מקליט-rerun/check, יומן בכל מסך.
 # V37.4 – כריתת השים (הותקן מחדש בכל rerun ⇒ שרשרת שכבות ⇒ סמפור נגמר ⇒ קיפאון נצחי). המסלול חזר ל-V33.3 המוכח; יומן שורד-reruns; הגנת פילוח-ריק.
+# V38.0 – סריקת-פעימות (מנות של 10, מנוע יחיד, קצב-מסתגל, תוצאות-חלקיות שורדות) + _CoreProxy שמגיש מטמון לליבה במקום הורדה כפולה (ללא monkey-patch).
