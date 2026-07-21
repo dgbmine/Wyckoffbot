@@ -1,8 +1,20 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.1 (Core Data Shim)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V37.2 (Watchdog · Engine Log)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V37.2 — שני חוקי-ברזל חדשים: אסור-להיתקע, אסור-לשתוק (בעקבות דיווח
+        "טוען ולא קורה כלום, הבר לא מתמלא"):
+  • כלב-שמירה בשתי לולאות-הסריקה: אין התקדמות 120ש' ⇒ עצירה עם אבחנה
+    מפורשת ("קיפאון בשלב X, טיקר אחרון Y"); תקרת-זמן כוללת 8 דק'. תקיעה
+    אילמת הפכה לבלתי-אפשרית — במקומה תמיד תופיע הודעה + שקיפות-הליבה + יומן.
+  • יומן-מנוע סמוי (בקשת המשתמש): מגירה זעירה "⚙ יומן מנוע" בתחתית כל מסכי
+    הסריקה (רגיל, דו-מנועי, ומסך-התוצאות) — Ring-Buffer 400 שורות בזיכרון-
+    התהליך (בטוח-threads), עם חותמות-זמן, שם-thread, אירועי-שלבים, shards,
+    שגיאות, ומוני-השים (hit/miss/רשת/re-entry) + כפתור ניקוי.
+  • השים חוסן: מגן-כניסה-חוזרת (thread-local) — קריאה מקוננת עוקפת ישר
+    למקור; כל נתיב מדווח ליומן. שגיאת-סריקה מוצגת כעת גם בסורקי-הספירה.
 
 V37.1 — שורש-השורשים + שקיפות-ליבה מלאה (חקירה עם הליבה האמיתית בקונטיינר):
   הוכח: המנוע בריא — Phase E מזוהה, השערים פוסלים בצדק, אפס חריגות. הכשל
@@ -3411,19 +3423,39 @@ try:
     if _scm_ref is not None and hasattr(_scm_ref, "get_data"):
         _orig_core_get_data = _scm_ref.get_data
 
+        _shim_local = threading.local()
+
         def _shimmed_get_data(ticker, period="2y", start=None, end=None):
-            if start is None and end is None:
+            if getattr(_shim_local, "busy", False):          # קריאה-מקוננת ⇒ עוקפים ישר למקור
+                _SHIM_STATS["reentry"] += 1
                 try:
-                    _df = get_cached_data(ticker)
-                    if _df is not None and not getattr(_df, "empty", True) and len(_df) >= 60:
-                        return _df
+                    with _NET_SEM:
+                        return _orig_core_get_data(ticker, period=period, start=start, end=end)
                 except Exception:
-                    pass
+                    return pd.DataFrame()
+            _shim_local.busy = True
             try:
-                with _NET_SEM:
-                    return _orig_core_get_data(ticker, period=period, start=start, end=end)
-            except Exception:
-                return pd.DataFrame()
+                if start is None and end is None:
+                    try:
+                        _df = get_cached_data(ticker)
+                        if _df is not None and not getattr(_df, "empty", True) and len(_df) >= 60:
+                            _SHIM_STATS["hit"] += 1
+                            if _SHIM_STATS["hit"] % 50 == 1:
+                                _dbg(f"shim: hit#{_SHIM_STATS['hit']} {ticker}")
+                            return _df
+                    except Exception as _e:
+                        _dbg(f"shim: cache-err {ticker}: {type(_e).__name__}")
+                _SHIM_STATS["miss"] += 1
+                try:
+                    with _NET_SEM:
+                        _SHIM_STATS["net"] += 1
+                        _dbg(f"shim: net {ticker} (miss#{_SHIM_STATS['miss']})")
+                        return _orig_core_get_data(ticker, period=period, start=start, end=end)
+                except Exception as _e:
+                    _dbg(f"shim: net-err {ticker}: {type(_e).__name__}")
+                    return pd.DataFrame()
+            finally:
+                _shim_local.busy = False
 
         _scm_ref.get_data = _shimmed_get_data
 except Exception:
@@ -7440,6 +7472,61 @@ def _fmt_mmss(sec: float) -> str:
         return "--:--"
 
 
+# ============================================================
+# V37.2 — יומן-מנוע (Ring Buffer מודולרי, בטוח-threads) + כלב-שמירה טהור.
+# הלוגים חיים בזיכרון-התהליך (לא ב-session) כדי ש-threads יוכלו לכתוב בבטחה.
+# ============================================================
+_DBG_LOCK = threading.Lock()
+_DBG_RING = []          # [(ts_str, thread, msg)]
+_DBG_MAX = 400
+_SHIM_STATS = {"hit": 0, "miss": 0, "net": 0, "reentry": 0}
+
+
+def _dbg(msg: str) -> None:
+    try:
+        with _DBG_LOCK:
+            _DBG_RING.append((_time.strftime("%H:%M:%S"),
+                              threading.current_thread().name[:12], str(msg)[:220]))
+            if len(_DBG_RING) > _DBG_MAX:
+                del _DBG_RING[: len(_DBG_RING) - _DBG_MAX]
+    except Exception:
+        pass
+
+
+def _render_debug_logs() -> None:
+    """תיבת-לוגים סמויה: כפתור/מגירה זעירה בתחתית מסכי-הסריקה (בקשת המשתמש)."""
+    try:
+        with st.expander("⚙ יומן מנוע — הצצה מתחת למכסה", expanded=False):
+            with _DBG_LOCK:
+                lines = [f"{t} [{th}] {m}" for t, th, m in _DBG_RING[-220:]]
+            st.code("\n".join(lines) if lines else "(היומן ריק — טרם רצה סריקה)",
+                    language=None)
+            st.caption(f"שים: hit={_SHIM_STATS['hit']} · miss={_SHIM_STATS['miss']} · "
+                       f"רשת={_SHIM_STATS['net']} · re-entry={_SHIM_STATS['reentry']}")
+            if st.button("נקה יומן", key="dbg_clear"):
+                with _DBG_LOCK:
+                    _DBG_RING.clear()
+                st.rerun()
+    except Exception:
+        pass
+
+
+def _watchdog_check(prog_sig, last_sig, stall_ts, now, deadline,
+                    stage="", ticker="", stall_after=120.0):
+    """
+    טהור: מחזיר (last_sig, stall_ts, err|None). err נקבע אם אין התקדמות
+    stall_after שניות, או שחצינו את הדדליין הכולל.
+    """
+    if prog_sig != last_sig:
+        last_sig, stall_ts = prog_sig, now
+    if now - stall_ts > stall_after:
+        return last_sig, stall_ts, (f"קיפאון-מנוע: אין התקדמות {int(stall_after)}ש' "
+                                    f"בשלב '{stage}' (טיקר אחרון: {ticker or '—'})")
+    if now > deadline:
+        return last_sig, stall_ts, "חריגת-זמן כוללת (8 דקות) — הסריקה הופסקה"
+    return last_sig, stall_ts, None
+
+
 _STAGE_HE = {"fetch": "מוריד מחירים במקביל (8 ערוצים)",
              "fund": "מחמם נתונים פונדמנטליים במקביל (10 ערוצים)",
              "scan": "מנועי Wyckoff מקביליים על בלוקים",
@@ -7656,6 +7743,7 @@ def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> l
                 except Exception:
                     pass
         try:
+            _dbg(f"shard#{idx}: start ({len(sl)} טיקרים)")
             sc = MarketScanner(_sc_module)
             out = sc.scan_market(mode="balanced", max_tickers=len(sl) or 1,
                                  universe=sl, top_n=min(len(sl), max(int(top_n), 5)),
@@ -7665,10 +7753,13 @@ def _sharded_core_scan(pruned: list, top_n: int, status: dict, shards=None) -> l
                 for _k, _v in ((out or {}).get("stats", {}) or {}).items():
                     if isinstance(_v, (int, float)):
                         _cs[_k] = _cs.get(_k, 0) + _v
-            return (out or {}).get("results", []) or []
+            _res_ = (out or {}).get("results", []) or []
+            _dbg(f"shard#{idx}: done → {len(_res_)} תוצאות")
+            return _res_
         except Exception as exc:
             with lock:
                 status.setdefault("shard_errors", []).append(f"{type(exc).__name__}: {exc}")
+            _dbg(f"shard#{idx}: 💥 {type(exc).__name__}: {str(exc)[:90]}")
             return []
 
     if len(slices) == 1:
@@ -7702,8 +7793,10 @@ def _scan_job(universe: list, top_n: int, status: dict, box: dict, do_filter=Non
     """
     try:
         _stage_begin(status, "fetch", len(universe))
+        _dbg(f"fetch begin: {len(universe)}")
         pruned = _parallel_prefetch(universe, status, workers=8)
         _stage_end(status, "fetch")
+        _dbg(f"fetch end: שרדו {len(pruned)}/{len(universe)}")
 
         _stage_begin(status, "scan", len(pruned))
         results = _sharded_core_scan(pruned, top_n, status)
@@ -7755,9 +7848,20 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
         f"<div style='color:#94a3b8; margin-top:4px;'>התוצאות יוצגו רק בסיום המלא.</div>"
         f"</div>", unsafe_allow_html=True)
     shown, last_t = None, _time.time()
+    _wd_last, _wd_ts, _deadline = None, _time.time(), _time.time() + 480
+    _dbg(f"scan start: {len(universe)} טיקרים · שלבים={stage_order}")
     while not box.get("done"):
         now = _time.time()
         dt, last_t = max(0.05, now - last_t), now
+        _sig = (status.get("fetch_done", 0), status.get("scan_done", 0),
+                status.get("filter_done", 0))
+        _wd_last, _wd_ts, _wd_err = _watchdog_check(
+            _sig, _wd_last, _wd_ts, now, _deadline,
+            stage=status.get("stage", ""), ticker=status.get("ticker", ""))
+        if _wd_err:
+            box["error"] = _wd_err
+            _dbg(f"WATCHDOG: {_wd_err}")
+            break
         shown = _eta_display_step(shown, _scan_eta(status), dt)
         frac = _scan_progress_frac(status)
         _clock.markdown(
@@ -7773,11 +7877,15 @@ def _run_scan_with_countdown(universe: list, top_n: int, headline: str,
         _time.sleep(0.5)
     th.join(timeout=5)
     _msg.empty(); _clock.empty(); _bar.empty(); _sub.empty()
-    if not box.get("error") and not (box.get("results") or box.get("filtered")):
+    if box.get("error"):
+        st.error(f"⚠️ {box['error']}")
+    if not (box.get("results") or box.get("filtered")):
         _cs = (box.get("stats", {}) or {}).get("core") or {}
         if _cs:
             st.caption("🔬 שקיפות הליבה: " +
                        " · ".join(f"{_k}={_v}" for _k, _v in _cs.items() if _v))
+    _dbg(f"scan end: results={len(box.get('results') or [])} · err={box.get('error','')[:60]}")
+    _render_debug_logs()
     return box
 
 
@@ -7832,6 +7940,7 @@ def _dual_find_job(universe: list, stT: dict, stV: dict, box: dict) -> None:
     try:
         _stage_begin(stT, "fetch", len(universe))
         _stage_begin(stV, "fetch", len(universe))
+        _dbg(f"dual fetch begin: {len(universe)}")
         pruned = _parallel_prefetch(universe, stT, workers=8)
         _stage_end(stT, "fetch")
         stV["fetch_done"] = stV["fetch_total"]
@@ -7963,9 +8072,20 @@ def _run_find_scan() -> None:
     lT = st.empty(); bT = st.progress(0.0)
     lV = st.empty(); bV = st.progress(0.0)
     shownT, shownV, last_t = None, None, _time.time()
+    _wd_last, _wd_ts, _deadline = None, _time.time(), _time.time() + 480
+    _dbg(f"dual-scan start: {len(universe)} טיקרים")
     while not box.get("done"):
         now = _time.time()
         dt, last_t = max(0.05, now - last_t), now
+        _sig = (stT.get("fetch_done", 0), stT.get("scan_done", 0), stV.get("value_done", 0))
+        _wd_last, _wd_ts, _wd_err = _watchdog_check(
+            _sig, _wd_last, _wd_ts, now, _deadline,
+            stage=f"{stT.get('stage','')}/{stV.get('stage','')}",
+            ticker=stT.get("ticker") or stV.get("ticker", ""))
+        if _wd_err:
+            box["error"] = _wd_err
+            _dbg(f"WATCHDOG(dual): {_wd_err}")
+            break
         if stT.get("stage") == "fetch":                      # שלב משותף — שני הברים בתנועה
             stV["fetch_done"] = stT.get("fetch_done", 0)
         shownT = _eta_display_step(shownT, _scan_eta(stT), dt)
@@ -7995,6 +8115,8 @@ def _run_find_scan() -> None:
         st.session_state.home_scan_results = []
         st.session_state["dual_scan_results"] = {}
         st.error(f"⚠️ שגיאה בסריקה: {box['error']}")
+        _dbg(f"dual end (error): {box['error'][:80]}")
+        _render_debug_logs()
         return
     st.session_state["dual_scan_results"] = {"tech": box.get("tech", []) or [],
                                              "value": box.get("value", []) or []}
@@ -8003,6 +8125,7 @@ def _run_find_scan() -> None:
     st.session_state.scan_card_index = 0
     st.session_state["val_card_index"] = 0
     st.session_state["elessar_open"] = False
+    _dbg(f"dual end: tech={len(box.get('tech') or [])} · value={len(box.get('value') or [])}")
 
 
 def screen_home() -> None:
@@ -8477,6 +8600,7 @@ def screen_home() -> None:
                     st.info(f"אין כרגע חפיפה בין הדוקטרינות: מבנית {len(tech or [])} · "
                             f"ערכית {len(value)} · משותפות 0. רוב הזמן השוק לא נותן את "
                             f"שניהם יחד — כשייתן, האבן תדע.")
+        _render_debug_logs()
         return
 
     # ===================== מצב בדיקה ידנית (הזרימה המקורית המלאה) =====================
@@ -10045,3 +10169,4 @@ if __name__ == "__main__":
 # V36.1 – Scan Turbo: 3 שלבים מקביליים (מחירים 12ch → פונדמנטלי 10ch → מנועי-ליבה על בלוקים 4x) + ETA מבוסס-קצב + שעון חד-כיווני. חתימות ללא שינוי.
 # V37.0 – תיקון אפס-שקרי (שגיאות גלויות+fallback סדרתי) + סמפור-429 + תמצא-לי דו-מנועי (Wyckoff ∥ ערך, 2 ברים) + ◆ אבן האיחוד (ELESSAR) לחיתוך הדוקטרינות.
 # V37.1 – שים-נתונים: המטמון-החם מוזרם ל-scout_core.get_data (סריקה=CPU-בלבד, רשת רק בהחמצה+סמפור); שקיפות מוני-הליבה בכל סורק ריק; 12→8 ערוצים; קוד-מת נמחק.
+# V37.2 – כלב-שמירה (קיפאון-120ש'/דדליין-8ד' ⇒ עצירה מאובחנת) + יומן-מנוע סמוי בכל מסכי-הסריקה + מגן-כניסה-חוזרת ומוני-שים. תקיעה אילמת = בלתי-אפשרית.
