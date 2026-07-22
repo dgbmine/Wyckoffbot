@@ -1,8 +1,19 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.2 (Backtesting: 3 Lenses + 7-Block JSON Export System)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.3 (Backtest Performance Suite)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V38.3 — חבילת-הביצועים (בעקבות הרצת 7 הבלוקים, 5,254 עסקאות):
+  • כל עסקה נושאת כעת תאריך-כניסה/יציאה, תשואה באחוזים ומרחק-סיכון, ולכל
+    טיקר/טווח נשמר בנצ'מרק Buy & Hold על אותו חלון בדיוק. מכאן נגזרים תשעת
+    המדדים על עקומת-הון *כרונולוגית* בסיכון קבוע: CAGR · Win Rate · Profit
+    Factor · Expectancy · Max Drawdown · Sharpe · מספר עסקאות · זמן ממוצע
+    בפוזיציה · CODEX מול Buy & Hold — ברמת המערכת ופר פאזה.
+  • ניכוי-כפילויות: 1y⊂2y⊂5y⊂max גרם לאותה תקופה להיספר עד 4 פעמים (נמדד
+    בקובץ שהורץ: ~47% כפילות). עקומת-ההון מחושבת על הטווח הארוך ביותר לכל
+    מניה בלבד; ספירת-האיתותים נשארת מלאה.
+  • קבצים ישנים (ללא תאריכים) מזוהים ומוצגים במדדי-R עם הודעה כנה.
 
 V38.2 — Backtesting: 3 Lenses + 7-Block JSON Export System.
   מטרת-העל: להחליף את ההערכות שבתוכנית התקיפה בראיות מדודות. המנוע מריץ
@@ -10210,7 +10221,7 @@ def _bt_run_one(ticker: str, period: str, progress_cb=None) -> dict:
     מריץ את שלוש העדשות על טיקר/טווח יחיד. מחזיר מוני-גלם בלבד (ניתנים לאיחוד).
     """
     out = {"bars": 0, "points": 0, "phase": {}, "exec": {}, "trades": [],
-           "error": ""}
+           "bench": {}, "error": ""}
     try:
         df = get_cached_data(ticker, period=period)
     except Exception as exc:
@@ -10226,6 +10237,16 @@ def _bt_run_one(ticker: str, period: str, progress_cb=None) -> dict:
     out["bars"] = int(n)
     pts = _bt_eval_points(n)
     out["points"] = len(pts)
+    try:                                    # V38.3 — בנצ'מרק Buy & Hold לאותו חלון בדיוק
+        _b0 = pts[0] if pts else 0
+        _d0, _d1 = df.index[_b0], df.index[-1]
+        _yrs = max(0.05, (_d1 - _d0).days / 365.25)
+        _bh = float(closes[-1] / closes[_b0] - 1.0) * 100.0
+        out["bench"] = {"start": str(_d0)[:10], "end": str(_d1)[:10],
+                        "years": round(_yrs, 2), "buy_hold_pct": round(_bh, 2),
+                        "buy_hold_cagr": round(((1 + _bh / 100.0) ** (1 / _yrs) - 1) * 100, 2)}
+    except Exception:
+        out["bench"] = {}
     for pi, i in enumerate(pts):
         ws = _bt_state_at(df, i)
         if not ws or not ws.get("state"):
@@ -10269,11 +10290,18 @@ def _bt_run_one(ticker: str, period: str, progress_cb=None) -> dict:
                     ex["losses"] += 1
                 else:
                     ex["open"] += 1
+                _trig, _stop = float(e["trig"]), float(e["stop"])
+                _riskpct = abs(_trig - _stop) / _trig * 100.0 if _trig else 0.0
+                _fi = min(n - 1, i + 1 + int(res.get("bars", 0)))
                 out["trades"].append({"i": int(i), "state": state,
                                       "kind": e.get("kind"), "side": e.get("side", "long"),
                                       "R": float(res["R"]), "bars": int(res["bars"]),
                                       "result": res["result"],
-                                      "rr_planned": float(e.get("rr", 0) or 0)})
+                                      "rr_planned": float(e.get("rr", 0) or 0),
+                                      "risk_pct": round(_riskpct, 3),
+                                      "pct": round(float(res["R"]) * _riskpct, 3),
+                                      "date_in": str(df.index[i])[:10],
+                                      "date_out": str(df.index[_fi])[:10]})
         except Exception:
             continue
         if progress_cb and (pi % 5 == 0):
@@ -10310,6 +10338,111 @@ def _bt_risk_from_trades(trades: list) -> dict:
             "max_losing_streak": int(worst_streak),
             "avg_bars": round(sum(t["bars"] for t in trades) / n, 1),
             "avg_R_win": round(sum(wins) / len(wins), 2) if wins else 0.0}
+
+
+def _bt_dedupe_trades(trades: list, mode: str = "longest") -> list:
+    """
+    V38.3 — 1y⊂2y⊂5y⊂max: אותה תקופה נדגמת עד 4 פעמים (נמדד: ~47% כפילות).
+    'longest' = לכל טיקר נשמר רק הטווח הארוך ביותר שקיים ⇒ מדגם נקי לחישוב
+    עקומת-הון. 'all' = הכל (טוב לספירת-איתותים, לא לביצועים).
+    """
+    if mode == "all":
+        return list(trades or [])
+    order = {"max": 4, "5y": 3, "2y": 2, "1y": 1}
+    best = {}
+    for t in trades or []:
+        tk = t.get("ticker", "?")
+        r = order.get(t.get("tf", ""), 0)
+        if r > best.get(tk, 0):
+            best[tk] = r
+    return [t for t in (trades or [])
+            if order.get(t.get("tf", ""), 0) == best.get(t.get("ticker", "?"), 0)]
+
+
+def _bt_performance(trades: list, benchmarks: dict = None,
+                    risk_per_trade: float = 1.0) -> dict:
+    """
+    V38.3 — ביצועים על עקומת-הון כרונולוגית אמיתית (סיכון קבוע לעסקה):
+    CAGR · Win Rate · Profit Factor · Expectancy · Max DD · Sharpe · #עסקאות ·
+    זמן ממוצע בפוזיציה · Buy & Hold. מחזיר {} אם אין תאריכים (קובץ ישן).
+    """
+    ts = [t for t in (trades or []) if t.get("date_out")]
+    if not ts:
+        return {}
+    ts.sort(key=lambda t: (t.get("date_out"), t.get("date_in") or ""))
+    import math as _math
+    from datetime import datetime as _dt
+    eq, peak, mdd, rets = 1.0, 1.0, 0.0, []
+    for t in ts:
+        r = float(t.get("R", 0) or 0) * (risk_per_trade / 100.0)
+        rets.append(r)
+        eq *= (1.0 + r)
+        peak = max(peak, eq)
+        mdd = min(mdd, eq / peak - 1.0)
+    try:
+        d0 = _dt.strptime(min(t.get("date_in") or t["date_out"] for t in ts), "%Y-%m-%d")
+        d1 = _dt.strptime(max(t["date_out"] for t in ts), "%Y-%m-%d")
+        years = max(0.08, (d1 - d0).days / 365.25)
+    except Exception:
+        years = max(0.08, len(ts) / 50.0)
+    n = len(ts)
+    wins = [t for t in ts if float(t.get("R", 0)) > 0]
+    losses = [t for t in ts if float(t.get("R", 0)) <= 0]
+    gw = sum(float(t["R"]) for t in wins)
+    gl = abs(sum(float(t["R"]) for t in losses))
+    mean = sum(rets) / n
+    var = sum((x - mean) ** 2 for x in rets) / max(1, n - 1)
+    sd = _math.sqrt(var)
+    tpy = n / years
+    sharpe = (mean / sd) * _math.sqrt(tpy) if sd > 0 else None
+    bh_list, bh_yrs = [], []
+    for tk, per_tf in (benchmarks or {}).items():
+        tfs = {t.get("tf") for t in ts if t.get("ticker") == tk}
+        for tf, b in (per_tf or {}).items():
+            if tf in tfs and b.get("buy_hold_pct") is not None:
+                bh_list.append(float(b["buy_hold_pct"]))
+                bh_yrs.append(float(b.get("years") or years))
+    bh_pct = sum(bh_list) / len(bh_list) if bh_list else None
+    bh_y = sum(bh_yrs) / len(bh_yrs) if bh_yrs else years
+    bh_cagr = (((1 + bh_pct / 100.0) ** (1 / max(0.08, bh_y)) - 1) * 100
+               if bh_pct is not None and bh_pct > -100 else None)
+    return {"trades": n, "years": round(years, 2),
+            "total_return_pct": round((eq - 1) * 100, 2),
+            "cagr_pct": round(((eq ** (1 / years)) - 1) * 100, 2) if eq > 0 else None,
+            "win_rate": round(len(wins) / n * 100, 1),
+            "profit_factor": round(gw / gl, 2) if gl > 0 else None,
+            "expectancy_R": round(sum(float(t["R"]) for t in ts) / n, 3),
+            "expectancy_pct": round(mean * 100, 3),
+            "max_drawdown_pct": round(mdd * 100, 2),
+            "sharpe": round(sharpe, 2) if sharpe is not None else None,
+            "avg_bars": round(sum(int(t.get("bars", 0)) for t in ts) / n, 1),
+            "trades_per_year": round(tpy, 1),
+            "risk_per_trade_pct": risk_per_trade,
+            "buy_hold_pct": round(bh_pct, 2) if bh_pct is not None else None,
+            "buy_hold_cagr_pct": round(bh_cagr, 2) if bh_cagr is not None else None}
+
+
+def _bt_perf_by_phase(trades: list, benchmarks: dict = None,
+                      risk_per_trade: float = 1.0) -> list:
+    """אותם מדדים, פר פאזה (על אותו מדגם מנוכה-כפילויות)."""
+    buckets = {}
+    for t in trades or []:
+        buckets.setdefault(t.get("state", "?"), []).append(t)
+    rows = []
+    for state, ts in buckets.items():
+        p = _bt_performance(ts, benchmarks, risk_per_trade)
+        if not p:
+            continue
+        rows.append({"פאזה": _WSTATES.get(state, {}).get("he", state),
+                     "עסקאות": p["trades"],
+                     "Win Rate": f"{p['win_rate']}%",
+                     "Profit Factor": p["profit_factor"] if p["profit_factor"] else "—",
+                     "Expectancy": f"{p['expectancy_R']:+.3f}R",
+                     "CAGR": f"{p['cagr_pct']:+.1f}%" if p["cagr_pct"] is not None else "—",
+                     "Max DD": f"{p['max_drawdown_pct']:.1f}%",
+                     "Sharpe": p["sharpe"] if p["sharpe"] is not None else "—",
+                     "ימי מסחר בפוזיציה": p["avg_bars"]})
+    return sorted(rows, key=lambda r: -r["עסקאות"])
 
 
 def _bt_merge_counters(dst: dict, src: dict) -> dict:
@@ -10388,8 +10521,9 @@ def _bt_run_block(block_no: int, status_cb=None) -> dict:
                 status_cb(done, total, tk, tf)
             if one.get("error"):
                 rep["errors"].append(f"{tk}/{tf}: {one['error']}")
+            rep.setdefault("benchmarks", {}).setdefault(tk, {})[tf] = one.get("bench", {})
             rep["results"][tk][tf] = {
-                "bars": one["bars"], "points": one["points"],
+                "bars": one["bars"], "points": one["points"], "bench": one.get("bench", {}),
                 "error": one.get("error", ""),
                 "phase": one["phase"], "exec": one["exec"],
                 "risk": _bt_risk_from_trades(one["trades"]),
@@ -10404,6 +10538,8 @@ def _bt_run_block(block_no: int, status_cb=None) -> dict:
                  f"{len(one['trades'])} עסקאות ({_time.time() - t0:.1f}s)"
                  + (f" · {one['error']}" if one.get("error") else ""))
     rep["risk"] = _bt_risk_from_trades(rep["trades"])
+    rep["performance"] = _bt_performance(
+        _bt_dedupe_trades(rep["trades"], "longest"), rep.get("benchmarks"))
     return rep
 
 
@@ -10433,11 +10569,16 @@ def _bt_merge_reports(reports: list) -> dict:
                            (rep.get("counters") or {}).get("phase", {}))
         _bt_merge_counters(merged["counters"]["exec"],
                            (rep.get("counters") or {}).get("exec", {}))
+        for _tk, _pt in (rep.get("benchmarks") or {}).items():
+            merged.setdefault("benchmarks", {}).setdefault(_tk, {}).update(_pt or {})
         merged["trades"].extend(rep.get("trades") or [])
         merged["errors"].extend(rep.get("errors") or [])
+    merged.setdefault("benchmarks", {})
     merged["timeframes"] = seen_tf
     merged["source_blocks"] = sorted({b for b in merged["source_blocks"] if b is not None})
     merged["risk"] = _bt_risk_from_trades(merged["trades"])
+    merged["performance"] = _bt_performance(
+        _bt_dedupe_trades(merged["trades"], "longest"), merged.get("benchmarks"))
     merged["summary"] = {"blocks": len(merged["source_blocks"]),
                          "tickers": len(merged["tickers"]),
                          "trades": len(merged["trades"]),
@@ -10446,7 +10587,8 @@ def _bt_merge_reports(reports: list) -> dict:
     return merged
 
 
-def _bt_render_lenses(counters: dict, risk: dict, title_note: str = "") -> None:
+def _bt_render_lenses(counters: dict, risk: dict, title_note: str = "",
+                      perf: dict = None, phase_rows: list = None) -> None:
     """שלוש העדשות — תצוגה משותפת לבלוק בודד ולקובץ המאוחד."""
     import pandas as _pd
     t1, t2, t3 = st.tabs(["Wyckoff Phase Accuracy", "Trading Execution", "Risk & Portfolio"])
@@ -10472,22 +10614,47 @@ def _bt_render_lenses(counters: dict, risk: dict, title_note: str = "") -> None:
         else:
             st.info("אין עדיין איתותים — הרץ בלוק.")
     with t3:
-        st.markdown("<div class='section-label'>סיכון ותיק — מה זה עושה לעקומת ההון</div>",
+        st.markdown("<div class='section-label'>ביצועים — מערכת מול Buy &amp; Hold</div>",
                     unsafe_allow_html=True)
-        if risk and risk.get("trades"):
+        _perf = perf or {}
+        if _perf.get("trades"):
+            c = st.columns(4)
+            _cg = _perf.get("cagr_pct")
+            _bh = _perf.get("buy_hold_cagr_pct")
+            c[0].metric("CAGR (CODEX)", f"{_cg:+.1f}%" if _cg is not None else "—",
+                        (f"{_cg - _bh:+.1f}% מול B&H" if (_cg is not None and _bh is not None) else None))
+            c[1].metric("Win Rate", f"{_perf['win_rate']}%")
+            c[2].metric("Profit Factor", _perf.get("profit_factor") or "—")
+            c[3].metric("Expectancy", f"{_perf['expectancy_R']:+.3f}R")
+            c2 = st.columns(4)
+            c2[0].metric("Max Drawdown", f"{_perf['max_drawdown_pct']:.1f}%")
+            c2[1].metric("Sharpe", _perf.get("sharpe") if _perf.get("sharpe") is not None else "—")
+            c2[2].metric("מספר עסקאות", _perf["trades"])
+            c2[3].metric("זמן בפוזיציה", f"{_perf['avg_bars']} ימי מסחר")
+            c3 = st.columns(4)
+            c3[0].metric("Buy & Hold (CAGR)", f"{_bh:+.1f}%" if _bh is not None else "—")
+            c3[1].metric("תשואה מצטברת", f"{_perf['total_return_pct']:+.1f}%")
+            c3[2].metric("שנות מדגם", _perf["years"])
+            c3[3].metric("עסקאות בשנה", _perf["trades_per_year"])
+            st.caption(f"עקומת-הון כרונולוגית בסיכון קבוע של {_perf['risk_per_trade_pct']}% "
+                       f"לעסקה · Sharpe מתשואות-עסקה מוצמדות-שנה (ריבית חסרת-סיכון = 0) · "
+                       f"Buy &amp; Hold = ממוצע שווה-משקל על אותו חלון בדיוק · "
+                       f"מדגם מנוכה-כפילויות (הטווח הארוך ביותר לכל מניה).")
+            if phase_rows:
+                st.markdown("<div class='section-label'>אותם מדדים — פר פאזה</div>",
+                            unsafe_allow_html=True)
+                st.dataframe(_pd.DataFrame(phase_rows), use_container_width=True,
+                             hide_index=True)
+                st.caption("פאזה עם Expectancy שלילי גורעת מהמערכת גם אם הפאזה עצמה "
+                           "מזהה נכון — הבעיה שם היא הכניסה, לא הזיהוי.")
+        elif risk and risk.get("trades"):
+            st.warning("הקובץ שנטען אינו כולל תאריכים (נוצר לפני V38.3) — "
+                       "CAGR/Sharpe/Buy&Hold מחייבים הרצה מחדש. להלן מדדי-R בלבד:")
             c = st.columns(4)
             c[0].metric("תוחלת לעסקה", f"{risk['expectancy_R']:+.3f}R")
             c[1].metric("אחוז הצלחה", f"{risk['win_rate']}%")
             c[2].metric("פקטור רווח", risk.get("profit_factor") or "—")
-            c[3].metric("שפל מצטבר", f"{risk['max_drawdown_R']}R")
-            c2 = st.columns(4)
-            c2[0].metric("סה\"כ עסקאות", risk["trades"])
-            c2[1].metric("סה\"כ R", f"{risk['total_R']:+.1f}")
-            c2[2].metric("רצף הפסדים ארוך", risk["max_losing_streak"])
-            c2[3].metric("ברים ממוצע", risk["avg_bars"])
-            st.caption("בסיכון 1% לעסקה, תוחלת של +0.20R פירושה ~0.2% תשואה ממוצעת "
-                       "לעסקה לפני עמלות. רצף-הפסדים ושפל מצטבר הם מבחן-הסבילות "
-                       "האמיתי לגודל הפוזיציה.")
+            c[3].metric("סה\"כ עסקאות", risk["trades"])
         else:
             st.info("אין עדיין עסקאות — הרץ בלוק.")
     if title_note:
@@ -10558,7 +10725,11 @@ def screen_backtest() -> None:
             _rep = _bt_merge_reports([_reports[b] for b in _ready])
             _counters, _risk = _rep["counters"], _rep.get("risk", {})
             _note = f"{len(_ready)} בלוקים · {len(_rep['tickers'])} מניות"
-        _bt_render_lenses(_counters, _risk, _note)
+        _perf = _rep.get("performance") or _bt_performance(
+            _bt_dedupe_trades(_rep.get("trades") or [], "longest"), _rep.get("benchmarks"))
+        _prows = _bt_perf_by_phase(
+            _bt_dedupe_trades(_rep.get("trades") or [], "longest"), _rep.get("benchmarks"))
+        _bt_render_lenses(_counters, _risk, _note, _perf, _prows)
         if _rep.get("errors"):
             with st.expander(f"אזהרות נתונים ({len(_rep['errors'])})"):
                 for _er in _rep["errors"][:40]:
@@ -10595,8 +10766,13 @@ def screen_backtest() -> None:
         _s = _mg.get("summary", {})
         st.success(f"אוחדו {_s.get('blocks', 0)} בלוקים · {_s.get('tickers', 0)} מניות · "
                    f"{_s.get('trades', 0)} עסקאות · {_s.get('phase_samples', 0)} מדגמי-פאזה.")
+        _mg_ded = _bt_dedupe_trades(_mg.get("trades") or [], "longest")
         _bt_render_lenses(_mg.get("counters", {}), _mg.get("risk", {}),
-                          "תצוגה מאוחדת — מוני-הגלם סוכמו, לא ממוצעים.")
+                          f"תצוגה מאוחדת — מוני-הגלם סוכמו, לא ממוצעים · "
+                          f"עקומת-ההון על {len(_mg_ded)} עסקאות מנוכות-כפילות "
+                          f"(מתוך {len(_mg.get('trades') or [])}).",
+                          _mg.get("performance") or _bt_performance(_mg_ded, _mg.get("benchmarks")),
+                          _bt_perf_by_phase(_mg_ded, _mg.get("benchmarks")))
         st.download_button("⬇️ הורד את הקובץ המאוחד",
                            data=_json.dumps(_mg, ensure_ascii=False, indent=1).encode("utf-8"),
                            file_name="codex_backtest_merged.json", mime="application/json",
@@ -10950,3 +11126,4 @@ if __name__ == "__main__":
 # V38.0 – סריקת-פעימות (מנות של 10, מנוע יחיד, קצב-מסתגל, תוצאות-חלקיות שורדות) + _CoreProxy שמגיש מטמון לליבה במקום הורדה כפולה (ללא monkey-patch).
 # V38.1 – מטמון-מחירים 64→700 (סוף ההורדה הכפולה), _fnum סלחני בניקוד-הערך (מחרוזות עם % נבלעו), flush ליומן, שקיפות כשהמבני ריק.
 # V38.2 – Backtesting: 3 עדשות (דיוק-פאזה / ביצוע-תקיפה / סיכון-תיק), 7 בלוקים × 4 טווחים, ייצוא JSON פר-בלוק + איחוד קבצים על מוני-גלם. הקלאסי נשמר.
+# V38.3 – חבילת-ביצועים: תאריכים/אחוזים/בנצ'מרק לכל עסקה ⇒ CAGR/Sharpe/MaxDD/PF/Expectancy/B&H על עקומת-הון כרונולוגית, ברמת המערכת ופר-פאזה + ניכוי כפילות-טווחים.
