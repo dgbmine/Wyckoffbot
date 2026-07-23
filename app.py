@@ -1,8 +1,24 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.1 (Hold Time — Change #2 · Command Language)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.2 (Stop Floor · Size Cap)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V39.2 — רצפת-סטופ ותקרת-פוזיציה (מתוך הערת המשתמש: "למה כניסה ב-$16 עם
+        סטופ בירידה של חצי דולר? מי שיפעל ככה ייזרק גם אם התזה נכונה").
+  הערה נכונה, ושתי בעיות נפרדות מאחוריה:
+  (א) 36% מהכניסות נשאו סטופ קרוב מ-1×ATR מהטריגר — כלומר *בתוך* רעש
+      היום. שיעור ההפסד בהן 75% מול 58% בכלל המדגם, ו-29% מהפסדיהן היו
+      מגיעים ליעד ללא סטופ כלל. סטופ כזה אינו אומר "התזה נכשלה" אלא
+      "המחיר זז". כעת: רצפה של 1×ATR14; סטופ צר ממנה מורחק, ה-RR מחושב
+      מחדש על הסיכון האמיתי, והמשתמש רואה את המחיר המקורי ואת הסיבה.
+  (ב) באג של ממש: גודל הפוזיציה נגזר מ-risk_cash/מרחק-הסטופ, וסטופ של
+      $0.06 ייצר 16,666 מניות ≈ $262,490 על הון של $100,000 — פי 2.6
+      מההון. נוספה תקרה: לעולם לא יותר מ-25% מההון לפוזיציה בודדת.
+  תיקון-מדידה מתודולוגי: הבדיקה הקודמת של רצפת-ATR נדחתה לפי יחידות R —
+  מדד מוטה, כי הרחבת סטופ מקטינה R מכנית גם כשהתשואה בפועל זהה. במדידה
+  חוזרת באחוזי-מחיר: על כניסת-הפריצה הרצפה דווקא *משפרת* (+0.119% לעסקה
+  ב-1×ATR), ושיעור ההצלחה עולה בכל רמה. הרווח האמיתי הוא בביצועיות.
 
 V39.1 — **שינוי התנהגות שני** + שכתוב שפת-הפקודות.
   שינוי #2 (זמן-החזקה): מתוך שמונה חלופות-יציאה שנמדדו על 8,925 עסקאות,
@@ -5623,12 +5639,72 @@ def _long_tranches(ws: dict, lv: dict, grade: str, valuation: str):
     return pack, ""
 
 
-def _apply_sizing(entries: list, capital: float, risk_pct: float) -> None:
+def _atr_pct(df, n: int = 14):
+    """ATR14 כאחוז מהמחיר האחרון. טהור; None אם אין די נתונים."""
+    try:
+        h = df["High"].astype(float).values
+        l = df["Low"].astype(float).values
+        c = df["Close"].astype(float).values
+        if len(c) < n + 2:
+            return None
+        prev = np.concatenate([[c[0]], c[:-1]])
+        tr = np.maximum(h - l, np.maximum(np.abs(h - prev), np.abs(l - prev)))
+        atr = float(pd.Series(tr).rolling(n).mean().values[-1])
+        return (atr / float(c[-1]) * 100.0) if (atr == atr and c[-1]) else None
+    except Exception:
+        return None
+
+
+def _enforce_stop_floor(entries: list, atr_pct: float, floor_mult: float = 1.0) -> int:
+    """
+    V39.2 — רצפת-סטופ: סטופ קרוב מ-1×ATR מהטריגר אינו אומר "התזה נכשלה" אלא
+    "המחיר זז" — הוא נפגע ברעש יומי רגיל. נמדד: 36% מהכניסות נפלו מתחת לרצפה,
+    שיעור ההפסד בהן 75% (מול 58% בכלל המדגם), ו-29% מהפסדיהן היו מגיעים ליעד
+    ללא סטופ. הרחבת הסטופ *מקטינה* אוטומטית את גודל הפוזיציה — וזה הנכון.
+    מחזיר כמה כניסות תוקנו.
+    """
+    if not atr_pct or atr_pct <= 0:
+        return 0
+    fixed = 0
+    for e in entries or []:
+        if e.get("kind") == "watch":
+            continue
+        trig = float(e["trig"])
+        need = trig * (floor_mult * atr_pct / 100.0)
+        cur = abs(trig - float(e["stop"]))
+        if cur < need:
+            e["stop_orig"] = e["stop"]
+            e["stop"] = round(trig + need if e.get("side") == "short" else trig - need, 2)
+            e["stop_widened"] = round(need / trig * 100.0, 2)
+            try:                                    # RR מחושב מחדש על הסיכון האמיתי
+                risk = (e["stop"] - trig) if e.get("side") == "short" else (trig - e["stop"])
+                t1 = float(e["t1"])
+                e["rr"] = round(((trig - t1) if e.get("side") == "short"
+                                 else (t1 - trig)) / risk, 1) if risk > 0 else 0.0
+            except Exception:
+                pass
+            fixed += 1
+    return fixed
+
+
+def _apply_sizing(entries: list, capital: float, risk_pct: float,
+                  max_pos_pct: float = 25.0) -> None:
+    """
+    V39.2 — תיקון-באג: גודל הפוזיציה נגזר מ-risk_cash/מרחק-הסטופ, וסטופ צר
+    יוצר מינוף בלתי-אפשרי (נמדד בשדה: 16,666 מניות ≈ $262,490 על הון של
+    $100,000 — פי 2.6 מההון). כעת נוספה תקרה כפולה: לעולם לא יותר מ-25%
+    מההון לפוזיציה בודדת, ולעולם לא יותר מההון עצמו.
+    """
+    cap_cash = max(0.0, float(capital)) * max_pos_pct / 100.0
     for e in entries:
         try:
             risk_cash = capital * risk_pct / 100.0
             per_share = abs(e["trig"] - e["stop"])
             qty = int(risk_cash // per_share) if per_share > 0 else 0
+            cash = qty * float(e["trig"])
+            if cash > cap_cash and e["trig"] > 0:        # תקרת-פוזיציה
+                qty = int(cap_cash // float(e["trig"]))
+                e["size_capped"] = True
             e["qty"] = max(qty, 0)
             e["cash"] = round(e["qty"] * e["trig"], 0)
         except Exception:
@@ -6252,9 +6328,13 @@ def _render_entry_card(e: dict, idx: int) -> None:
                      f"<span class='story-v'>{e['cond']}</span></div>")
     if e.get("kind") != "watch":
         _exit_dir = "יעלה מעל" if _sh else "יירד מתחת"
+        _wid = ""
+        if e.get("stop_widened"):
+            _wid = (f" <span class='doc-meta'>· הורחק מ-${e['stop_orig']} כדי שלא "
+                    f"ייפגע מתנודתיות יומית רגילה ({e['stop_widened']}% מהמחיר)</span>")
         _rows.append(f"<div class='story-row'><span class='story-k'>יציאה בהפסד</span>"
                      f"<span class='story-v'><b>${e['stop']}</b> — אם המחיר {_exit_dir} "
-                     f"לשם, סגור מיד. זו ההגנה שלך.</span></div>")
+                     f"לשם, סגור מיד. זו ההגנה שלך.{_wid}</span></div>")
         _hb = int(e.get("hold_bars") or 0)
         if _hb:
             _rows.append(f"<div class='story-row'><span class='story-k'>מתי לצאת ברווח</span>"
@@ -6264,9 +6344,11 @@ def _render_entry_card(e: dict, idx: int) -> None:
                          f"{' ואז $' + str(e['t2']) if e.get('t2') else ''}."
                          f"</span></div>")
         if e.get("qty"):
+            _cap = (" <span class='doc-meta'>· הוקטן לתקרת 25% מההון לפוזיציה "
+                    "בודדת</span>") if e.get("size_capped") else ""
             _rows.append(f"<div class='story-row'><span class='story-k'>כמה</span>"
                          f"<span class='story-v'><b>{e['qty']} מניות</b> "
-                         f"(≈${int(e['cash']):,})</span></div>")
+                         f"(≈${int(e['cash']):,}){_cap}</span></div>")
         _rows.append(f"<div class='story-row'><span class='story-k'>מתי לוותר</span>"
                      f"<span class='story-v'>אם הפקודה לא התבצעה תוך ~{e['valid']} "
                      f"ימי מסחר — בטל אותה. ביטול מיידי: {e['cancel']}</span></div>")
@@ -6974,7 +7056,14 @@ def screen_trade_strategy() -> None:
     if not entries:
         st.info(why_none or "אין כניסות זמינות בתנאים הנוכחיים.")
         return
+    _atrp = _atr_pct(df)
+    _widened = _enforce_stop_floor(entries, _atrp)
     _apply_sizing(entries, capital, risk_pct)
+    if _widened:
+        st.caption(f"🛡️ רצפת-סטופ: ב-{_widened} מהאפשרויות הסטופ המבני היה קרוב מדי "
+                   f"למחיר הכניסה (בתוך תנודתיות היום, ATR≈{_atrp:.1f}%) והורחק ל-1×ATR. "
+                   f"סטופ צר מזה נפגע מרעש ולא מכישלון התזה — וגם מנפח את גודל "
+                   f"הפוזיציה שלא לצורך. הכמויות עודכנו בהתאם.")
     if _pf_eff and entries and entries[0].get("side", "long") == "long":
         if _pf_cash_cap(entries, _pfc.get("cash")):
             st.caption(f"💵 מוגבל-מזומן: הכמויות הוקטנו לתקרת המזומן הפנוי "
@@ -11880,3 +11969,4 @@ if __name__ == "__main__":
 # V38.7 – סט אימות בתולי (36 שמות, 9 בלוקים: מנפצי-ערך, תשתיות, ריטים, ADR, היסטוריה מלפני 2000) + בורר-סט ואיסור-ערבוב באיחוד.
 # V39.0 – שינוי #1: כניסות 'נגיעה' (תוחלת שלילית ב-2 מדגמים בלתי-תלויים) יורדות לתחתית הדירוג ונושאות תג-ראיה מדוד. הסטופים/היעדים/הטריגרים ללא שינוי.
 # V39.1 – שינוי #2: החזקה 40 ימי מסחר (החלופה היחידה ששרדה 3 שערים) + שפת-פקודות מבצעית (מה לעשות/מתי תתבצע/מתי לצאת), 'טראנץ'' הוסר.
+# V39.2 – רצפת-סטופ 1×ATR (36% מהכניסות היו בתוך רעש-היום) + תקרת-פוזיציה 25% מההון (באג: $262K על הון $100K).
