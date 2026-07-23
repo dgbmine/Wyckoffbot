@@ -1,8 +1,23 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.6 (Exits Lab)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.7 (Validation Set)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V38.7 — סט האימות (שלב 4 בתוכנית). מדידה בלבד; אפס שינוי בהתנהגות.
+  הרקע: כל הממצאים עד כה (60% מול 8% בסימולציית-הצל, כישלון רצפת-ה-ATR,
+  ומעבדת-היציאות) נובעים מ-28 מגה-קאפ אמריקאיות ששרדו וגם עלו. סט כזה
+  מלמד שהכל עולה. בחירה בין 8 חלופות-יציאה על אותו סט היא 8 יריות לאותה
+  מטרה — בדיוק המקום שבו אוברפיטינג נכנס.
+  • סט אימות בתולי, 36 שמות ב-9 בלוקים, אפס חפיפה: 14 מנפצי-ערך (T, INTC,
+    WBA, F, VZ, PFE, M, NOK, X, BTI ואחרים) לתיקון הטיית-השרידות; תשתיות
+    ומזון בתנודתיות נמוכה מול חומרי גלם ואנרגיה מחזוריים; ריטים ו-ADR
+    בינלאומיים שנעדרו לחלוטין; ולרובם היסטוריה מלפני 2000 — כך שמשברי
+    2000-02 ו-2008-09 נכנסים למדגם לראשונה, והצד הדובי נבדק סוף-סוף על
+    שוק דובי אמיתי.
+  • משמעת מובנית: בורר-סט במסך, כל דוח מתויג ב-"set", שמות-הקבצים נושאים
+    את הסט, החלפת-סט מנקה תוצאות קודמות, והאיחוד **מסרב** לערבב גילוי עם
+    אימות. ערבוב כזה היה שורף את סט האימות בלי שנשים לב.
 
 V38.6 — מעבדת-היציאות (שלב 3 בתוכנית, מדידה בלבד — אפס שינוי בהתנהגות
         האפליקציה החיה; אומת ברגרסיית תוכנית-התקיפה).
@@ -10138,7 +10153,8 @@ def screen_trading_scout() -> None:
 # מתמטית ולא "ממוצע של ממוצעים".
 # ============================================================
 
-_BT_BLOCKS = {
+# ── סט הגילוי (V38.2) — נשרף: כל הממצאים עד V38.6 נובעים ממנו ──────────
+_BT_BLOCKS_DISCOVERY = {
     1: ["NVDA", "AAPL", "MSFT", "AMZN"],
     2: ["TSLA", "META", "GOOGL", "AVGO"],
     3: ["JPM", "BAC", "COST", "LLY"],
@@ -10147,6 +10163,26 @@ _BT_BLOCKS = {
     6: ["HD", "WMT", "PG", "JNJ"],
     7: ["CAT", "GE", "BA", "SLV"],
 }
+
+# ── סט האימות (V38.7) — בתולי. תמונת-ראי מכוונת של סט הגילוי: מנפצי-ערך
+# לתיקון הטיית-שרידות, תשתיות ומזון בתנודתיות נמוכה מול חומרי גלם ואנרגיה
+# מחזוריים, ריטים ו-ADR שנעדרו לגמרי, ורובם עם היסטוריה מלפני 2000 — כך
+# שמשברי 2000-02 ו-2008-09 נכנסים למדגם לראשונה.
+_BT_BLOCKS_VALIDATION = {
+    1: ["T", "INTC", "WBA", "F"],
+    2: ["VZ", "PFE", "M", "NOK"],
+    3: ["SO", "DUK", "AEP", "ED"],
+    4: ["O", "SPG", "VTR", "KIM"],
+    5: ["NUE", "FCX", "X", "IP"],
+    6: ["SLB", "HAL", "VLO", "DVN"],
+    7: ["K", "GIS", "CAG", "SYY"],
+    8: ["JBHT", "MAS", "SNA", "PKG"],
+    9: ["BP", "TM", "BTI", "VALE"],
+}
+_BT_SETS = {"discovery": _BT_BLOCKS_DISCOVERY, "validation": _BT_BLOCKS_VALIDATION}
+_BT_SET_HE = {"discovery": "סט גילוי (28 מגה-קאפ — נשרף)",
+              "validation": "סט אימות (36 שמות — בתולי)"}
+_BT_BLOCKS = _BT_BLOCKS_DISCOVERY
 _BT_TIMEFRAMES = ["1y", "2y", "5y", "max"]
 _BT_HORIZONS = (10, 20, 60)          # ברים קדימה למדידת דיוק-הפאזה
 _BT_WINDOW = 420                     # חלון-הזנה למנוע (זמן-ריצה קבוע לכל טווח)
@@ -10894,12 +10930,13 @@ def _bt_exec_view(counters: dict) -> list:
     return rows
 
 
-def _bt_run_block(block_no: int, status_cb=None) -> dict:
-    """מריץ בלוק שלם: כל מניותיו × כל טווחי-הזמן. מחזיר דוח JSON-מוכן."""
-    tickers = _BT_BLOCKS.get(int(block_no), [])
+def _bt_run_block(block_no: int, status_cb=None, set_name: str = "discovery") -> dict:
+    """מריץ בלוק שלם. set_name מתייג את הדוח כדי שלא יערבבו גילוי עם אימות."""
+    tickers = _BT_SETS.get(set_name, _BT_BLOCKS_DISCOVERY).get(int(block_no), [])
     rep = {"schema": "codex-alpha-backtest/1",
            "generated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
            "block": int(block_no), "tickers": tickers,
+           "set": set_name,
            "timeframes": [_BT_PRIMARY_PERIOD],
            "schema_version": 2,
            "config": {"window": _BT_WINDOW, "max_points": _BT_MAX_POINTS_V2,
@@ -10963,6 +11000,8 @@ def _bt_merge_reports(reports: list) -> dict:
     for rep in reports:
         if not isinstance(rep, dict):
             continue
+        if rep.get("set"):
+            merged["set"] = rep["set"]
         if rep.get("block") is not None:
             merged["source_blocks"].append(rep.get("block"))
         elif rep.get("source_blocks"):
@@ -11147,19 +11186,31 @@ def screen_backtest() -> None:
                "במקביל (מדידה בלבד). "
                f"עם עד {_BT_MAX_POINTS_V2} נקודות-הערכה למניה. שלב 1 מוסיף שכבת-מדידה: "
                "MAE/MFE, סימולציית-צל ללא סטופ, מרחק-סטופ ביחידות ATR, משטר-שוק ועידן.")
+    _set = st.radio("סט נתונים", ["discovery", "validation"], horizontal=True,
+                    format_func=lambda s: _BT_SET_HE[s], key="bt_set_sel")
+    if st.session_state.get("_bt_last_set") not in (None, _set):
+        st.session_state["bt_reports"] = {}
+        st.info("הסט הוחלף — התוצאות הקודמות נוקו כדי למנוע ערבוב בין גילוי לאימות.")
+    st.session_state["_bt_last_set"] = _set
+    _blocks = _BT_SETS[_set]
+    if _set == "validation":
+        st.caption("סט האימות בתולי: מנפצי-ערך לתיקון הטיית-השרידות, תשתיות ומזון "
+                   "בתנודתיות נמוכה מול חומרי גלם ואנרגיה מחזוריים, ריטים ו-ADR "
+                   "שנעדרו מסט הגילוי, ורובם עם היסטוריה מלפני 2000 — כך שמשברי "
+                   "2000-02 ו-2008-09 נכנסים למדגם. כאן מכריעים, לא מגלים.")
     _run_req = None
-    _rows = [list(range(1, 5)), list(range(5, 8))]
-    for _row in _rows:
+    _nums = sorted(_blocks.keys())
+    for _i in range(0, len(_nums), 4):
         _cols = st.columns(4)
-        for _ci, _bn in enumerate(_row):
+        for _ci, _bn in enumerate(_nums[_i:_i + 4]):
             with _cols[_ci]:
                 _done = "✓ " if _bn in st.session_state["bt_reports"] else ""
-                if st.button(f"{_done}Block {_bn}\n{' · '.join(_BT_BLOCKS[_bn])}",
-                             key=f"bt_block_{_bn}", use_container_width=True):
+                if st.button(f"{_done}Block {_bn}\n{' · '.join(_blocks[_bn])}",
+                             key=f"bt_block_{_set}_{_bn}", use_container_width=True):
                     _run_req = [_bn]
-    if st.button("▶ הרץ הכל (7 בלוקים)", key="bt_run_all", type="primary",
+    if st.button(f"▶ הרץ הכל ({len(_nums)} בלוקים)", key="bt_run_all", type="primary",
                  use_container_width=True):
-        _run_req = list(range(1, 8))
+        _run_req = list(_nums)
 
     if _run_req:
         _bar = st.progress(0.0)
@@ -11174,7 +11225,8 @@ def screen_backtest() -> None:
                     _bar.progress(min(1.0, _frac))
                 _lbl.caption(f"Block {_b} · {tk} · {tf} · {done}/{total} "
                              f"· {_time.time() - _t0:.0f}s")
-            st.session_state["bt_reports"][_bn] = _bt_run_block(_bn, status_cb=_cb)
+            st.session_state["bt_reports"][_bn] = _bt_run_block(_bn, status_cb=_cb,
+                                                                set_name=_set)
         _bar.empty(); _lbl.empty()
         st.success(f"הושלמו {len(_run_req)} בלוקים תוך {_time.time() - _t0:.0f} שניות.")
         _dbg_flush()
@@ -11215,7 +11267,8 @@ def screen_backtest() -> None:
                 st.download_button(
                     f"⬇️ JSON — Block {_b}",
                     data=_json.dumps(_reports[_b], ensure_ascii=False, indent=1).encode("utf-8"),
-                    file_name=f"codex_backtest_block{_b}.json", mime="application/json",
+                    file_name=f"codex_backtest_{_set}_block{_b}.json",
+                    mime="application/json",
                     use_container_width=True, key=f"bt_dl_{_b}")
 
     st.markdown("---")
@@ -11233,7 +11286,13 @@ def screen_backtest() -> None:
         if _bad:
             st.error("קבצים שלא נקראו: " + ", ".join(_bad))
         if _loaded:
-            st.session_state["bt_merged"] = _bt_merge_reports(_loaded)
+            _sets = {(r.get("set") or "discovery") for r in _loaded if isinstance(r, dict)}
+            if len(_sets) > 1:
+                st.error("⛔ הקבצים מערבבים סט גילוי עם סט אימות — האיחוד בוטל. "
+                         "ערבוב שובר את ההפרדה שעליה נשענת כל המשמעת: סט האימות "
+                         "מאבד את הבתוליות שלו ברגע שהוא מעורבב. אחד כל סט בנפרד.")
+            else:
+                st.session_state["bt_merged"] = _bt_merge_reports(_loaded)
     _mg = st.session_state.get("bt_merged")
     if _mg:
         _s = _mg.get("summary", {})
@@ -11607,3 +11666,4 @@ if __name__ == "__main__":
 # V38.4 – שלב 1 (מדידה בלבד): MAE/MFE, סימולציית-צל ללא סטופ, ATR ומרחק-סטופ, תיוג משטר/עידן, מעבר יחיד ללא קינון, בנצ'מרק עם Sharpe/MaxDD. אפס שינוי התנהגות.
 # V38.5 – תיקון מדידת MAE/MFE (0.0 falsy ⇒ נפילה לחלון המלא). שער-ההיפותזה לא הושפע.
 # V38.6 – מעבדת-יציאות: 8 חלופות (יעד/זמן 20-40-60/נגרר 2-3ATR/חצי-נגרר/יעד-כפול) נמדדות על כל איתות, מטריצות נשמרות ב-JSON. מדידה בלבד.
+# V38.7 – סט אימות בתולי (36 שמות, 9 בלוקים: מנפצי-ערך, תשתיות, ריטים, ADR, היסטוריה מלפני 2000) + בורר-סט ואיסור-ערבוב באיחוד.
