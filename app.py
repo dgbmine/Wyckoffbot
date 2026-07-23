@@ -1,8 +1,29 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.2 (No-Trade Enforced In Engine)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.4 (Run Fingerprint)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V40.4 — טביעת-הרצה: שומר מפני חזרת התקלה שקרתה פעמיים (V39.4, V40.2),
+  שבה הרצה החזירה תוצאה זהה בדיוק כי השינוי ישב בשכבת-התצוגה ולא במנוע.
+  • _bt_fingerprint: hash של הסט, רשימת המניות, וכל קבוע התנהגותי
+    (_ENTRY_EVIDENCE, _STOP_FLOOR, _HOLD_BARS, ספי-הראיות, פרמטרי-הדגימה).
+    נשמר בכל דוח ובקובץ המאוחד.
+  • המסך משווה לטביעה של ההרצה הקודמת ומזהיר במפורש אם היא זהה — כלומר
+    שום דבר שמשפיע על התוצאה לא השתנה. הבאג הופך לגלוי מיידית במקום
+    להתגלות אחרי סבב שלם.
+
+V40.3 — סט המבחן: 36 שמות שלישיים, בתוליים לחלוטין.
+  הרקע: סט הגילוי (28) וסט האימות (36) שניהם נשרפו — הסתכלנו בהם שוב ושוב
+  לאורך הפיתוח, וכל הצצה שוחקת את העצמאות. הראיה שנצברה חזקה (CAGR 18.4%
+  ברמת-תיק מול 9.2% ל-Buy&Hold, שפל 11.8%, Sharpe 1.78, חיובי ב-7/7
+  עשורים) — אך היא כבר לא חסינה מטענת הכיול.
+  • 36 שמות, 9 בלוקים, אפס חפיפה עם 64 השמות הקודמים. סקטורים שלא נבדקו
+    כלל: פארמה גדולה (MRK/BMY/ABT/BAX), בנקאות צרכנית (WFC/C/USB/AXP),
+    כימיה (DD/PPG/ECL/APD), תחבורה (UNP/HON/MMM/EMR). מנפצי-ערך חדשים:
+    GPS, KSS, LUMN, HOG, IBM, MMM, HPQ. רובם עם היסטוריה מלפני 2000.
+  • זהו מבחן חד-פעמי. התוצאה מתקבלת כפי שהיא — בין אם תאשר את האדג'
+    ובין אם תפריך אותו. אין כיול על סט המבחן, בשום מצב.
 
 V40.2 — 🔴 אותה טעות, פעם שנייה: V40.1 שינתה רק את התצוגה. המנוע המשיך
   להחזיר את כניסות ה"נגיעה", והבאק-טסט המשיך לקחת אותן — ולכן ההרצה חזרה
@@ -10592,9 +10613,27 @@ _BT_BLOCKS_VALIDATION = {
     8: ["JBHT", "MAS", "SNA", "PKG"],
     9: ["BP", "TM", "BTI", "VALE"],
 }
-_BT_SETS = {"discovery": _BT_BLOCKS_DISCOVERY, "validation": _BT_BLOCKS_VALIDATION}
-_BT_SET_HE = {"discovery": "סט גילוי (28 מגה-קאפ — נשרף)",
-              "validation": "סט אימות (36 שמות — בתולי)"}
+# ── סט המבחן (V40.3) — הסט השלישי, בתולי לחלוטין. אפס חפיפה עם 64 השמות
+# ששימשו עד כה. נבנה כמבחן ההכרעה: האם האדג' שנמדד הוא אמיתי, או תוצר של
+# הצצות חוזרות בשני הסטים הקודמים. 36 שמות, רובם עם היסטוריה מלפני 2000,
+# עם מנפצי-ערך (GPS, KSS, LUMN, HOG, IBM, MMM), סקטורים שלא נבדקו כלל
+# (פארמה גדולה, בנקאות צרכנית, כימיה, תעופה), ומדגם בינלאומי חדש.
+_BT_BLOCKS_HOLDOUT = {
+    1: ["GPS", "HOG", "KSS", "LUMN"],        # מנפצי-ערך קמעונאיים/תעשייתיים
+    2: ["MRK", "BMY", "ABT", "BAX"],         # פארמה ומכשור רפואי
+    3: ["WFC", "C", "USB", "AXP"],           # בנקאות וכרטיסי אשראי
+    4: ["TXN", "MU", "HPQ", "IBM"],          # חומרה ושבבים ותיקים
+    5: ["MCD", "SBUX", "TGT", "LOW"],        # קמעונאות ומזון מהיר
+    6: ["UNP", "HON", "MMM", "EMR"],         # תעשייה ותחבורה
+    7: ["COP", "OXY", "PSX", "NEE"],         # אנרגיה ואנרגיה מתחדשת
+    8: ["DD", "PPG", "ECL", "APD"],          # כימיה וחומרים
+    9: ["DIS", "CMCSA", "SNY", "HMC"],       # מדיה ובינלאומי
+}
+_BT_SETS = {"discovery": _BT_BLOCKS_DISCOVERY, "validation": _BT_BLOCKS_VALIDATION,
+            "holdout": _BT_BLOCKS_HOLDOUT}
+_BT_SET_HE = {"discovery": "סט גילוי (28 — נשרף)",
+              "validation": "סט אימות (36 — נשרף)",
+              "holdout": "🔒 סט מבחן (36 — בתולי)"}
 _BT_BLOCKS = _BT_BLOCKS_DISCOVERY
 _BT_TIMEFRAMES = ["1y", "2y", "5y", "max"]
 _BT_HORIZONS = (10, 20, 60)          # ברים קדימה למדידת דיוק-הפאזה
@@ -11459,6 +11498,23 @@ def _bt_exec_view(counters: dict) -> list:
     return rows
 
 
+def _bt_fingerprint(set_name: str) -> str:
+    """
+    V40.4 — טביעת-אצבע של כל מה שמשפיע על התוצאה: הסט, רשימת המניות,
+    וכל קבוע התנהגותי. פעמיים קרה שהרצה חזרה זהה כי שינוי ישב בשכבת-התצוגה
+    ולא נגע במנוע. אם הטביעה זהה בין שתי הרצות — התוצאה *חייבת* להיות זהה,
+    וזה מיידית גלוי. אם היא שונה והתוצאה זהה — יש באג.
+    """
+    import hashlib as _hl
+    parts = [set_name,
+             repr(sorted(sum(_BT_SETS.get(set_name, {}).values(), []))),
+             repr(sorted(_ENTRY_EVIDENCE.items())), repr(sorted(_STOP_FLOOR.items())),
+             repr(_HOLD_BARS), repr(_EVID_MIN_N), repr(_BT_MAX_POINTS_V2),
+             repr(_BT_WINDOW), repr(_BT_TRADE_MAX_BARS),
+             "no_rec_enforced" if "_no_recommended" in globals() else "no_rec_off"]
+    return _hl.md5("|".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
 def _bt_run_block(block_no: int, status_cb=None, set_name: str = "discovery") -> dict:
     """מריץ בלוק שלם. set_name מתייג את הדוח כדי שלא יערבבו גילוי עם אימות."""
     tickers = _BT_SETS.get(set_name, _BT_BLOCKS_DISCOVERY).get(int(block_no), [])
@@ -11466,6 +11522,7 @@ def _bt_run_block(block_no: int, status_cb=None, set_name: str = "discovery") ->
            "generated_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
            "block": int(block_no), "tickers": tickers,
            "set": set_name,
+           "fingerprint": _bt_fingerprint(set_name),
            "timeframes": [_BT_PRIMARY_PERIOD],
            "schema_version": 2,
            "config": {"window": _BT_WINDOW, "max_points": _BT_MAX_POINTS_V2,
@@ -11533,6 +11590,10 @@ def _bt_merge_reports(reports: list) -> dict:
             continue
         if rep.get("set"):
             merged["set"] = rep["set"]
+        if rep.get("fingerprint"):
+            merged.setdefault("fingerprints", [])
+            if rep["fingerprint"] not in merged["fingerprints"]:
+                merged["fingerprints"].append(rep["fingerprint"])
         if rep.get("block") is not None:
             merged["source_blocks"].append(rep.get("block"))
         elif rep.get("source_blocks"):
@@ -11738,14 +11799,20 @@ def screen_backtest() -> None:
                "במקביל (מדידה בלבד). "
                f"עם עד {_BT_MAX_POINTS_V2} נקודות-הערכה למניה. שלב 1 מוסיף שכבת-מדידה: "
                "MAE/MFE, סימולציית-צל ללא סטופ, מרחק-סטופ ביחידות ATR, משטר-שוק ועידן.")
-    _set = st.radio("סט נתונים", ["discovery", "validation"], horizontal=True,
+    _set = st.radio("סט נתונים", ["holdout", "validation", "discovery"], horizontal=True,
                     format_func=lambda s: _BT_SET_HE[s], key="bt_set_sel")
     if st.session_state.get("_bt_last_set") not in (None, _set):
         st.session_state["bt_reports"] = {}
         st.info("הסט הוחלף — התוצאות הקודמות נוקו כדי למנוע ערבוב בין גילוי לאימות.")
     st.session_state["_bt_last_set"] = _set
     _blocks = _BT_SETS[_set]
-    if _set == "validation":
+    if _set == "holdout":
+        st.caption("🔒 סט המבחן — הסט השלישי, בתולי לחלוטין: אפס חפיפה עם 64 השמות "
+                   "ששימשו עד כה, סקטורים שלא נבדקו כלל (פארמה גדולה, בנקאות צרכנית, "
+                   "כימיה, תחבורה), ומנפצי-ערך חדשים. שני הסטים הקודמים נשרפו מהצצות "
+                   "חוזרות. **זהו מבחן ההכרעה**: אם האדג' יופיע גם כאן, הוא אמיתי. "
+                   "אם לא — הוא היה תוצר של כיול. אל תריץ אותו פעמיים.")
+    elif _set == "validation":
         st.caption("סט האימות בתולי: מנפצי-ערך לתיקון הטיית-השרידות, תשתיות ומזון "
                    "בתנודתיות נמוכה מול חומרי גלם ואנרגיה מחזוריים, ריטים ו-ADR "
                    "שנעדרו מסט הגילוי, ורובם עם היסטוריה מלפני 2000 — כך שמשברי "
@@ -11780,7 +11847,16 @@ def screen_backtest() -> None:
             st.session_state["bt_reports"][_bn] = _bt_run_block(_bn, status_cb=_cb,
                                                                 set_name=_set)
         _bar.empty(); _lbl.empty()
-        st.success(f"הושלמו {len(_run_req)} בלוקים תוך {_time.time() - _t0:.0f} שניות.")
+        _fp = _bt_fingerprint(_set)
+        _prev = st.session_state.get("_bt_prev_fp")
+        st.session_state["_bt_prev_fp"] = _fp
+        st.success(f"הושלמו {len(_run_req)} בלוקים תוך {_time.time() - _t0:.0f} שניות · "
+                   f"טביעת-הרצה `{_fp}`")
+        if _prev and _prev == _fp:
+            st.warning("⚠️ טביעת-ההרצה זהה לקודמת — לא השתנה דבר שמשפיע על התוצאה. "
+                       "אם ציפית לשינוי, הוא כנראה יושב בשכבת-התצוגה ולא במנוע.")
+        elif _prev:
+            st.caption(f"טביעה קודמת `{_prev}` → כעת `{_fp}` — התצורה אכן השתנתה.")
         _dbg_flush()
 
     _reports = st.session_state.get("bt_reports") or {}
@@ -12231,3 +12307,5 @@ if __name__ == "__main__":
 # V40.0 – באק-טסט ברמת-תיק: הון אחד, מגבלת פוזיציות מקבילות, עלויות. ה-CAGR הקודם הניח עסקה-אחת-ברצף בעוד שנמדדו 5.34 במקביל.
 # V40.1 – 'אין כניסה מומלצת' כתשובה: כשכל האפשרויות נמדדו שליליות — אל תיכנס, הקצאה 0%, רמות למעקב בלבד.
 # V40.2 – ההחלטה נאכפת גם במדידה (V40.1 שינתה רק תצוגה — ההרצה חזרה זהה).
+# V40.3 – סט מבחן שלישי בתולי (36 שמות, אפס חפיפה עם 64 הקודמים). מבחן ההכרעה — חד-פעמי, ללא כיול.
+# V40.4 – טביעת-הרצה (hash של הסט+כל קבוע התנהגותי) + אזהרה כשההרצה זהה לקודמת. שומר מפני הבאג שקרה פעמיים.
