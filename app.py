@@ -1,8 +1,18 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.0 (Portfolio-Level Backtest)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.1 (No-Trade Is An Answer)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V40.1 — צעד 2: "אין כניסה טובה" הופכת לתשובה לגיטימית.
+  עד כה, כשהמצב אִפשר רק כניסת "נגיעה" (ב-MARKUP וב-MARKDOWN זו הכניסה
+  היחידה), המערכת הציעה אותה כברירת-מחדל אף שנמדדה כמפסידה בשני המדגמים,
+  בכל שמונה חלופות-היציאה ובכל חמשת המצבים. כעת: כשכל האפשרויות החיות
+  נושאות תוחלת שלילית מדודה — המערכת אומרת "אל תיכנס", מציינת הקצאה 0%,
+  והרמות נותרות למעקב בלבד.
+  הראיה: 894 כניסות (18%) גורעות 0.64% מהתוחלת. הסרתן: +1.69% → +2.33%.
+  תחזית שנקבעה מראש להרצה הבאה: תוחלת +2.2% עד +2.4% · ירידה של 15-18%
+  באיתותים · CAGR ברמת-תיק נשאר 13-17%. חריגה = עצירה ובדיקה.
 
 V40.0 — באק-טסט ברמת-תיק (צעד 1: תיקון מדידה, אפס שינוי בלוגיקה).
   הבעיה: עד כה כל עסקה נמדדה בבידוד ועקומת-ההון הניחה עסקה-אחת-ברצף,
@@ -5405,10 +5415,26 @@ def _order_plain(kind: str, side: str, price: float) -> dict:
             "when": f"תתבצע רק אם המחיר **יירד** אל {p} — קונים בירידה מתוכננת."}
 
 
+def _no_recommended(entries: list) -> bool:
+    """
+    V40.1 — האם *כל* האפשרויות החיות נמדדו כמפסידות. במצב כזה המערכת אומרת
+    "אין כניסה טובה כרגע" במקום להציע את הפחות-גרועה. הראיה: הסרת הכניסות
+    השליליות מעלה את התוחלת מ-+1.69% ל-+2.33% לעסקה.
+    """
+    live = [e for e in (entries or []) if e.get("kind") != "watch"]
+    return bool(live) and all((e.get("evidence") or {}).get("negative") for e in live)
+
+
 def _direction_banner(entries: list) -> str:
     """שורה אחת בראש התוכנית: לאיזה כיוון אנחנו יורים ומתי מרוויחים."""
     if not entries:
         return ""
+    if _no_recommended(entries):
+        return ("<div class='story-box' style='border-right:3px solid #a68448; "
+                "margin-bottom:10px;'><b>⏸ אין כניסה מומלצת כרגע — אל תיכנס.</b><br>"
+                "המבנה מזוהה, אבל סוג הכניסה היחיד שהוא מאפשר נמדד על אלפי מקרים "
+                "והפסיד באופן עקבי. המתן לטריגר טוב יותר — פריצה מאושרת או אישור "
+                "החזרה. הרמות למטה למעקב בלבד.</div>")
     if entries[0].get("kind") == "watch":
         return ("<div class='story-box' style='margin-bottom:10px;'>"
                 "<b>⏸ מעקב בלבד — אין פעולה כעת.</b> המבנה טרם בשל; "
@@ -7147,10 +7173,16 @@ def screen_trade_strategy() -> None:
                    f"<span class='story-v'>{ln}</span></div>"
                    for i, ln in enumerate(_scenario_lines(entries, cancel_all, hz)))
     st.markdown(f"<div class='story-box'>{tree}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-label'>מה לעשות — הפקודות</div>",
-                unsafe_allow_html=True)
+    _none_ok = _no_recommended(entries)
+    st.markdown("<div class='section-label'>"
+                + ("מעקב בלבד — אין פעולה" if _none_ok else "מה לעשות — הפקודות")
+                + "</div>", unsafe_allow_html=True)
     st.markdown(_H(_direction_banner(entries)), unsafe_allow_html=True)
-    if len(entries) > 1:
+    if _none_ok:
+        st.info("💤 ההמלצה: לא לפתוח פוזיציה, והקצאה 0%. אין זו הודעת-שגיאה — "
+                "זו התשובה. המערכת יושבת בחוץ כ-90% מהזמן, וזו אחת הסיבות "
+                "שהיא מנצחת החזקה פסיבית בשפל נמוך בהרבה.")
+    elif len(entries) > 1:
         st.caption("להלן מספר אפשרויות כניסה, מהמומלצת ביותר למטה. "
                    "בחר **אחת** — לא את כולן.")
     for i, e in enumerate(entries, 1):
@@ -12190,3 +12222,4 @@ if __name__ == "__main__":
 # V39.3 – רצפת-סטופ ורמת-ביטול לפי טווח (קצר 2.5% / בינוני 4% / ארוך 7%), עם הצגת עלות-התוחלת המדודה. הרחבה גורפת ל-5-7% נבדקה ונדחתה.
 # V39.4 – פריטי מנוע/באק-טסט: רצפת-הסטופ עברה מהתצוגה אל _conditional_entries. שלוש הרצות קודמות מדדו סטופים שהמשתמש כבר לא רואה.
 # V40.0 – באק-טסט ברמת-תיק: הון אחד, מגבלת פוזיציות מקבילות, עלויות. ה-CAGR הקודם הניח עסקה-אחת-ברצף בעוד שנמדדו 5.34 במקביל.
+# V40.1 – 'אין כניסה מומלצת' כתשובה: כשכל האפשרויות נמדדו שליליות — אל תיכנס, הקצאה 0%, רמות למעקב בלבד.
