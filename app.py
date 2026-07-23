@@ -1,8 +1,26 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.7 (Validation Set)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.0 (Evidence Ranking — Change #1)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V39.0 — **שינוי התנהגות ראשון** (שלב 5, שינוי #1 מתוך 2; מיושם לבדו כדי
+        שכל פער עתידי יהיה ניתן לייחוס).
+  הראיה: 8,925 עסקאות בשני מדגמים בלתי-תלויים. *כל* חמשת המצבים שמייצרים
+  כניסת "נגיעה" (לימיט על רמה) הראו תוחלת שלילית — בשני הסטים ובכל שמונה
+  חלופות-היציאה: ACC_SPRING ‎-0.23R (n=839) · MARKUP ‎-0.20R (n=488) ·
+  MARKDOWN ‎-0.62R (n=406) · DIST_ACTIVE ‎-0.29R (n=183) · ACC_CONFIRM
+  ‎-0.25R (n=135). לעומתן פריצה ‎+1.03R ואישור ‎+0.66R — חיוביות בשניהם.
+  הסרת ה"נגיעה" לבדה מעלה את תוחלת המערכת מ-‎+0.223R ל-‎+0.607R.
+  • _ENTRY_EVIDENCE: טבלת-ראיות מדודה (תוחלת, n, תווית) לכל צירוף
+    מצב×סוג-כניסה×כיוון, עם סף n≥100 שמתחתיו התווית היא "לא-מאומת".
+  • _apply_evidence: מיון *יציב* שמוריד כניסות בעלות תוחלת שלילית מדודה
+    לתחתית הדירוג. הסדר בין הכניסות התקינות נשמר בדיוק כשהיה; השינוי היחיד
+    הוא שכניסה שלילית לעולם אינה הראשית.
+  • הכניסות אינן נמחקות. כל כרטיס נושא את המספר המדוד ואת גודל המדגם,
+    והשליליות מוצגות דהויות עם "לא מומלצת" — ההחלטה נשארת של המשתמש.
+  • מה *לא* שונה: הסטופים, היעדים, הטריגרים, חישוב ה-RR, ההקצאה, וכל שאר
+    המנועים. שינוי #2 (יציאת 40 ברים) ממתין בכוונה לסבב הבא.
 
 V38.7 — סט האימות (שלב 4 בתוכנית). מדידה בלבד; אפס שינוי בהתנהגות.
   הרקע: כל הממצאים עד כה (60% מול 8% בסימולציית-הצל, כישלון רצפת-ה-ATR,
@@ -5312,6 +5330,53 @@ def _chase_guard(entries: list, last: float) -> None:
             pass
 
 
+# ============================================================
+# V39.0 — שינוי #1: טבלת-הראיות והורדת כניסות ה"נגיעה" בדירוג.
+# מקור: 8,925 עסקאות בשני סטים בלתי-תלויים (28 מגה-קאפ + 36 שמות בתוליים
+# הכוללים מנפצי-ערך, תשתיות, ריטים ו-ADR עם היסטוריה מלפני 2000).
+# הממצא: *כל* חמשת המצבים שמייצרים כניסת "נגיעה" (לימיט על רמה) הראו תוחלת
+# שלילית — בשני הסטים, בכל שמונה חלופות-היציאה. לעומתם, כניסות פריצה/אישור
+# חיוביות בשניהם. הסרת ה"נגיעה" לבדה מעלה את תוחלת המערכת מ-+0.223R ל-+0.607R
+# (סט האימות). הכניסות אינן נמחקות — הן יורדות לתחתית הדירוג ונושאות את
+# המספר המדוד, כדי שההחלטה תישאר של המשתמש.
+# ============================================================
+_ENTRY_EVIDENCE = {
+    # (state, kind, side): (תוחלת-אימות R, n, תווית)
+    ("ACC_CONFIRM", "breakout", "long"): (1.03, 917, "מאומת"),
+    ("ACC_CONFIRM", "confirm", "long"): (0.66, 1876, "מאומת"),
+    ("DIST_WARNING", "confirm", "short"): (0.04, 584, "חלש"),
+    ("ACC_SPRING", "touch", "long"): (-0.23, 839, "שלילי"),
+    ("MARKUP", "touch", "long"): (-0.20, 488, "שלילי"),
+    ("MARKDOWN", "touch", "short"): (-0.62, 406, "שלילי"),
+    ("DIST_ACTIVE", "touch", "short"): (-0.29, 183, "שלילי"),
+    ("ACC_CONFIRM", "touch", "long"): (-0.25, 135, "שלילי"),
+    ("DIST_ACTIVE", "breakdown", "short"): (-0.83, 25, "לא-מאומת"),
+}
+_EVID_MIN_N = 100          # מתחת לזה — "לא-מאומת", לא מדרגים לפיו
+
+
+def _entry_evidence(state: str, e: dict) -> dict:
+    """מצמיד לכניסה את הראיה המדודה. טהור; ברירת-מחדל: 'לא-מאומת'."""
+    rec = _ENTRY_EVIDENCE.get((state, e.get("kind"), e.get("side", "long")))
+    if not rec:
+        return {"exp": None, "n": 0, "tag": "לא-מאומת", "negative": False}
+    exp, n, tag = rec
+    if n < _EVID_MIN_N:
+        return {"exp": exp, "n": n, "tag": "לא-מאומת", "negative": False}
+    return {"exp": exp, "n": n, "tag": tag, "negative": exp < 0}
+
+
+def _apply_evidence(entries: list, state: str) -> list:
+    """
+    מצמיד ראיות ומוריד כניסות בעלות תוחלת שלילית מדודה לתחתית הדירוג.
+    הסדר בין כניסות תקינות נשמר בדיוק כשהיה (מיון יציב) — השינוי היחיד הוא
+    שכניסה שלילית לעולם אינה ראשונה.
+    """
+    for e in entries or []:
+        e["evidence"] = _entry_evidence(state, e)
+    return sorted(entries or [], key=lambda e: 1 if e["evidence"]["negative"] else 0)
+
+
 def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str):
     """
     מטריצת מצב→כניסות: עד 3 כניסות מותנות עם מחיר, פקודה, סטופ-מראש, יעדים,
@@ -5363,7 +5428,7 @@ def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str):
                      15, cancel_all,
                      "במגמת ירידה — שורט על ראלים, לא רודפים מטה", side="short"))
         _chase_guard(E, last)
-        return E[:3], cancel_all, ""
+        return _apply_evidence(E, state)[:3], cancel_all, ""
     if state in ("", "UNDETERMINED"):
         return [], "", "אין מבנה מוגדר — אין רמות אמינות לתוכנית. המתן להתגבשות טווח."
     if not lv.get("ok"):
@@ -5431,7 +5496,7 @@ def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str):
                  lv["ce1"], None, 40, cancel_all,
                  "אין פקודה כעת; פריצה/ניעור עתידיים יפעילו תוכנית"))
     _chase_guard(E, last)
-    return E[:3], cancel_all, ""
+    return _apply_evidence(E, state)[:3], cancel_all, ""
 
 
 def _long_tranches(ws: dict, lv: dict, grade: str, valuation: str):
@@ -6066,10 +6131,22 @@ def _render_entry_card(e: dict, idx: int) -> None:
     if e.get("qty"):
         qty = (f"<div class='story-row'><span class='story-k'>גודל</span>"
                f"<span class='story-v'>{e['qty']} מניות (≈${int(e['cash']):,})</span></div>")
+    _ev = e.get("evidence") or {}
+    _evtxt, _dim = "", ""
+    if _ev.get("tag") == "מאומת":
+        _evtxt = (f"<span class='doc-meta'> · ראיה: {_ev['exp']:+.2f}R "
+                  f"({_ev['n']:,} עסקאות)</span>")
+    elif _ev.get("negative"):
+        _evtxt = (f"<span class='doc-meta' style='color:#c0736a;'> · תוחלת מדודה "
+                  f"{_ev['exp']:+.2f}R ב-{_ev['n']:,} עסקאות — לא מומלצת</span>")
+        _dim = "opacity:0.72;"
+    elif _ev.get("tag") == "חלש":
+        _evtxt = (f"<span class='doc-meta'> · ראיה חלשה: {_ev['exp']:+.2f}R "
+                  f"({_ev['n']:,})</span>")
     st.markdown(
-        f"<div class='story-box' style='{_brd}margin-bottom:10px;'>"
+        f"<div class='story-box' style='{_brd}{_dim}margin-bottom:10px;'>"
         f"<div class='story-row'><span class='story-k'>כניסה {idx}</span>"
-        f"<span class='story-v'><b>{e['name']}</b>{_badge}</span></div>"
+        f"<span class='story-v'><b>{e['name']}</b>{_badge}{_evtxt}</span></div>"
         f"<div class='story-row'><span class='story-k'>פקודה</span>"
         f"<span class='story-v'><b>{e['order_he']}</b></span></div>"
         f"{cond}"
@@ -6786,6 +6863,11 @@ def screen_trade_strategy() -> None:
     st.markdown("<div class='section-label'>הכניסות המותנות</div>", unsafe_allow_html=True)
     for i, e in enumerate(entries, 1):
         _render_entry_card(e, i)
+    if any((e.get("evidence") or {}).get("negative") for e in entries):
+        st.caption("כניסות המסומנות בתוחלת שלילית נמדדו על 8,925 עסקאות בשני מדגמים "
+                   "בלתי-תלויים (28 מגה-קאפ + 36 שמות בתוליים כולל מנפצי-ערך ותקופות "
+                   "משבר). הן הורדו לתחתית הדירוג ואינן ההמלצה הראשית — אך לא הוסרו: "
+                   "ההחלטה שלך.")
     if entries and entries[0].get("side") == "short":
         st.caption("🔻 שורט מחייב חשבון מרג'ין וזמינות השאלה — ודא מול הברוקר. "
                    "סיכון א-סימטרי: בגאפ-פתיחה הסטופ אינו ערובה למחיר הביצוע.")
@@ -11667,3 +11749,4 @@ if __name__ == "__main__":
 # V38.5 – תיקון מדידת MAE/MFE (0.0 falsy ⇒ נפילה לחלון המלא). שער-ההיפותזה לא הושפע.
 # V38.6 – מעבדת-יציאות: 8 חלופות (יעד/זמן 20-40-60/נגרר 2-3ATR/חצי-נגרר/יעד-כפול) נמדדות על כל איתות, מטריצות נשמרות ב-JSON. מדידה בלבד.
 # V38.7 – סט אימות בתולי (36 שמות, 9 בלוקים: מנפצי-ערך, תשתיות, ריטים, ADR, היסטוריה מלפני 2000) + בורר-סט ואיסור-ערבוב באיחוד.
+# V39.0 – שינוי #1: כניסות 'נגיעה' (תוחלת שלילית ב-2 מדגמים בלתי-תלויים) יורדות לתחתית הדירוג ונושאות תג-ראיה מדוד. הסטופים/היעדים/הטריגרים ללא שינוי.
