@@ -1,8 +1,20 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.3 (Horizon-Scaled Stops)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.4 (Engine/Backtest Parity)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V39.4 — 🔴 תיקון פערי-מדידה: המנוע והבאק-טסט התפצלו.
+  התגלה בהשוואת שלוש הרצות רצופות שהחזירו תוצאה **זהה בדיוק** (4,733
+  עסקאות, אותם מספרים) אף שהקוד השתנה. הסיבה: רצפת-הסטופ ותקרת-הפוזיציה
+  הוחלו בשכבת-התצוגה (screen_trade_strategy), בעוד שהבאק-טסט קורא ישירות
+  ל-_conditional_entries. כלומר המשתמש ראה סטופים מורחבים, והמדידה המשיכה
+  למדוד את הסטופים הצרים — כל מספר בבאק-טסט תיאר מערכת שכבר לא קיימת.
+  • הרצפה הועברה אל *תוך* _conditional_entries (פרמטר atr_pct אופציונלי),
+    כך שיש מקור-אמת יחיד: המסך והבאק-טסט מקבלים בדיוק את אותן כניסות,
+    אותם סטופים ואותו RR. זהו הכלל שהיה צריך להיות מלכתחילה — כל שינוי
+    התנהגות חייב לחיות במנוע, לא בתצוגה.
+  • ההרצה הבאה היא הראשונה שתמדוד את המערכת שאתה בפועל מפעיל.
 
 V39.3 — רצפת-סטופ ורמת-ביטול לפי טווח-זמן (בעקבות שאלת המשתמש על
         "אוברפיטינג מנטלי" — סטופים שעוזרים לבאק-טסט ואינם ניתנים למסחר).
@@ -5498,7 +5510,8 @@ def _apply_evidence(entries: list, state: str) -> list:
     return sorted(entries or [], key=lambda e: 1 if e["evidence"]["negative"] else 0)
 
 
-def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str):
+def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str,
+                         atr_pct: float = None):
     """
     מטריצת מצב→כניסות: עד 3 כניסות מותנות עם מחיר, פקודה, סטופ-מראש, יעדים,
     RR-מהטריגר, תוקף (מחובר לדעיכת האירועים) ותנאי ביטול. מחזיר
@@ -5549,7 +5562,10 @@ def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str):
                      15, cancel_all,
                      "במגמת ירידה — שורט על ראלים, לא רודפים מטה", side="short"))
         _chase_guard(E, last)
-        return _apply_evidence(E, state)[:3], cancel_all, ""
+        E = _apply_evidence(E, state)[:3]
+        if atr_pct:
+            _enforce_stop_floor(E, atr_pct, horizon)
+        return E, cancel_all, ""
     if state in ("", "UNDETERMINED"):
         return [], "", "אין מבנה מוגדר — אין רמות אמינות לתוכנית. המתן להתגבשות טווח."
     if not lv.get("ok"):
@@ -5621,7 +5637,10 @@ def _conditional_entries(ws: dict, lv: dict, last: float, horizon: str):
                  lv["ce1"], None, 40, cancel_all,
                  "אין פקודה כעת; פריצה/ניעור עתידיים יפעילו תוכנית"))
     _chase_guard(E, last)
-    return _apply_evidence(E, state)[:3], cancel_all, ""
+    E = _apply_evidence(E, state)[:3]
+    if atr_pct:
+        _enforce_stop_floor(E, atr_pct, horizon)
+    return E, cancel_all, ""
 
 
 def _long_tranches(ws: dict, lv: dict, grade: str, valuation: str):
@@ -7088,12 +7107,12 @@ def screen_trade_strategy() -> None:
         _render_options_filter(tkr, ws, lv, last)
         return
 
-    entries, cancel_all, why_none = _conditional_entries(ws, lv, last, hz)
+    _atrp = _atr_pct(df)
+    entries, cancel_all, why_none = _conditional_entries(ws, lv, last, hz, _atrp)
     if not entries:
         st.info(why_none or "אין כניסות זמינות בתנאים הנוכחיים.")
         return
-    _atrp = _atr_pct(df)
-    _widened = _enforce_stop_floor(entries, _atrp, hz)
+    _widened = sum(1 for _e in entries if _e.get("stop_widened"))
     _apply_sizing(entries, capital, risk_pct)
     _fm, _fa, _fc = _STOP_FLOOR.get(hz, _STOP_FLOOR["short"])
     _fp = max(_fm * (_atrp or _fa / _fm), _fa)
@@ -10773,7 +10792,11 @@ def _bt_run_one(ticker: str, period: str = _BT_PRIMARY_PERIOD, progress_cb=None,
             lv = _levels_dict(ws, last)
             if not lv.get("ok"):
                 continue
-            entries, _cancel, _why = _conditional_entries(ws, lv, last, "short")
+            _atr_here = (float(atr[i]) / float(closes[i]) * 100.0
+                         if (atr is not None and i < len(atr) and atr[i] == atr[i]
+                             and closes[i]) else None)
+            entries, _cancel, _why = _conditional_entries(ws, lv, last, "short",
+                                                          _atr_here)
             if not entries:
                 continue
             e = entries[0]
@@ -12012,3 +12035,4 @@ if __name__ == "__main__":
 # V39.1 – שינוי #2: החזקה 40 ימי מסחר (החלופה היחידה ששרדה 3 שערים) + שפת-פקודות מבצעית (מה לעשות/מתי תתבצע/מתי לצאת), 'טראנץ'' הוסר.
 # V39.2 – רצפת-סטופ 1×ATR (36% מהכניסות היו בתוך רעש-היום) + תקרת-פוזיציה 25% מההון (באג: $262K על הון $100K).
 # V39.3 – רצפת-סטופ ורמת-ביטול לפי טווח (קצר 2.5% / בינוני 4% / ארוך 7%), עם הצגת עלות-התוחלת המדודה. הרחבה גורפת ל-5-7% נבדקה ונדחתה.
+# V39.4 – פריטי מנוע/באק-טסט: רצפת-הסטופ עברה מהתצוגה אל _conditional_entries. שלוש הרצות קודמות מדדו סטופים שהמשתמש כבר לא רואה.
