@@ -1,8 +1,21 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.4 (Run Fingerprint)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.5 (T1 Exit · Three Horizons)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V40.5 — סגירת שני פערי-תאימות בין המערכת החיה למדידה (ביקורת יזומה).
+  (1) כלל היציאה: המסך אמר "צא אחרי 40 ימי מסחר" בעוד שהבאק-טסט מדד יציאה
+      ביעד T1 — שתי אסטרטגיות שונות. "40 ימים" אומץ ב-V39.1 לפי מדידה
+      ביחידות R; אחרי הרחבת הסטופים (V39.3) המדידה באחוזי-מחיר הפכה את
+      התמונה: יעד T1 → CAGR 22.6% ושפל 12.0%, מול 19.7% ושפל 17.9% ב-40
+      ימים. המסך חזר ליעד T1 ("הזן פקודת מכירה מוגבלת שם כבר עכשיו"),
+      ו-_HOLD_BARS=60 משמש כתקרת-ויתור בלבד.
+  (2) טווחי התוכנית: הבאק-טסט הריץ "short" מקודד-קשיח, כך שהבינוני והארוך
+      מעולם לא נמדדו. כעת שלושתן נמדדות על אותה נקודת-זמן (_measure_entry
+      חולץ לפונקציה) וכל עסקה מתויגת ב-hz. הקצר נשאר התוכנית הראשית.
+  פער ידוע שנותר: הסורקים מפעילים קווים אדומים לפני ההמלצה, והבאק-טסט
+  סורק הכל — הטיה לטובתנו, אך לא נמדדת.
 
 V40.4 — טביעת-הרצה: שומר מפני חזרת התקלה שקרתה פעמיים (V39.4, V40.2),
   שבה הרצה החזירה תוצאה זהה בדיוק כי השינוי ישב בשכבת-התצוגה ולא במנוע.
@@ -5539,7 +5552,11 @@ def _chase_guard(entries: list, last: float) -> None:
 # היעד הקבוע היה יוצא מוקדם מדי ומוותר על רוב המהלך: תוחלת עלתה מ-+0.223R
 # ל-+0.352R (+58%) בסט האימות הבתולי. היעדים נשארים כרמות-ייחוס לניהול,
 # אך אינם מצוות-יציאה. חל על הכניסות הטקטיות בלבד — לא על הבנייה המדורגת.
-_HOLD_BARS = 40
+# V40.5 — חזרה ליעד T1 כמצוות-היציאה. "40 ימים" אומץ ב-V39.1 לפי מדידה
+# ביחידות R; אחרי שהסטופים התרחבו (V39.3) המדידה באחוזי-מחיר הפכה את
+# התמונה: יעד T1 נותן CAGR 22.6% ושפל 12.0%, מול 19.7% ושפל 17.9% ב-40
+# ימים. _HOLD_BARS משמש כעת כתקרת-החזקה בלבד — מתי לוותר אם היעד לא הושג.
+_HOLD_BARS = 60
 
 _ENTRY_EVIDENCE = {
     # (state, kind, side): (תוחלת-אימות R, n, תווית)
@@ -6460,11 +6477,12 @@ def _render_entry_card(e: dict, idx: int) -> None:
                      f"לשם, סגור מיד. זו ההגנה שלך.{_wid}</span></div>")
         _hb = int(e.get("hold_bars") or 0)
         if _hb:
+            _sell = "קנייה חוזרת" if _sh else "מכירה"
             _rows.append(f"<div class='story-row'><span class='story-k'>מתי לצאת ברווח</span>"
-                         f"<span class='story-v'><b>אחרי {_hb} ימי מסחר</b> "
-                         f"(כחודשיים) — או קודם, אם נגעת ביציאה בהפסד. "
-                         f"רמות לייחוס: ${e['t1']}"
-                         f"{' ואז $' + str(e['t2']) if e.get('t2') else ''}."
+                         f"<span class='story-v'><b>ביעד ${e['t1']}</b> — הזן פקודת "
+                         f"{_sell} מוגבלת שם כבר עכשיו, יחד עם הכניסה. "
+                         f"{'יעד המשך: $' + str(e['t2']) + ' · ' if e.get('t2') else ''}"
+                         f"אם היעד לא הושג תוך ~{_hb} ימי מסחר — סגור בשוק."
                          f"</span></div>")
         if e.get("qty"):
             _cap = (" <span class='doc-meta'>· הוקטן לתקרת 25% מההון לפוזיציה "
@@ -10640,7 +10658,8 @@ _BT_HORIZONS = (10, 20, 60)          # ברים קדימה למדידת דיוק
 _BT_WINDOW = 420                     # חלון-הזנה למנוע (זמן-ריצה קבוע לכל טווח)
 _BT_MAX_POINTS = 80                  # תקרת נקודות-הערכה לכל טיקר/טווח (מסלול ישן)
 _BT_MAX_POINTS_V2 = 240              # V38.4 — מעבר יחיד על היסטוריה מלאה
-_BT_PRIMARY_PERIOD = "max"           # V38.4 — סוף הקינון 1y⊂2y⊂5y⊂max
+_BT_PRIMARY_PERIOD = "max"
+_BT_HORIZONS_PLAN = ["short", "medium", "long"]   # V40.5 — שלוש התוכניות           # V38.4 — סוף הקינון 1y⊂2y⊂5y⊂max
 _BT_TRADE_MAX_BARS = 60              # תקרת החזקה לסימולציית העסקה
 
 
@@ -10818,6 +10837,64 @@ def _bt_blank_exec():
             "sum_R": 0.0, "sum_bars": 0, "sum_rr_planned": 0.0}
 
 
+def _measure_entry(out, e, hz, state, df, i, n, highs, lows, closes, atr, regs):
+    """
+    V40.5 — מדידת כניסה בודדת עבור טווח-תוכנית נתון. חולץ מהלולאה כדי
+    שאפשר יהיה להריץ את שלוש התוכניות (קצר/בינוני/ארוך) על אותה נקודת-זמן.
+    כל עסקה מתויגת ב-hz — 'short' היא התוכנית הראשית שכוילה עד כה.
+    """
+    try:
+        key = f"{state}|{e.get('kind', '?')}|{e.get('side', 'long')}"
+        ex = out["exec"].setdefault(key, _bt_blank_exec())
+        ex["signals"] += 1
+        ex["sum_rr_planned"] += float(e.get("rr", 0) or 0)
+        res = _bt_fire_and_outcome(highs, lows, closes, i, e)
+        if res["fired"]:
+            ex["fired"] += 1
+            ex["sum_R"] += float(res["R"])
+            ex["sum_bars"] += int(res["bars"])
+            if res["result"] == "win":
+                ex["wins"] += 1
+            elif res["result"] == "loss":
+                ex["losses"] += 1
+            else:
+                ex["open"] += 1
+            _trig, _stop = float(e["trig"]), float(e["stop"])
+            _riskpct = abs(_trig - _stop) / _trig * 100.0 if _trig else 0.0
+            _fi = min(n - 1, int(res.get("fire_bar", i)) + int(res.get("bars", 0)))
+            _atr = float(atr[i]) if (atr is not None and i < len(atr)
+                                     and atr[i] == atr[i]) else None
+            _atr_pct = (_atr / float(closes[i]) * 100.0) if (_atr and closes[i]) else None
+            _din = str(df.index[i])[:10]
+            out["trades"].append({"i": int(i), "state": state, "hz": hz,
+                                  "kind": e.get("kind"), "side": e.get("side", "long"),
+                                  "R": float(res["R"]), "bars": int(res["bars"]),
+                                  "result": res["result"],
+                                  "rr_planned": float(e.get("rr", 0) or 0),
+                                  "risk_pct": round(_riskpct, 3),
+                                  "pct": round(float(res["R"]) * _riskpct, 3),
+                                  "date_in": _din,
+                                  "date_out": str(df.index[_fi])[:10],
+                                  # ── שלב 1: שדות-מדידה (אינם משנים התנהגות) ──
+                                  "mae_R": res.get("mae_R"),
+                                  "mfe_R": res.get("mfe_R"),
+                                  "shadow_t1": res.get("shadow_t1"),
+                                  "shadow_mae_R": res.get("shadow_mae_R"),
+                                  "shadow_bars": res.get("shadow_bars"),
+                                  "atr_pct": round(_atr_pct, 3) if _atr_pct else None,
+                                  "stop_atr": (round(_riskpct / _atr_pct, 2)
+                                               if (_atr_pct and _atr_pct > 0) else None),
+                                  "regime": (str(regs[i]) if regs is not None
+                                             and i < len(regs) else "unknown"),
+                                  "era": _bt_era_of(_din),
+                                  # V38.6 — מעבדת-היציאות (מדידה בלבד)
+                                  "exits": _bt_exit_variants(
+                                      highs, lows, closes,
+                                      int(res.get("fire_bar", i)), e, _atr)})
+    except Exception:
+        return
+
+
 def _bt_run_one(ticker: str, period: str = _BT_PRIMARY_PERIOD, progress_cb=None,
                 max_points: int = None) -> dict:
     """
@@ -10887,58 +10964,16 @@ def _bt_run_one(ticker: str, period: str = _BT_PRIMARY_PERIOD, progress_cb=None,
             _atr_here = (float(atr[i]) / float(closes[i]) * 100.0
                          if (atr is not None and i < len(atr) and atr[i] == atr[i]
                              and closes[i]) else None)
-            entries, _cancel, _why = _conditional_entries(ws, lv, last, "short",
-                                                          _atr_here)
-            if not entries or _no_recommended(entries):
-                continue          # V40.2 — "אין כניסה מומלצת" = אין עסקה, גם במדידה
-            e = entries[0]
-            key = f"{state}|{e.get('kind', '?')}|{e.get('side', 'long')}"
-            ex = out["exec"].setdefault(key, _bt_blank_exec())
-            ex["signals"] += 1
-            ex["sum_rr_planned"] += float(e.get("rr", 0) or 0)
-            res = _bt_fire_and_outcome(highs, lows, closes, i, e)
-            if res["fired"]:
-                ex["fired"] += 1
-                ex["sum_R"] += float(res["R"])
-                ex["sum_bars"] += int(res["bars"])
-                if res["result"] == "win":
-                    ex["wins"] += 1
-                elif res["result"] == "loss":
-                    ex["losses"] += 1
-                else:
-                    ex["open"] += 1
-                _trig, _stop = float(e["trig"]), float(e["stop"])
-                _riskpct = abs(_trig - _stop) / _trig * 100.0 if _trig else 0.0
-                _fi = min(n - 1, int(res.get("fire_bar", i)) + int(res.get("bars", 0)))
-                _atr = float(atr[i]) if (atr is not None and i < len(atr)
-                                         and atr[i] == atr[i]) else None
-                _atr_pct = (_atr / float(closes[i]) * 100.0) if (_atr and closes[i]) else None
-                _din = str(df.index[i])[:10]
-                out["trades"].append({"i": int(i), "state": state,
-                                      "kind": e.get("kind"), "side": e.get("side", "long"),
-                                      "R": float(res["R"]), "bars": int(res["bars"]),
-                                      "result": res["result"],
-                                      "rr_planned": float(e.get("rr", 0) or 0),
-                                      "risk_pct": round(_riskpct, 3),
-                                      "pct": round(float(res["R"]) * _riskpct, 3),
-                                      "date_in": _din,
-                                      "date_out": str(df.index[_fi])[:10],
-                                      # ── שלב 1: שדות-מדידה (אינם משנים התנהגות) ──
-                                      "mae_R": res.get("mae_R"),
-                                      "mfe_R": res.get("mfe_R"),
-                                      "shadow_t1": res.get("shadow_t1"),
-                                      "shadow_mae_R": res.get("shadow_mae_R"),
-                                      "shadow_bars": res.get("shadow_bars"),
-                                      "atr_pct": round(_atr_pct, 3) if _atr_pct else None,
-                                      "stop_atr": (round(_riskpct / _atr_pct, 2)
-                                                   if (_atr_pct and _atr_pct > 0) else None),
-                                      "regime": (str(regs[i]) if regs is not None
-                                                 and i < len(regs) else "unknown"),
-                                      "era": _bt_era_of(_din),
-                                      # V38.6 — מעבדת-היציאות (מדידה בלבד)
-                                      "exits": _bt_exit_variants(
-                                          highs, lows, closes,
-                                          int(res.get("fire_bar", i)), e, _atr)})
+            # V40.5 — שלוש התוכניות נמדדות באותה נקודת-זמן. "קצר" נשאר
+            # התוכנית הראשית (היא שעברה את כל סבבי הכיול); הבינוני והארוך
+            # נמדדים לראשונה ומתויגים ב-hz כדי שניתן יהיה להפריד בניתוח.
+            for _hz in _BT_HORIZONS_PLAN:
+                entries, _cancel, _why = _conditional_entries(ws, lv, last, _hz,
+                                                              _atr_here)
+                if not entries or _no_recommended(entries):
+                    continue
+                _measure_entry(out, entries[0], _hz, state, df, i, n,
+                               highs, lows, closes, atr, regs)
         except Exception:
             continue
         if progress_cb and (pi % 5 == 0):
@@ -11755,6 +11790,15 @@ def _bt_render_lenses(counters: dict, risk: dict, title_note: str = "",
                                         unsafe_allow_html=True)
                             st.dataframe(_pd.DataFrame(_xl["by_era"]),
                                          use_container_width=True, hide_index=True)
+                    _hzr = diag.get("hz") or []
+                    if _hzr:
+                        st.markdown("<div class='section-label'>שלוש התוכניות — "
+                                    "קצר מול בינוני מול ארוך</div>", unsafe_allow_html=True)
+                        st.dataframe(_pd.DataFrame(_hzr), use_container_width=True,
+                                     hide_index=True)
+                        st.caption("עד V40.5 נמדדה תוכנית הטווח הקצר בלבד. כעת שלושתן "
+                                   "נמדדות על אותה נקודת-זמן בדיוק — אותה מניה, אותו "
+                                   "מבנה, שלוש רמות סטופ ושלושה טריגרים.")
                     _er = diag.get("era") or []
                     if _er:
                         st.markdown("<div class='section-label'>יציבות לאורך עידנים "
@@ -11881,6 +11925,7 @@ def screen_backtest() -> None:
         _diag = {"stop": _bt_stop_diagnostics(_tr_ded),
                  "regime": _bt_split_view(_tr_ded, "regime", "משטר"),
                  "era": _bt_split_view(_tr_ded, "era", "עידן"),
+                 "hz": _bt_split_view(_tr_ded, "hz", "טווח תוכנית", min_n=20),
                  "exit_lab": _rep.get("exit_lab") or _bt_exit_lab(_tr_ded),
                  "portfolio": _rep.get("portfolio") or _bt_portfolio_sim(_tr_all),
                  "capacity": _rep.get("capacity") or _bt_capacity_curve(_tr_all)}
@@ -11938,6 +11983,7 @@ def screen_backtest() -> None:
                           {"stop": _bt_stop_diagnostics(_mg_ded),
                            "regime": _bt_split_view(_mg_ded, "regime", "משטר"),
                            "era": _bt_split_view(_mg_ded, "era", "עידן"),
+                           "hz": _bt_split_view(_mg_ded, "hz", "טווח תוכנית", min_n=20),
                            "exit_lab": _mg.get("exit_lab") or _bt_exit_lab(_mg_ded),
                            "portfolio": _mg.get("portfolio") or _bt_portfolio_sim(_mg.get("trades") or []),
                            "capacity": _mg.get("capacity") or _bt_capacity_curve(_mg.get("trades") or [])})
@@ -12309,3 +12355,4 @@ if __name__ == "__main__":
 # V40.2 – ההחלטה נאכפת גם במדידה (V40.1 שינתה רק תצוגה — ההרצה חזרה זהה).
 # V40.3 – סט מבחן שלישי בתולי (36 שמות, אפס חפיפה עם 64 הקודמים). מבחן ההכרעה — חד-פעמי, ללא כיול.
 # V40.4 – טביעת-הרצה (hash של הסט+כל קבוע התנהגותי) + אזהרה כשההרצה זהה לקודמת. שומר מפני הבאג שקרה פעמיים.
+# V40.5 – יציאה ביעד T1 (מה שנמדד) + שלושת טווחי-התוכנית נמדדים ומתויגים.
