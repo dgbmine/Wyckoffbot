@@ -1,8 +1,32 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.4 (Measurement Layer — Phase 1)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V38.6 (Exits Lab)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V38.6 — מעבדת-היציאות (שלב 3 בתוכנית, מדידה בלבד — אפס שינוי בהתנהגות
+        האפליקציה החיה; אומת ברגרסיית תוכנית-התקיפה).
+  הרקע: המדידה הראתה שהאדג' של הפאזה חי ב-60 ברים (ACC_SPRING +4.44%,
+  MARKUP +9.46%), בעוד העסקאות יוצאות אחרי 4-8 ברים ולוכדות ממנו מינוס.
+  ורצפת-סטופ ATR נפסלה בשער שנקבע מראש (שחקה את ACC_CONFIRM|פריצה מ-+1.28R
+  ל-+0.67R). לכן: לא נוגעים בכניסה ולא בסטופ — מודדים יציאות.
+  • על כל איתות, עם אותה כניסה ואותו סטופ בדיוק, נמדדות שמונה חלופות:
+    V0 יעד קבוע (בסיס) · V1 יציאת-זמן 20/40/60 · V2 סטופ נגרר 2×/3×ATR ·
+    V3 חצי ביעד והשאר נגרר · V4 יעד מוכפל. הכל ביחידות R, עם ברים ושפל.
+  • שלוש מטריצות נשמרות בתוך ה-JSON עצמו (exit_lab): כוללת, פר-צירוף-כניסה,
+    ופר-עידן — כך שאפשר להכריע גם מחוץ לאפליקציה. נוספו גם stop_diagnostics
+    ו-splits לקובץ, כדי שהניתוח לא יידרש לחישוב-חוזר מהעסקאות הגולמיות.
+  • כלל ההכרעה נשאר כפי שנקבע מראש: חלופה נבחרת רק אם ניצחה את V0 ב-3 מתוך
+    4 העידנים האחרונים, לא שחקה את ACC_CONFIRM|פריצה, ולא הכפילה את השפל.
+
+V38.5 — תיקון-מדידה (התגלה בניתוח תוצאות שלב 1): ב-MAE/MFE נעשה שימוש
+        ב-`adv_at_exit or run_adv`, ו-0.0 הוא falsy בפייתון — כך שעסקה שיצאה
+        ללא תנועה נגדית כלל קיבלה בטעות את המקסימום של *כל החלון* במקום 0.
+        תוקן לסנטינל None. נגע רק בשדות התצוגה MAE/MFE; שער-ההיפותזה
+        (shadow_t1 / shadow_mae_R) חושב במסלול נפרד ותקין — הממצאים עומדים.
+        תוקן גם באג-סיווג: עסקה שהגיעה ליעד ואז המחיר קרס — בר מאוחר שנגע
+        גם בסטופ וגם ביעד הדליק את דגל "אותו בר" וסיווג מנצחת כהפסד. כעת
+        הדגל נבדק רק כשהיעד טרם הושג.
 
 V38.4 — שלב 1 בתוכנית העבודה: שכבת-מדידה. **אפס שינוי בהתנהגות המערכת** —
         אף כניסה, סטופ, יעד או דירוג לא זזו. רק נמדד יותר.
@@ -10248,7 +10272,7 @@ def _bt_fire_and_outcome(highs, lows, closes, start: int, e: dict,
     first_stop = first_t1 = None
     same_bar = False
     run_adv = run_fav = 0.0            # מקסימום מצטבר על פני כל החלון
-    adv_at_exit = fav_at_exit = 0.0    # המצב ברגע היציאה בפועל
+    adv_at_exit = fav_at_exit = None   # המצב ברגע היציאה בפועל (None = טרם נקבע)
     adv_before_t1 = 0.0                # כמה כאב היה נדרש לספוג עד היעד
     for k in range(fire_idx, end):
         if side == "short":
@@ -10265,14 +10289,13 @@ def _bt_fire_and_outcome(highs, lows, closes, start: int, e: dict,
             adv_before_t1 = run_adv
         if first_stop is None and s_hit:
             first_stop = k
-            if t_hit:
+            if t_hit and first_t1 is None:      # V38.5: רק אם היעד טרם הושג
                 same_bar = True
         if first_t1 is None and t_hit:
             first_t1 = k
         if first_stop is not None and first_t1 is not None:
             pass                        # ממשיכים לסרוק — הצל צריך את כל החלון
-        if (first_stop is not None or first_t1 is not None) and \
-                (adv_at_exit == 0.0 and fav_at_exit == 0.0):
+        if (first_stop is not None or first_t1 is not None) and adv_at_exit is None:
             adv_at_exit, fav_at_exit = run_adv, run_fav
 
     if first_stop is not None and (first_t1 is None or first_stop < first_t1 or same_bar):
@@ -10286,8 +10309,8 @@ def _bt_fire_and_outcome(highs, lows, closes, start: int, e: dict,
         res = {"fired": True, "result": "open", "R": round(float(mtm), 2),
                "bars": last - fire_idx}
     res.update({
-        "mae_R": round(float(adv_at_exit or run_adv), 2),
-        "mfe_R": round(float(fav_at_exit or run_fav), 2),
+        "mae_R": round(float(run_adv if adv_at_exit is None else adv_at_exit), 2),
+        "mfe_R": round(float(run_fav if fav_at_exit is None else fav_at_exit), 2),
         "shadow_t1": bool(first_t1 is not None),
         "shadow_mae_R": round(float(adv_before_t1), 2),
         "shadow_bars": int(first_t1 - fire_idx) if first_t1 is not None else -1,
@@ -10419,7 +10442,11 @@ def _bt_run_one(ticker: str, period: str = _BT_PRIMARY_PERIOD, progress_cb=None,
                                                    if (_atr_pct and _atr_pct > 0) else None),
                                       "regime": (str(regs[i]) if regs is not None
                                                  and i < len(regs) else "unknown"),
-                                      "era": _bt_era_of(_din)})
+                                      "era": _bt_era_of(_din),
+                                      # V38.6 — מעבדת-היציאות (מדידה בלבד)
+                                      "exits": _bt_exit_variants(
+                                          highs, lows, closes,
+                                          int(res.get("fire_bar", i)), e, _atr)})
         except Exception:
             continue
         if progress_cb and (pi % 5 == 0):
@@ -10561,6 +10588,187 @@ def _bt_perf_by_phase(trades: list, benchmarks: dict = None,
                      "Sharpe": p["sharpe"] if p["sharpe"] is not None else "—",
                      "ימי מסחר בפוזיציה": p["avg_bars"]})
     return sorted(rows, key=lambda r: -r["עסקאות"])
+
+
+# ============================================================
+# V38.6 — מעבדת-היציאות: על כל איתות קיים, עם *אותה כניסה ואותו סטופ*,
+# נמדדות במקביל שמונה חלופות-יציאה. מדידה בלבד — אף חלופה אינה משפיעה על
+# האפליקציה החיה; המטרה היא להכריע בראיות אם האדג' אבד ביציאה המוקדמת.
+# ============================================================
+
+_BT_EXITS = ["V0_t1", "V1_t20", "V1_t40", "V1_t60",
+             "V2_trail2", "V2_trail3", "V3_half_trail", "V4_t1x2"]
+
+_BT_EXIT_HE = {
+    "V0_t1": "V0 · יעד קבוע (הנוכחי)",
+    "V1_t20": "V1 · יציאת-זמן 20 ברים",
+    "V1_t40": "V1 · יציאת-זמן 40 ברים",
+    "V1_t60": "V1 · יציאת-זמן 60 ברים",
+    "V2_trail2": "V2 · סטופ נגרר 2×ATR",
+    "V2_trail3": "V2 · סטופ נגרר 3×ATR",
+    "V3_half_trail": "V3 · חצי ביעד + נגרר",
+    "V4_t1x2": "V4 · יעד מוכפל",
+}
+
+
+def _bt_walk_exit(highs, lows, closes, start: int, side: str, trig: float, risk: float,
+                  stop_px: float, target_px=None, max_bars: int = 60,
+                  trail_mult=None, atr_val=None):
+    """
+    הליכה קדימה מבר-ההצתה עד יציאה. טהור, ללא הצצה קדימה.
+    מחזיר (R, bars, reason). מוסכמה: R של מחיר-יציאה px הוא
+    (px-trig)/risk בלונג ו-(trig-px)/risk בשורט — כך שסטופ התחלתי = -1R.
+    """
+    n = len(closes)
+    end = min(n, start + int(max_bars))
+    if end <= start:
+        return 0.0, 0, "empty"
+    cur_stop = float(stop_px)
+    best = None
+
+    def _r(px):
+        return ((trig - px) / risk) if side == "short" else ((px - trig) / risk)
+
+    for k in range(start, end):
+        hi, lo = float(highs[k]), float(lows[k])
+        if side == "short":
+            stop_hit = hi >= cur_stop
+            targ_hit = (lo <= target_px) if target_px is not None else False
+        else:
+            stop_hit = lo <= cur_stop
+            targ_hit = (hi >= target_px) if target_px is not None else False
+        if stop_hit:                      # שמרנות: סטופ קודם ליעד באותו בר
+            return round(_r(cur_stop), 3), k - start, "stop"
+        if targ_hit:
+            return round(_r(target_px), 3), k - start, "target"
+        if trail_mult and atr_val:        # גרירה אחרי הבר (לא באותו בר)
+            ext = lo if side == "short" else hi
+            best = ext if best is None else (min(best, ext) if side == "short"
+                                             else max(best, ext))
+            cand = (best + trail_mult * atr_val) if side == "short" \
+                else (best - trail_mult * atr_val)
+            cur_stop = min(cur_stop, cand) if side == "short" else max(cur_stop, cand)
+    last = end - 1
+    return round(_r(float(closes[last])), 3), last - start, "time"
+
+
+def _bt_exit_variants(highs, lows, closes, fire_idx: int, e: dict, atr_val=None,
+                      max_bars: int = _BT_TRADE_MAX_BARS) -> dict:
+    """שמונה חלופות-יציאה על אותה כניסה ואותו סטופ. מחזיר {שם: [R, ברים]}."""
+    side = e.get("side", "long")
+    trig, stop, t1 = float(e["trig"]), float(e["stop"]), float(e["t1"])
+    risk = (stop - trig) if side == "short" else (trig - stop)
+    if risk <= 0:
+        return {}
+    t1x2 = (trig - 2 * abs(t1 - trig)) if side == "short" else (trig + 2 * abs(t1 - trig))
+    out = {}
+    try:
+        for name, kw in (
+            ("V0_t1", dict(target_px=t1, max_bars=max_bars)),
+            ("V1_t20", dict(target_px=None, max_bars=20)),
+            ("V1_t40", dict(target_px=None, max_bars=40)),
+            ("V1_t60", dict(target_px=None, max_bars=60)),
+            ("V2_trail2", dict(target_px=None, max_bars=max_bars,
+                               trail_mult=2.0, atr_val=atr_val)),
+            ("V2_trail3", dict(target_px=None, max_bars=max_bars,
+                               trail_mult=3.0, atr_val=atr_val)),
+            ("V4_t1x2", dict(target_px=t1x2, max_bars=max_bars)),
+        ):
+            if kw.get("trail_mult") and not atr_val:
+                continue
+            r, b, _why = _bt_walk_exit(highs, lows, closes, fire_idx, side, trig, risk,
+                                       stop, **kw)
+            out[name] = [r, b]
+        # V3 — חצי ביעד, השאר נגרר מנקודת-היעד
+        r0, b0, why0 = _bt_walk_exit(highs, lows, closes, fire_idx, side, trig, risk,
+                                     stop, target_px=t1, max_bars=max_bars)
+        if why0 == "target" and atr_val:
+            r2, b2, _ = _bt_walk_exit(highs, lows, closes, fire_idx + b0, side, trig, risk,
+                                      trig, max_bars=max_bars - b0,
+                                      trail_mult=2.0, atr_val=atr_val)
+            out["V3_half_trail"] = [round(0.5 * r0 + 0.5 * r2, 3), b0 + b2]
+        else:
+            out["V3_half_trail"] = [r0, b0]
+    except Exception:
+        return out
+    return out
+
+
+def _bt_exit_rows(trades: list, min_n: int = 30) -> list:
+    """מטריצת היציאות הכוללת: תוחלת, % הצלחה, ברים, שפל מצטבר — לכל חלופה."""
+    agg = {}
+    for t in trades or []:
+        ex = t.get("exits") or {}
+        for k, v in ex.items():
+            if not isinstance(v, (list, tuple)) or len(v) < 2:
+                continue
+            d = agg.setdefault(k, {"n": 0, "sum": 0.0, "w": 0, "bars": 0, "seq": []})
+            d["n"] += 1
+            d["sum"] += float(v[0])
+            d["bars"] += int(v[1])
+            if float(v[0]) > 0:
+                d["w"] += 1
+            d["seq"].append((t.get("date_out") or "", float(v[0])))
+    rows = []
+    base = agg.get("V0_t1")
+    base_e = (base["sum"] / base["n"]) if base and base["n"] else None
+    for k in _BT_EXITS:
+        d = agg.get(k)
+        if not d or d["n"] < min_n:
+            continue
+        e = d["sum"] / d["n"]
+        cum = peak = 0.0
+        mdd = 0.0
+        for _dt, r in sorted(d["seq"]):
+            cum += r
+            peak = max(peak, cum)
+            mdd = min(mdd, cum - peak)
+        rows.append({"חלופה": _BT_EXIT_HE.get(k, k), "עסקאות": d["n"],
+                     "תוחלת": f"{e:+.3f}R",
+                     "מול V0": ("—" if base_e is None or k == "V0_t1"
+                                else f"{e - base_e:+.3f}R"),
+                     "% הצלחה": f"{d['w'] / d['n'] * 100:.0f}%",
+                     "סה\"כ R": f"{d['sum']:+.0f}",
+                     "ברים": f"{d['bars'] / d['n']:.1f}",
+                     "שפל מצטבר": f"{mdd:.0f}R"})
+    return rows
+
+
+def _bt_exit_pivot(trades: list, field: str, label: str, min_n: int = 25) -> list:
+    """תוחלת כל חלופה בחתך (עידן / צירוף-כניסה) — מבחן היציבות מהתוכנית."""
+    agg = {}
+    for t in trades or []:
+        key = (t.get(field) if field != "combo"
+               else f"{t.get('state')}|{t.get('kind')}|{t.get('side')}") or "?"
+        for k, v in (t.get("exits") or {}).items():
+            if not isinstance(v, (list, tuple)):
+                continue
+            d = agg.setdefault(key, {}).setdefault(k, [0, 0.0])
+            d[0] += 1
+            d[1] += float(v[0])
+    rows = []
+    for key in sorted(agg):
+        tot = agg[key].get("V0_t1", [0, 0.0])[0]
+        if tot < min_n:
+            continue
+        row = {label: (_WSTATES.get(key.split("|")[0], {}).get("he", key.split("|")[0])
+                       + " · " + _BT_KIND_HE.get(key.split("|")[1], "")
+                       if field == "combo" and "|" in key else key)}
+        for k in _BT_EXITS:
+            d = agg[key].get(k)
+            if d and d[0]:
+                row[_BT_EXIT_HE.get(k, k).split(" · ")[0]] = f"{d[1] / d[0]:+.2f}"
+        rows.append(row)
+    return rows
+
+
+def _bt_exit_lab(trades: list) -> dict:
+    """כל מעבדת-היציאות במקום אחד — נשמר בתוך ה-JSON לניתוח חיצוני."""
+    return {"overall": _bt_exit_rows(trades),
+            "by_era": _bt_exit_pivot(trades, "era", "עידן"),
+            "by_combo": _bt_exit_pivot(trades, "combo", "צירוף כניסה"),
+            "by_regime": _bt_exit_pivot(trades, "regime", "משטר"),
+            "variants": list(_BT_EXITS)}
 
 
 def _bt_stop_diagnostics(trades: list) -> list:
@@ -10737,6 +10945,10 @@ def _bt_run_block(block_no: int, status_cb=None) -> dict:
     rep["risk"] = _bt_risk_from_trades(rep["trades"])
     rep["performance"] = _bt_performance(
         _bt_dedupe_trades(rep["trades"], "longest"), rep.get("benchmarks"))
+    rep["exit_lab"] = _bt_exit_lab(rep["trades"])
+    rep["stop_diagnostics"] = _bt_stop_diagnostics(rep["trades"])
+    rep["splits"] = {"regime": _bt_split_view(rep["trades"], "regime", "משטר"),
+                     "era": _bt_split_view(rep["trades"], "era", "עידן")}
     return rep
 
 
@@ -10776,6 +10988,10 @@ def _bt_merge_reports(reports: list) -> dict:
     merged["risk"] = _bt_risk_from_trades(merged["trades"])
     merged["performance"] = _bt_performance(
         _bt_dedupe_trades(merged["trades"], "longest"), merged.get("benchmarks"))
+    merged["exit_lab"] = _bt_exit_lab(merged["trades"])
+    merged["stop_diagnostics"] = _bt_stop_diagnostics(merged["trades"])
+    merged["splits"] = {"regime": _bt_split_view(merged["trades"], "regime", "משטר"),
+                        "era": _bt_split_view(merged["trades"], "era", "עידן")}
     merged["summary"] = {"blocks": len(merged["source_blocks"]),
                          "tickers": len(merged["tickers"]),
                          "trades": len(merged["trades"]),
@@ -10865,6 +11081,28 @@ def _bt_render_lenses(counters: dict, risk: dict, title_note: str = "",
                                     "(SPY מול ממוצע 200)</div>", unsafe_allow_html=True)
                         st.dataframe(_pd.DataFrame(_rg), use_container_width=True,
                                      hide_index=True)
+                    _xl = diag.get("exit_lab") or {}
+                    if _xl.get("overall"):
+                        st.markdown("<div class='section-label'>מעבדת היציאות — "
+                                    "אותה כניסה, אותו סטופ, שמונה יציאות</div>",
+                                    unsafe_allow_html=True)
+                        st.dataframe(_pd.DataFrame(_xl["overall"]),
+                                     use_container_width=True, hide_index=True)
+                        st.caption("V0 היא היציאה הנוכחית — קו הבסיס. עמודת 'מול V0' היא "
+                                   "ההפרש בתוחלת. חלופה נבחרת רק אם היא מנצחת את V0 "
+                                   "ב-3 מתוך 4 העידנים האחרונים, אינה שוחקת את "
+                                   "ACC_CONFIRM|פריצה, ואינה מכפילה את השפל.")
+                        if _xl.get("by_combo"):
+                            st.markdown("<div class='section-label'>תוחלת כל חלופה — "
+                                        "פר צירוף כניסה</div>", unsafe_allow_html=True)
+                            st.dataframe(_pd.DataFrame(_xl["by_combo"]),
+                                         use_container_width=True, hide_index=True)
+                        if _xl.get("by_era"):
+                            st.markdown("<div class='section-label'>תוחלת כל חלופה — "
+                                        "פר עידן (מבחן היציבות)</div>",
+                                        unsafe_allow_html=True)
+                            st.dataframe(_pd.DataFrame(_xl["by_era"]),
+                                         use_container_width=True, hide_index=True)
                     _er = diag.get("era") or []
                     if _er:
                         st.markdown("<div class='section-label'>יציבות לאורך עידנים "
@@ -10905,6 +11143,8 @@ def screen_backtest() -> None:
 
     st.markdown("<div class='section-label'>בלוקים</div>", unsafe_allow_html=True)
     st.caption("כל בלוק: 4 מניות, מעבר יחיד על היסטוריה מלאה (ללא חלונות מקוננים) "
+               "· V38.6 מוסיף מעבדת-יציאות: כל איתות נמדד בשמונה חלופות-יציאה "
+               "במקביל (מדידה בלבד). "
                f"עם עד {_BT_MAX_POINTS_V2} נקודות-הערכה למניה. שלב 1 מוסיף שכבת-מדידה: "
                "MAE/MFE, סימולציית-צל ללא סטופ, מרחק-סטופ ביחידות ATR, משטר-שוק ועידן.")
     _run_req = None
@@ -10960,7 +11200,8 @@ def screen_backtest() -> None:
         _tr_ded = _bt_dedupe_trades(_tr_all, "longest")
         _diag = {"stop": _bt_stop_diagnostics(_tr_ded),
                  "regime": _bt_split_view(_tr_ded, "regime", "משטר"),
-                 "era": _bt_split_view(_tr_ded, "era", "עידן")}
+                 "era": _bt_split_view(_tr_ded, "era", "עידן"),
+                 "exit_lab": _rep.get("exit_lab") or _bt_exit_lab(_tr_ded)}
         _bt_render_lenses(_counters, _risk, _note, _perf, _prows, _diag)
         if _rep.get("errors"):
             with st.expander(f"אזהרות נתונים ({len(_rep['errors'])})"):
@@ -11007,7 +11248,8 @@ def screen_backtest() -> None:
                           _bt_perf_by_phase(_mg_ded, _mg.get("benchmarks")),
                           {"stop": _bt_stop_diagnostics(_mg_ded),
                            "regime": _bt_split_view(_mg_ded, "regime", "משטר"),
-                           "era": _bt_split_view(_mg_ded, "era", "עידן")})
+                           "era": _bt_split_view(_mg_ded, "era", "עידן"),
+                           "exit_lab": _mg.get("exit_lab") or _bt_exit_lab(_mg_ded)})
         st.download_button("⬇️ הורד את הקובץ המאוחד",
                            data=_json.dumps(_mg, ensure_ascii=False, indent=1).encode("utf-8"),
                            file_name="codex_backtest_merged.json", mime="application/json",
@@ -11363,3 +11605,5 @@ if __name__ == "__main__":
 # V38.2 – Backtesting: 3 עדשות (דיוק-פאזה / ביצוע-תקיפה / סיכון-תיק), 7 בלוקים × 4 טווחים, ייצוא JSON פר-בלוק + איחוד קבצים על מוני-גלם. הקלאסי נשמר.
 # V38.3 – חבילת-ביצועים: תאריכים/אחוזים/בנצ'מרק לכל עסקה ⇒ CAGR/Sharpe/MaxDD/PF/Expectancy/B&H על עקומת-הון כרונולוגית, ברמת המערכת ופר-פאזה + ניכוי כפילות-טווחים.
 # V38.4 – שלב 1 (מדידה בלבד): MAE/MFE, סימולציית-צל ללא סטופ, ATR ומרחק-סטופ, תיוג משטר/עידן, מעבר יחיד ללא קינון, בנצ'מרק עם Sharpe/MaxDD. אפס שינוי התנהגות.
+# V38.5 – תיקון מדידת MAE/MFE (0.0 falsy ⇒ נפילה לחלון המלא). שער-ההיפותזה לא הושפע.
+# V38.6 – מעבדת-יציאות: 8 חלופות (יעד/זמן 20-40-60/נגרר 2-3ATR/חצי-נגרר/יעד-כפול) נמדדות על כל איתות, מטריצות נשמרות ב-JSON. מדידה בלבד.
