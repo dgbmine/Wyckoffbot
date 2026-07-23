@@ -1,8 +1,29 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.0 (Evidence Ranking — Change #1)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.1 (Hold Time — Change #2 · Command Language)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V39.1 — **שינוי התנהגות שני** + שכתוב שפת-הפקודות.
+  שינוי #2 (זמן-החזקה): מתוך שמונה חלופות-יציאה שנמדדו על 8,925 עסקאות,
+  רק "יציאה אחרי 40 ימי מסחר" עברה את שלושת השערים שנקבעו מראש — יציבות
+  4/4 עידנים, לא שחקה את כניסת-הפריצה (+0.042R), ולא הכפילה את השפל
+  (×1.70). שתי המועמדות שהובילו בסט הגילוי נפסלו: t60 הכפילה את השפל
+  (×2.25) ו-trail2 שחקה את כניסת-הפריצה (-0.087R). התוצאה: תוחלת המערכת
+  עולה מ-+0.223R ל-+0.352R (+58%) בסט האימות הבתולי. היעדים נותרים
+  כרמות-ייחוס לניהול ואינם מצוות-יציאה. חל על הכניסות הטקטיות בלבד —
+  הבנייה המדורגת לא נבדקה ולכן לא שונתה.
+  שפת-פקודות (בקשת המשתמש — "המערכת מדברת אל מבצע, לא אל מהנדס"):
+  • כל פקודה נפתחת ב-"מה לעשות": 🟢 קנייה / 🔴 מכירה בחסר, במחיר מפורש.
+    אחריה סוג-הפקודה כפי שהוא מופיע אצל הברוקר, ואז הסבר *התנהגותי* —
+    "תתבצע רק אם המחיר יירד לשם" — במקום להניח שהמשתמש יודע מה זה Limit.
+  • באנר-כיוון בראש התוכנית: לונג או שורט, ומתי מרוויחים.
+  • "טראנץ'" הוסר: "רכישה 1 מתוך 3 — בתחתית הטווח". הסטופ: "אם תיסגר בסוף
+    שבוע מתחת $X — מכור הכל".
+  • כרטיס-הכניסה סודר מחדש לפי סדר-ביצוע: מה לעשות → סוג פקודה → מתי
+    תתבצע → יציאה בהפסד → מתי לצאת ברווח → כמה מניות → מתי לוותר.
+  • עץ-התרחישים: "אם תיגע ב-$X → נגיעה ב-LPS" הפך ל-"אם המחיר יירד אל
+    $X ← 🟢 קנה".
 
 V39.0 — **שינוי התנהגות ראשון** (שלב 5, שינוי #1 מתוך 2; מיושם לבדו כדי
         שכל פער עתידי יהיה ניתן לייחוס).
@@ -5288,6 +5309,62 @@ def _levels_dict(ws: dict, last: float) -> dict:
     return out
 
 
+# ============================================================
+# V39.1 — שפת פקודות. המערכת מדברת אל מבצע, לא אל מהנדס: כל פקודה נאמרת
+# בעברית מלאה ומסבירה את *ההתנהגות* שלה (מתי תתבצע), לא את שמה הלועזי.
+# ============================================================
+_ACT_HE = {
+    ("long", "limit"): ("קנייה", "🟢"),
+    ("long", "stop"): ("קנייה", "🟢"),
+    ("short", "limit"): ("מכירה בחסר", "🔴"),
+    ("short", "stop"): ("מכירה בחסר", "🔴"),
+}
+
+
+def _order_plain(kind: str, side: str, price: float) -> dict:
+    """
+    מתרגם כניסה לפקודה מבצעית בעברית. מחזיר:
+      act    — מה עושים (קנייה / מכירה בחסר)
+      order  — שם הפקודה אצל הברוקר (באנגלית, כפי שהיא מופיעה שם)
+      when   — מתי היא תתבצע, במילים פשוטות
+    """
+    p = f"${price}"
+    if side == "short":
+        if kind in ("breakdown", "confirm"):
+            return {"act": "מכירה בחסר", "icon": "🔴", "order": "Sell Stop",
+                    "when": f"תתבצע רק אם המחיר **יירד** אל {p} — כלומר בשבירה כלפי מטה."}
+        return {"act": "מכירה בחסר", "icon": "🔴", "order": "Sell Limit (Short)",
+                "when": f"תתבצע רק אם המחיר **יעלה** אל {p} — מוכרים לתוך ראלי, לא לתוך נפילה."}
+    if kind in ("breakout", "confirm"):
+        return {"act": "קנייה", "icon": "🟢", "order": "Buy Stop",
+                "when": f"תתבצע רק אם המחיר **יעלה** מעל {p} — כלומר בפריצה כלפי מעלה."}
+    if kind == "watch":
+        return {"act": "מעקב בלבד", "icon": "⏸", "order": "—",
+                "when": f"אין פקודה כעת. סמן לעצמך את {p} ובדוק שוב כשיגיע לשם."}
+    return {"act": "קנייה", "icon": "🟢", "order": "Buy Limit",
+            "when": f"תתבצע רק אם המחיר **יירד** אל {p} — קונים בירידה מתוכננת."}
+
+
+def _direction_banner(entries: list) -> str:
+    """שורה אחת בראש התוכנית: לאיזה כיוון אנחנו יורים ומתי מרוויחים."""
+    if not entries:
+        return ""
+    if entries[0].get("kind") == "watch":
+        return ("<div class='story-box' style='margin-bottom:10px;'>"
+                "<b>⏸ מעקב בלבד — אין פעולה כעת.</b> המבנה טרם בשל; "
+                "המתן לטריגר.</div>")
+    if entries[0].get("side") == "short":
+        return ("<div class='story-box' style='border-right:3px solid #ef4444; "
+                "margin-bottom:10px;'><b>🔴 הכיוון: מכירה בחסר (שורט).</b> "
+                "אתה מוכר מניה שאינה שלך, בתקווה לקנות אותה בחזרה בזול יותר. "
+                "<b>מרוויח כשהמחיר יורד</b>, מפסיד כשהוא עולה. דורש חשבון מרג'ין."
+                "</div>")
+    return ("<div class='story-box' style='border-right:3px solid #16a34a; "
+            "margin-bottom:10px;'><b>🟢 הכיוון: קנייה (לונג).</b> "
+            "אתה קונה מניות ומחזיק. <b>מרוויח כשהמחיר עולה</b>, מפסיד כשהוא יורד."
+            "</div>")
+
+
 def _mk_entry(kind, name, order_he, trig, stop, t1, t2=None, valid=15,
               cancel="", note="", cond="", side="long"):
     """בונה כניסה מותנית; RR מחושב ממחיר הטריגר (לא מהספוט). V34: מודע-כיוון."""
@@ -5305,7 +5382,9 @@ def _mk_entry(kind, name, order_he, trig, stop, t1, t2=None, valid=15,
     return {"kind": kind, "name": name, "order_he": order_he, "trig": trig,
             "stop": stop, "t1": round(float(t1), 2),
             "t2": round(float(t2), 2) if t2 else None, "rr": rr, "side": side,
-            "valid": int(valid), "cancel": cancel, "note": note, "cond": cond}
+            "valid": int(valid), "cancel": cancel, "note": note, "cond": cond,
+            "plain": _order_plain(kind, side, trig),
+            "hold_bars": _HOLD_BARS if kind != "watch" else 0}
 
 
 def _chase_guard(entries: list, last: float) -> None:
@@ -5340,6 +5419,14 @@ def _chase_guard(entries: list, last: float) -> None:
 # (סט האימות). הכניסות אינן נמחקות — הן יורדות לתחתית הדירוג ונושאות את
 # המספר המדוד, כדי שההחלטה תישאר של המשתמש.
 # ============================================================
+# V39.1 — שינוי #2: זמן-החזקה מדוד. מתוך שמונה חלופות-יציאה שנבדקו על 8,925
+# עסקאות, רק "יציאה אחרי 40 ימי מסחר" עברה את שלושת השערים שנקבעו מראש
+# (יציבות 4/4 עידנים · לא שחקה את כניסת-הפריצה · לא הכפילה את השפל).
+# היעד הקבוע היה יוצא מוקדם מדי ומוותר על רוב המהלך: תוחלת עלתה מ-+0.223R
+# ל-+0.352R (+58%) בסט האימות הבתולי. היעדים נשארים כרמות-ייחוס לניהול,
+# אך אינם מצוות-יציאה. חל על הכניסות הטקטיות בלבד — לא על הבנייה המדורגת.
+_HOLD_BARS = 40
+
 _ENTRY_EVIDENCE = {
     # (state, kind, side): (תוחלת-אימות R, n, תווית)
     ("ACC_CONFIRM", "breakout", "long"): (1.03, 917, "מאומת"),
@@ -5503,9 +5590,9 @@ def _long_tranches(ws: dict, lv: dict, grade: str, valuation: str):
     """תוכנית ארוכה: טראנצ'ים מדורגים + סטופ מבני רחב מוגדר-מראש (ללא התראות)."""
     state = ws.get("state", "")
     if state in ("DIST_WARNING", "DIST_ACTIVE", "MARKDOWN"):
-        return None, "בהפצה/ירידה — אין בניית פוזיציה; המתן לבסיס חדש ואז טראנצ'ים."
+        return None, "המניה בהפצה או בירידה — אין לבנות פוזיציה ארוכה כעת."
     if not lv.get("ok"):
-        return None, "אין טווח תקף — לא ניתן להגדיר אזורי טראנצ'ים."
+        return None, "אין טווח מסחר מזוהה — אי-אפשר לקבוע מחירי רכישה."
     g = (grade or "—")[:1].upper()
     if g in ("D", "F"):
         return None, f"איכות {g} — לא מיועדת להחזקה ארוכה."
@@ -5513,17 +5600,25 @@ def _long_tranches(ws: dict, lv: dict, grade: str, valuation: str):
     wide_stop = round(lv["base_low"] * 0.93, 2)
     pack = {
         "tranches": [
-            {"share": 0.40, "name": "טראנץ' 1 — תחתית הטווח",
-             "order": f"Limit ב-${round(lv['sup'] * 1.02, 2)}", "trig": round(lv["sup"] * 1.02, 2)},
-            {"share": 0.30, "name": "טראנץ' 2 — אזור הניעור/בדיקה",
-             "order": f"Limit ב-${round(sl * 1.005, 2)}", "trig": round(sl * 1.005, 2)},
-            {"share": 0.30, "name": "טראנץ' 3 — ריטסט אחרי פריצה",
-             "order": f"Stop-Buy ב-${lv['creek']} (רק לאחר פריצה מאושרת)", "trig": lv["creek"]},
+            {"share": 0.40, "name": "רכישה 1 מתוך 3 — בתחתית הטווח",
+             "order": (f"🟢 קנה ב-${round(lv['sup'] * 1.02, 2)} · פקודת Buy Limit — "
+                       f"תתבצע רק אם המחיר יירד לשם"),
+             "trig": round(lv["sup"] * 1.02, 2)},
+            {"share": 0.30, "name": "רכישה 2 מתוך 3 — באזור הניעור",
+             "order": (f"🟢 קנה ב-${round(sl * 1.005, 2)} · פקודת Buy Limit — "
+                       f"תתבצע רק אם המחיר יירד עוד"),
+             "trig": round(sl * 1.005, 2)},
+            {"share": 0.30, "name": "רכישה 3 מתוך 3 — אחרי שהמניה פרצה",
+             "order": (f"🟢 קנה ב-${lv['creek']} · פקודת Buy Stop — תתבצע רק אם "
+                       f"המחיר יעלה לשם (השלמה, לא רדיפה)"),
+             "trig": lv["creek"]},
         ],
         "stop": wide_stop,
-        "stop_he": f"סטופ מבני רחב, מוגדר מראש: סגירה שבועית מתחת ${wide_stop} — יציאה מכל הפוזיציה",
+        "stop_he": (f"אם המניה תיסגר בסוף שבוע מתחת ${wide_stop} — מכור הכל. "
+                    f"זו נקודת-הכניעה היחידה; עד אליה, תנודות אינן סיבה לפעולה."),
         "target": lv["ce2"],
-        "note": "ללא התראות מערכת — הסטופ והטראנצ'ים מוגדרים מראש; בדיקה שבועית ידנית מספיקה.",
+        "note": ("המערכת אינה שולחת התראות. הזן את שלוש הפקודות אצל הברוקר עכשיו, "
+                 "ובדוק פעם בשבוע אם נגעת בנקודת-הכניעה. זה הכל."),
     }
     return pack, ""
 
@@ -5547,17 +5642,20 @@ def _scenario_lines(entries: list, cancel_all: str, horizon: str) -> list:
         if e["kind"] == "watch":
             lines.append(f"אם תפרוץ ${e['trig']} → תופעל תוכנית פריצה (חזור לניתוח)")
         elif e["kind"] == "breakdown":
-            lines.append(f"אם תישבר ${e['trig']}{' בנפח' if e.get('cond') else ''} → {e['name']} (שורט)")
+            lines.append(f"אם המחיר יירד מתחת ${e['trig']}"
+                         f"{' בנפח גדול' if e.get('cond') else ''} ← 🔴 מכור בחסר")
         elif e["kind"] == "touch" and _short:
-            lines.append(f"אם תרלה ל-${e['trig']} → {e['name']} ({e['order_he']})")
+            lines.append(f"אם המחיר יעלה אל ${e['trig']} ← 🔴 מכור בחסר לתוך הראלי")
         elif e["kind"] == "touch":
-            lines.append(f"אם תיגע ב-${e['trig']} → {e['name']} ({e['order_he']})")
+            lines.append(f"אם המחיר יירד אל ${e['trig']} ← 🟢 קנה")
         elif e["kind"] == "breakout":
-            lines.append(f"אם תפרוץ ${e['trig']}{' בנפח' if e.get('cond') else ''} → {e['name']}")
+            lines.append(f"אם המחיר יעלה מעל ${e['trig']}"
+                         f"{' בנפח גדול' if e.get('cond') else ''} ← 🟢 קנה")
         else:
             cond = f" ({e['cond']})" if e.get("cond") else ""
             _dirw = "מתחת ל" if _short else "מעל"
-            lines.append(f"אם יתקבל אישור{cond} {_dirw}-${e['trig']} → {e['name']}")
+            lines.append(f"אם יתקבל אישור{cond} {_dirw}-${e['trig']} ← "
+                         f"{'🔴 מכור בחסר' if e.get('side') == 'short' else '🟢 קנה'}")
     if cancel_all:
         lines.append(f"❌ {cancel_all}")
     if horizon == "short" and entries:
@@ -6120,45 +6218,66 @@ def _render_horizon_strip(ticker: str, ws: dict, fd: dict) -> None:
 
 
 def _render_entry_card(e: dict, idx: int) -> None:
+    """
+    V39.1 — כרטיס-פקודה. סדר הקריאה: מה לעשות → באיזה מחיר → מתי תתבצע →
+    איפה יוצאים בהפסד → כמה זמן מחזיקים → כמה קונים. בלי ז'רגון בלתי-מוסבר.
+    """
     _sh = e.get("side") == "short"
-    _badge = " <span style='color:#ef4444; font-weight:800;'>🔻 שורט</span>" if _sh else ""
-    _stop_k = "סטופ (מעל, מראש)" if _sh else "סטופ (מראש)"
-    _brd = "border-right:3px solid #ef4444; " if _sh else ""
-    t2 = f" · יעד 2: ${e['t2']}" if e.get("t2") else ""
-    cond = f"<div class='story-row'><span class='story-k'>תנאי</span><span class='story-v'>{e['cond']}</span></div>" if e.get("cond") else ""
-    note = f"<div class='story-row'><span class='story-k'>הערה</span><span class='story-v'>{e['note']}</span></div>" if e.get("note") else ""
-    qty = ""
-    if e.get("qty"):
-        qty = (f"<div class='story-row'><span class='story-k'>גודל</span>"
-               f"<span class='story-v'>{e['qty']} מניות (≈${int(e['cash']):,})</span></div>")
+    _p = e.get("plain") or _order_plain(e.get("kind", "touch"), e.get("side", "long"),
+                                        e.get("trig", 0))
+    _brd = "border-right:3px solid #ef4444; " if _sh else \
+           ("border-right:3px solid #16a34a; " if e.get("kind") != "watch" else "")
     _ev = e.get("evidence") or {}
     _evtxt, _dim = "", ""
     if _ev.get("tag") == "מאומת":
-        _evtxt = (f"<span class='doc-meta'> · ראיה: {_ev['exp']:+.2f}R "
-                  f"({_ev['n']:,} עסקאות)</span>")
+        _evtxt = (f"<span class='doc-meta'> · נבדק: {_ev['exp']:+.2f}R "
+                  f"ב-{_ev['n']:,} מקרים</span>")
     elif _ev.get("negative"):
-        _evtxt = (f"<span class='doc-meta' style='color:#c0736a;'> · תוחלת מדודה "
-                  f"{_ev['exp']:+.2f}R ב-{_ev['n']:,} עסקאות — לא מומלצת</span>")
+        _evtxt = (f"<span class='doc-meta' style='color:#c0736a;'> · נבדק והפסיד "
+                  f"{_ev['exp']:+.2f}R ב-{_ev['n']:,} מקרים — לא מומלצת</span>")
         _dim = "opacity:0.72;"
     elif _ev.get("tag") == "חלש":
-        _evtxt = (f"<span class='doc-meta'> · ראיה חלשה: {_ev['exp']:+.2f}R "
-                  f"({_ev['n']:,})</span>")
-    st.markdown(
+        _evtxt = f"<span class='doc-meta'> · ראיה חלשה ({_ev['n']:,} מקרים)</span>"
+
+    _rows = [f"<div class='story-row'><span class='story-k'>מה לעשות</span>"
+             f"<span class='story-v'><b>{_p['icon']} {_p['act']} של המניה "
+             f"ב-${e['trig']}</b></span></div>"]
+    if _p["order"] != "—":
+        _rows.append(f"<div class='story-row'><span class='story-k'>סוג הפקודה</span>"
+                     f"<span class='story-v'>{_p['order']} — כך תבקש מהברוקר</span></div>")
+    _rows.append(f"<div class='story-row'><span class='story-k'>מתי תתבצע</span>"
+                 f"<span class='story-v'>{_p['when']}</span></div>")
+    if e.get("cond"):
+        _rows.append(f"<div class='story-row'><span class='story-k'>תנאי נוסף</span>"
+                     f"<span class='story-v'>{e['cond']}</span></div>")
+    if e.get("kind") != "watch":
+        _exit_dir = "יעלה מעל" if _sh else "יירד מתחת"
+        _rows.append(f"<div class='story-row'><span class='story-k'>יציאה בהפסד</span>"
+                     f"<span class='story-v'><b>${e['stop']}</b> — אם המחיר {_exit_dir} "
+                     f"לשם, סגור מיד. זו ההגנה שלך.</span></div>")
+        _hb = int(e.get("hold_bars") or 0)
+        if _hb:
+            _rows.append(f"<div class='story-row'><span class='story-k'>מתי לצאת ברווח</span>"
+                         f"<span class='story-v'><b>אחרי {_hb} ימי מסחר</b> "
+                         f"(כחודשיים) — או קודם, אם נגעת ביציאה בהפסד. "
+                         f"רמות לייחוס: ${e['t1']}"
+                         f"{' ואז $' + str(e['t2']) if e.get('t2') else ''}."
+                         f"</span></div>")
+        if e.get("qty"):
+            _rows.append(f"<div class='story-row'><span class='story-k'>כמה</span>"
+                         f"<span class='story-v'><b>{e['qty']} מניות</b> "
+                         f"(≈${int(e['cash']):,})</span></div>")
+        _rows.append(f"<div class='story-row'><span class='story-k'>מתי לוותר</span>"
+                     f"<span class='story-v'>אם הפקודה לא התבצעה תוך ~{e['valid']} "
+                     f"ימי מסחר — בטל אותה. ביטול מיידי: {e['cancel']}</span></div>")
+    if e.get("note"):
+        _rows.append(f"<div class='story-row'><span class='story-k'>שים לב</span>"
+                     f"<span class='story-v'>{e['note']}</span></div>")
+    st.markdown(_H(
         f"<div class='story-box' style='{_brd}{_dim}margin-bottom:10px;'>"
-        f"<div class='story-row'><span class='story-k'>כניסה {idx}</span>"
-        f"<span class='story-v'><b>{e['name']}</b>{_badge}{_evtxt}</span></div>"
-        f"<div class='story-row'><span class='story-k'>פקודה</span>"
-        f"<span class='story-v'><b>{e['order_he']}</b></span></div>"
-        f"{cond}"
-        f"<div class='story-row'><span class='story-k'>{_stop_k}</span>"
-        f"<span class='story-v'>${e['stop']}</span></div>"
-        f"<div class='story-row'><span class='story-k'>יעדים</span>"
-        f"<span class='story-v'>יעד 1: ${e['t1']}{t2} · R:R מהטריגר: {e['rr']}</span></div>"
-        f"{qty}"
-        f"<div class='story-row'><span class='story-k'>תוקף</span>"
-        f"<span class='story-v'>~{e['valid']} ימי מסחר · ביטול: {e['cancel']}</span></div>"
-        f"{note}</div>",
-        unsafe_allow_html=True)
+        f"<div class='story-row'><span class='story-k'>אפשרות {idx}</span>"
+        f"<span class='story-v'><b>{e['name']}</b>{_evtxt}</span></div>"
+        + "".join(_rows) + "</div>"), unsafe_allow_html=True)
 
 
 # ============================================================
@@ -6833,13 +6952,18 @@ def screen_trade_strategy() -> None:
                      f"~{qty} מניות (≈${int(cash):,})</span></div>")
         st.markdown(
             f"<div class='story-box'>"
-            f"<div class='story-row'><span class='story-k'>🏛️ בנייה מדורגת</span>"
-            f"<span class='story-v'>הקצאה: ${int(alloc_cash):,} ({int(long_alloc)}% מההון)</span></div>"
+            f"<div class='story-row'><span class='story-k'>🟢 הכיוון</span>"
+            f"<span class='story-v'><b>קנייה (לונג) — אתה קונה ומחזיק לטווח ארוך. "
+            f"מרוויח כשהמחיר עולה.</b></span></div>"
+            f"<div class='story-row'><span class='story-k'>סכום כולל</span>"
+            f"<span class='story-v'>${int(alloc_cash):,} ({int(long_alloc)}% מההון) — "
+            f"מחולק לשלוש רכישות, לא הכל בבת אחת</span></div>"
             f"{rows}"
-            f"<div class='story-row'><span class='story-k'>🛑 סטופ</span>"
+            f"<div class='story-row'><span class='story-k'>מתי למכור בהפסד</span>"
             f"<span class='story-v'><b>{pack['stop_he']}</b></span></div>"
-            f"<div class='story-row'><span class='story-k'>🎯 יעד</span>"
-            f"<span class='story-v'>${pack['target']} (סיבה-ותוצאה) · ניהול המשך לפי איכות ותמחור</span></div>"
+            f"<div class='story-row'><span class='story-k'>לאן זה אמור להגיע</span>"
+            f"<span class='story-v'>${pack['target']} — יעד מבני. אין למכור אוטומטית "
+            f"בהגעה; זו רמת-ייחוס לבחינה מחדש.</span></div>"
             f"<div class='story-row'><span class='story-k'>הערה</span>"
             f"<span class='story-v'>{pack['note']}</span></div></div>",
             unsafe_allow_html=True)
@@ -6860,7 +6984,12 @@ def screen_trade_strategy() -> None:
                    f"<span class='story-v'>{ln}</span></div>"
                    for i, ln in enumerate(_scenario_lines(entries, cancel_all, hz)))
     st.markdown(f"<div class='story-box'>{tree}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='section-label'>הכניסות המותנות</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>מה לעשות — הפקודות</div>",
+                unsafe_allow_html=True)
+    st.markdown(_H(_direction_banner(entries)), unsafe_allow_html=True)
+    if len(entries) > 1:
+        st.caption("להלן מספר אפשרויות כניסה, מהמומלצת ביותר למטה. "
+                   "בחר **אחת** — לא את כולן.")
     for i, e in enumerate(entries, 1):
         _render_entry_card(e, i)
     if any((e.get("evidence") or {}).get("negative") for e in entries):
@@ -11750,3 +11879,4 @@ if __name__ == "__main__":
 # V38.6 – מעבדת-יציאות: 8 חלופות (יעד/זמן 20-40-60/נגרר 2-3ATR/חצי-נגרר/יעד-כפול) נמדדות על כל איתות, מטריצות נשמרות ב-JSON. מדידה בלבד.
 # V38.7 – סט אימות בתולי (36 שמות, 9 בלוקים: מנפצי-ערך, תשתיות, ריטים, ADR, היסטוריה מלפני 2000) + בורר-סט ואיסור-ערבוב באיחוד.
 # V39.0 – שינוי #1: כניסות 'נגיעה' (תוחלת שלילית ב-2 מדגמים בלתי-תלויים) יורדות לתחתית הדירוג ונושאות תג-ראיה מדוד. הסטופים/היעדים/הטריגרים ללא שינוי.
+# V39.1 – שינוי #2: החזקה 40 ימי מסחר (החלופה היחידה ששרדה 3 שערים) + שפת-פקודות מבצעית (מה לעשות/מתי תתבצע/מתי לצאת), 'טראנץ'' הוסר.
