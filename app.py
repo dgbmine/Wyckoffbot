@@ -1,8 +1,15 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.1 (No-Trade Is An Answer)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.2 (No-Trade Enforced In Engine)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V40.2 — 🔴 אותה טעות, פעם שנייה: V40.1 שינתה רק את התצוגה. המנוע המשיך
+  להחזיר את כניסות ה"נגיעה", והבאק-טסט המשיך לקחת אותן — ולכן ההרצה חזרה
+  זהה לחלוטין (5,100 עסקאות, אותם מספרים בדיוק). התיקון: הבאק-טסט בודק
+  _no_recommended ומדלג, בדיוק כפי שהמשתמש לא ייכנס. **הכלל שהופר פעמיים:
+  כל שינוי התנהגות חייב להיות נבדק בשני המסלולים — מסך ומדידה — ולעולם
+  לא להסתמך על כך ששכבת-התצוגה מספיקה.**
 
 V40.1 — צעד 2: "אין כניסה טובה" הופכת לתשובה לגיטימית.
   עד כה, כשהמצב אִפשר רק כניסת "נגיעה" (ב-MARKUP וב-MARKDOWN זו הכניסה
@@ -10843,8 +10850,8 @@ def _bt_run_one(ticker: str, period: str = _BT_PRIMARY_PERIOD, progress_cb=None,
                              and closes[i]) else None)
             entries, _cancel, _why = _conditional_entries(ws, lv, last, "short",
                                                           _atr_here)
-            if not entries:
-                continue
+            if not entries or _no_recommended(entries):
+                continue          # V40.2 — "אין כניסה מומלצת" = אין עסקה, גם במדידה
             e = entries[0]
             key = f"{state}|{e.get('kind', '?')}|{e.get('side', 'long')}"
             ex = out["exec"].setdefault(key, _bt_blank_exec())
@@ -12223,3 +12230,4 @@ if __name__ == "__main__":
 # V39.4 – פריטי מנוע/באק-טסט: רצפת-הסטופ עברה מהתצוגה אל _conditional_entries. שלוש הרצות קודמות מדדו סטופים שהמשתמש כבר לא רואה.
 # V40.0 – באק-טסט ברמת-תיק: הון אחד, מגבלת פוזיציות מקבילות, עלויות. ה-CAGR הקודם הניח עסקה-אחת-ברצף בעוד שנמדדו 5.34 במקביל.
 # V40.1 – 'אין כניסה מומלצת' כתשובה: כשכל האפשרויות נמדדו שליליות — אל תיכנס, הקצאה 0%, רמות למעקב בלבד.
+# V40.2 – ההחלטה נאכפת גם במדידה (V40.1 שינתה רק תצוגה — ההרצה חזרה זהה).
