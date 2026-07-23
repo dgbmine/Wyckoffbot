@@ -1,8 +1,22 @@
 """
 ============================================================
-CODEX ALPHA — INSTITUTIONAL SCOUT PRO V39.4 (Engine/Backtest Parity)
+CODEX ALPHA — INSTITUTIONAL SCOUT PRO V40.0 (Portfolio-Level Backtest)
 Streamlit app for advanced Wyckoff-style market analysis
 Optimized for Google Cloud Run
+
+V40.0 — באק-טסט ברמת-תיק (צעד 1: תיקון מדידה, אפס שינוי בלוגיקה).
+  הבעיה: עד כה כל עסקה נמדדה בבידוד ועקומת-ההון הניחה עסקה-אחת-ברצף,
+  בעוד שנמדדו בפועל 5.34 פוזיציות מקבילות (עד 22 בו-זמנית). ה-CAGR של
+  46.9% תיאר תיק שאי-אפשר להחזיק.
+  • _bt_portfolio_sim: הון אחד, סיכון קבוע לעסקה, תקרת-פוזיציה, מגבלת
+    פוזיציות מקבילות, ועלות מסחר 0.1% לעסקה. איתות שמגיע כשאין מקום פנוי
+    פשוט אינו נלקח — בדיוק כמו בחיים. Sharpe מחושב מתשואות חודשיות אמיתיות
+    ולא מתשואות-עסקה.
+  • _bt_capacity_curve: רגישות ל-3/5/8/12/20 פוזיציות מקבילות — כמה
+    מהאיתותים בכלל ניתן לתפוס, ומה זה עושה ל-CAGR ולשפל.
+  • שני הפלטים נשמרים בתוך ה-JSON (portfolio, capacity) ומוצגים בעדשת
+    הסיכון. זהו המספר שמשיב על "כמה שווה המערכת", להבדיל מ"כמה שווה
+    איתות בודד".
 
 V39.4 — 🔴 תיקון פערי-מדידה: המנוע והבאק-טסט התפצלו.
   התגלה בהשוואת שלוש הרצות רצופות שהחזירו תוצאה **זהה בדיוק** (4,733
@@ -10885,6 +10899,118 @@ def _bt_risk_from_trades(trades: list) -> dict:
             "avg_R_win": round(sum(wins) / len(wins), 2) if wins else 0.0}
 
 
+def _bt_portfolio_sim(trades: list, capital: float = 100000.0, risk_pct: float = 1.0,
+                      max_positions: int = 8, max_pos_pct: float = 25.0,
+                      cost_pct: float = 0.1) -> dict:
+    """
+    V40.0 — באק-טסט ברמת-תיק. עד כה כל עסקה נמדדה בבידוד, ועקומת-ההון הניחה
+    עסקה-אחת-ברצף — בעוד שבפועל נמדדו 5.34 פוזיציות מקבילות (עד 22). כתוצאה
+    מכך ה-CAGR היה מנופח מהותית.
+    כאן: הון אחד, מגבלת פוזיציות מקבילות, גודל לפי סיכון קבוע ותקרת-פוזיציה,
+    ועלות מסחר. איתות שמגיע כשאין מקום פנוי — פשוט אינו נלקח, בדיוק כמו
+    בחיים. זו התשובה ל"כמה שווה המערכת", להבדיל מ"כמה שווה איתות".
+    טהור; מחזיר מדדים + עקומת-הון חודשית.
+    """
+    from datetime import datetime as _dt
+    rows = []
+    for t in trades or []:
+        try:
+            di = _dt.strptime(t["date_in"], "%Y-%m-%d")
+            do = _dt.strptime(t["date_out"], "%Y-%m-%d")
+            rp = float(t.get("risk_pct") or 0)
+            if rp <= 0 or do < di:
+                continue
+            rows.append((di, do, float(t.get("pct") or 0), rp, t))
+        except Exception:
+            continue
+    if len(rows) < 20:
+        return {}
+    rows.sort(key=lambda r: r[0])
+    equity = float(capital)
+    peak, mdd = equity, 0.0
+    open_pos = []                      # [(date_out, position_value, pct)]
+    taken, skipped_slots, skipped_cash = 0, 0, 0
+    curve = {}                         # 'YYYY-MM' -> equity
+    realized = []
+
+    def _close_due(upto):
+        nonlocal equity, peak, mdd, open_pos
+        due = [p for p in open_pos if p[0] <= upto]
+        if not due:
+            return
+        open_pos = [p for p in open_pos if p[0] > upto]
+        for d_out, val, pct in sorted(due, key=lambda p: p[0]):
+            pnl = val * (pct / 100.0) - val * (cost_pct / 100.0)
+            equity += pnl
+            realized.append(pnl / max(1.0, equity - pnl))
+            peak = max(peak, equity)
+            mdd = min(mdd, equity / peak - 1.0)
+            curve[f"{d_out.year:04d}-{d_out.month:02d}"] = equity
+
+    for di, do, pct, rp, _t in rows:
+        _close_due(di)
+        if len(open_pos) >= max_positions:
+            skipped_slots += 1
+            continue
+        risk_cash = equity * (risk_pct / 100.0)
+        val = risk_cash / (rp / 100.0)
+        val = min(val, equity * (max_pos_pct / 100.0))
+        committed = sum(p[1] for p in open_pos)
+        if committed + val > equity:                  # ללא מינוף
+            val = max(0.0, equity - committed)
+            if val < equity * 0.01:
+                skipped_cash += 1
+                continue
+        open_pos.append((do, val, pct))
+        taken += 1
+    _close_due(rows[-1][1])
+
+    years = max(0.5, (rows[-1][1] - rows[0][0]).days / 365.25)
+    total = equity / float(capital) - 1.0
+    cagr = ((equity / float(capital)) ** (1 / years) - 1) * 100 if equity > 0 else -100.0
+    months = sorted(curve.items())
+    mret = []
+    for i in range(1, len(months)):
+        prev = months[i - 1][1]
+        if prev > 0:
+            mret.append(months[i][1] / prev - 1.0)
+    sharpe = None
+    if len(mret) > 12:
+        m = sum(mret) / len(mret)
+        sd = (sum((x - m) ** 2 for x in mret) / (len(mret) - 1)) ** 0.5
+        sharpe = (m / sd * (12 ** 0.5)) if sd > 0 else None
+    return {"capital": capital, "risk_per_trade_pct": risk_pct,
+            "max_positions": max_positions, "max_pos_pct": max_pos_pct,
+            "cost_pct": cost_pct,
+            "signals": len(rows), "taken": taken,
+            "skipped_no_slot": skipped_slots, "skipped_no_cash": skipped_cash,
+            "fill_rate_pct": round(taken / max(1, len(rows)) * 100, 1),
+            "years": round(years, 2),
+            "final_equity": round(equity, 0),
+            "total_return_pct": round(total * 100, 1),
+            "cagr_pct": round(cagr, 2),
+            "max_drawdown_pct": round(mdd * 100, 2),
+            "sharpe_monthly": round(sharpe, 2) if sharpe else None,
+            "months": len(months)}
+
+
+def _bt_capacity_curve(trades: list, capital: float = 100000.0,
+                       risk_pct: float = 1.0) -> list:
+    """כמה פוזיציות מקבילות באמת נדרשות? טבלת רגישות — לא כלי כיול."""
+    out = []
+    for mp in (3, 5, 8, 12, 20):
+        r = _bt_portfolio_sim(trades, capital, risk_pct, max_positions=mp)
+        if not r:
+            continue
+        out.append({"מקס' פוזיציות": mp,
+                    "איתותים שנלקחו": f"{r['fill_rate_pct']}%",
+                    "CAGR": f"{r['cagr_pct']:+.1f}%",
+                    "שפל": f"{r['max_drawdown_pct']:.1f}%",
+                    "Sharpe": r["sharpe_monthly"] or "—",
+                    "הון סופי": f"${r['final_equity']:,.0f}"})
+    return out
+
+
 def _bt_dedupe_trades(trades: list, mode: str = "longest") -> list:
     """
     V38.3 — 1y⊂2y⊂5y⊂max: אותה תקופה נדגמת עד 4 פעמים (נמדד: ~47% כפילות).
@@ -11347,6 +11473,8 @@ def _bt_run_block(block_no: int, status_cb=None, set_name: str = "discovery") ->
     rep["performance"] = _bt_performance(
         _bt_dedupe_trades(rep["trades"], "longest"), rep.get("benchmarks"))
     rep["exit_lab"] = _bt_exit_lab(rep["trades"])
+    rep["portfolio"] = _bt_portfolio_sim(rep["trades"])
+    rep["capacity"] = _bt_capacity_curve(rep["trades"])
     rep["stop_diagnostics"] = _bt_stop_diagnostics(rep["trades"])
     rep["splits"] = {"regime": _bt_split_view(rep["trades"], "regime", "משטר"),
                      "era": _bt_split_view(rep["trades"], "era", "עידן")}
@@ -11392,6 +11520,8 @@ def _bt_merge_reports(reports: list) -> dict:
     merged["performance"] = _bt_performance(
         _bt_dedupe_trades(merged["trades"], "longest"), merged.get("benchmarks"))
     merged["exit_lab"] = _bt_exit_lab(merged["trades"])
+    merged["portfolio"] = _bt_portfolio_sim(merged["trades"])
+    merged["capacity"] = _bt_capacity_curve(merged["trades"])
     merged["stop_diagnostics"] = _bt_stop_diagnostics(merged["trades"])
     merged["splits"] = {"regime": _bt_split_view(merged["trades"], "regime", "משטר"),
                         "era": _bt_split_view(merged["trades"], "era", "עידן")}
@@ -11453,6 +11583,25 @@ def _bt_render_lenses(counters: dict, risk: dict, title_note: str = "",
             c3[1].metric("תשואה מצטברת", f"{_perf['total_return_pct']:+.1f}%")
             c3[2].metric("שנות מדגם", _perf["years"])
             c3[3].metric("עסקאות בשנה", _perf["trades_per_year"])
+            _pf = (diag or {}).get("portfolio") or {}
+            if _pf.get("taken"):
+                st.markdown("<div class='section-label'>ברמת תיק — הון אחד, "
+                            "מגבלת פוזיציות, עלויות</div>", unsafe_allow_html=True)
+                q = st.columns(4)
+                q[0].metric("CAGR (תיק)", f"{_pf['cagr_pct']:+.1f}%")
+                q[1].metric("שפל מקסימלי", f"{_pf['max_drawdown_pct']:.1f}%")
+                q[2].metric("Sharpe (חודשי)", _pf.get("sharpe_monthly") or "—")
+                q[3].metric("איתותים שנלקחו", f"{_pf['fill_rate_pct']}%")
+                st.caption(f"הון התחלתי ${_pf['capital']:,.0f} · סיכון "
+                           f"{_pf['risk_per_trade_pct']}% לעסקה · עד "
+                           f"{_pf['max_positions']} פוזיציות במקביל · עלות "
+                           f"{_pf['cost_pct']}% לעסקה · הון סופי "
+                           f"${_pf['final_equity']:,.0f} על פני {_pf['years']} שנים. "
+                           f"{_pf['skipped_no_slot']:,} איתותים לא נלקחו מחוסר מקום — "
+                           f"זה המספר שמבדיל בין 'כמה שווה איתות' ל'כמה שווה המערכת'.")
+                if (diag or {}).get("capacity"):
+                    st.dataframe(_pd.DataFrame(diag["capacity"]),
+                                 use_container_width=True, hide_index=True)
             st.caption(f"עקומת-הון כרונולוגית בסיכון קבוע של {_perf['risk_per_trade_pct']}% "
                        f"לעסקה · Sharpe מתשואות-עסקה מוצמדות-שנה (ריבית חסרת-סיכון = 0) · "
                        f"Buy &amp; Hold = ממוצע שווה-משקל על אותו חלון בדיוק · "
@@ -11617,7 +11766,9 @@ def screen_backtest() -> None:
         _diag = {"stop": _bt_stop_diagnostics(_tr_ded),
                  "regime": _bt_split_view(_tr_ded, "regime", "משטר"),
                  "era": _bt_split_view(_tr_ded, "era", "עידן"),
-                 "exit_lab": _rep.get("exit_lab") or _bt_exit_lab(_tr_ded)}
+                 "exit_lab": _rep.get("exit_lab") or _bt_exit_lab(_tr_ded),
+                 "portfolio": _rep.get("portfolio") or _bt_portfolio_sim(_tr_all),
+                 "capacity": _rep.get("capacity") or _bt_capacity_curve(_tr_all)}
         _bt_render_lenses(_counters, _risk, _note, _perf, _prows, _diag)
         if _rep.get("errors"):
             with st.expander(f"אזהרות נתונים ({len(_rep['errors'])})"):
@@ -11672,7 +11823,9 @@ def screen_backtest() -> None:
                           {"stop": _bt_stop_diagnostics(_mg_ded),
                            "regime": _bt_split_view(_mg_ded, "regime", "משטר"),
                            "era": _bt_split_view(_mg_ded, "era", "עידן"),
-                           "exit_lab": _mg.get("exit_lab") or _bt_exit_lab(_mg_ded)})
+                           "exit_lab": _mg.get("exit_lab") or _bt_exit_lab(_mg_ded),
+                           "portfolio": _mg.get("portfolio") or _bt_portfolio_sim(_mg.get("trades") or []),
+                           "capacity": _mg.get("capacity") or _bt_capacity_curve(_mg.get("trades") or [])})
         st.download_button("⬇️ הורד את הקובץ המאוחד",
                            data=_json.dumps(_mg, ensure_ascii=False, indent=1).encode("utf-8"),
                            file_name="codex_backtest_merged.json", mime="application/json",
@@ -12036,3 +12189,4 @@ if __name__ == "__main__":
 # V39.2 – רצפת-סטופ 1×ATR (36% מהכניסות היו בתוך רעש-היום) + תקרת-פוזיציה 25% מההון (באג: $262K על הון $100K).
 # V39.3 – רצפת-סטופ ורמת-ביטול לפי טווח (קצר 2.5% / בינוני 4% / ארוך 7%), עם הצגת עלות-התוחלת המדודה. הרחבה גורפת ל-5-7% נבדקה ונדחתה.
 # V39.4 – פריטי מנוע/באק-טסט: רצפת-הסטופ עברה מהתצוגה אל _conditional_entries. שלוש הרצות קודמות מדדו סטופים שהמשתמש כבר לא רואה.
+# V40.0 – באק-טסט ברמת-תיק: הון אחד, מגבלת פוזיציות מקבילות, עלויות. ה-CAGR הקודם הניח עסקה-אחת-ברצף בעוד שנמדדו 5.34 במקביל.
